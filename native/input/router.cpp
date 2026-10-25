@@ -151,6 +151,12 @@ bool legacy_allowed(std::uint32_t vk, bool down) {
     return true;
 }
 
+bool any_key(const std::string& keyboard) {
+    std::scoped_lock lock(g_mutex);
+    const auto it = g_keys.find(keyboard);
+    return it != g_keys.end() && it->second.any();
+}
+
 void clear_keys() {
     std::scoped_lock lock(g_mutex);
     g_keys.clear();

@@ -15,6 +15,7 @@ namespace elmp::party::bench {
 
 void poll(std::int64_t slot);       // patrol: consumes interact presses
 std::string rest(std::int64_t slot); // empty = rested; otherwise the refusal reason
+bool nearby(std::int64_t slot);     // HUD prompt / PX menu "can change" (bench positions cached per handle)
 void forget(std::int64_t slot);
 void install();
 

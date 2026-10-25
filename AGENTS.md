@@ -4,6 +4,11 @@
 - Shell 命令前缀：`[Console]::OutputEncoding = [System.Text.Encoding]::UTF8;`；Python 用 `C:\Dev\miniconda\python.exe`。
 - UE4SS API 以 `D:\CodeT\RE-UE4SS-32d8a381`（源码与 docs）为准；引用方式：submodule + `add_subdirectory` + 链接 `UE4SS` 目标（同 `D:\CodeT\Lilac2LilyMod`）。
 
+## 用户在用电脑时：不做前台类自动化（用户要求，2026-10-26）
+- 不恢复 / 移动 / 激活实例窗口（不调 `ShowWindow` / `SetWindowPos` / `SetForegroundWindow`），不向窗口投递鼠标消息，不动系统光标。
+- 测 ELMP 界面一律走后台命令：`elmp manager open|close`、`elmp menu <slot> …`、Dev `elmp ui click|move <x> <y>`（直接喂覆盖层自己的事件队列，不经窗口消息）。
+- 截图只在窗口本来就未最小化时做；最小化就不截，改用命令输出作证据。
+
 ## 与旧仓库 `D:\CodeT\ELMP` 的关系：拿走知识，不照搬代码
 - 旧仓库的代码、`docs/REQUIREMENTS.md`、`docs/adr/`、`docs/kb/*.md`、`data/RVA.json` 是**知识来源**：原版入口、RVA / 偏移、实测结论、踩过的坑、协议语义。实现前先去读。
 - **不复制旧仓库的代码文件**（含 C++、Lua、测试、mock）；每个模块按 v2 架构重新实现。可以复用的只有：原版事实、数值、RVA 与前缀、`data/` 下由工具从游戏包生成的素材（图标 / 字体 / 文本表，由新仓库的工具重新生成）。
@@ -56,7 +61,8 @@
 - party（P1b）：`elmp join [script] [pad N] [slot N] [friendly|enemy]`、`leave [slot]`、`seats`、`devices`、`assign <pad N|kbd#N|id> <slot|p1>`、`bind <slot> <action> key|pad <label>`、`bindings <slot> [reset]`、`mute [0|1]`；Dev 测试辅助 `kbd <device> <key> down|up|tap`（只 PostMessage 到实例窗口）、`fakepad <N> off|<buttons> [lx ly]`。Dev2 机器上 `xinput:0` 是真实手柄（只读）。座位不要绑定未连接的手柄做性能测量。
 - 规则（P1c）：`elmp progress`、`gates`、`perm <slot> <gate> on|off`、`rest [slot]`、`transit`；`elmp set mapRule 1|2|3`、`set recall 0|1`；Dev 测试辅助 `kill <slot> [dmg]`（原版 DoDamage）、`tp <slot> <dy> <dz>`（相对 P1，slot 1 也可）。测闸门 / 出口时先 `set recall 0`，否则 2 s 后被召回。
 - 镜头 / PvP（P1c-2）：`elmp camera`（放宽状态、Ally 注册数）、`elmp team <slot> friendly|enemy`、`elmp pvp`（队伍、倍率 / 击退档、flips / scales / knocks）；规则 `elmp set pvpDamage 0-1`、`pvpKnockback 0-3`、`cameraFraming 0|1`、`cameraSideMargin|TopMargin|BottomMargin|MaxDistanceScale`。镜头读数：eval `FindFirstOf('BP_GameplayCamera_C'):GetCurrentMin()/GetCurrentMax()` + `K2_GetActorLocation()`（X = −距离）。church_08 没有敌人，怪物格去 church_07（`elmp tp 1 <dy> <dz>` 进 church_08 的 church_07 门 Y −6230 / Z 320）。
-- 截图前确认 Dev2 窗口未被最小化（最小化时 `capture.py` 得到 1×1 的空 PNG）；恢复用 `ShowWindow(h, 4)`（SW_SHOWNOACTIVATE，不夺焦点）。
+- 覆盖层（P1d）：`elmp hud`（座位数值、SkillCache、锚点与投影对账）、`elmp menu <slot> [up|down|left|right|confirm|back|context|prev|next|close]`、`elmp manager open|close`、Dev `elmp ui move|click <x> <y>`（后备缓冲像素；标签页等控件先 move 再 click）。图标 / 字体 / 物品文本重新生成：`<python> tools\catalog\extract.py`（需 .NET 10，路径来自 devconfig 的 `paks / usmap / cue4parse`）。
+- 截图前确认 Dev2 窗口未被最小化（最小化时 `capture.py` 得到 1×1 的空 PNG）；最小化时不要恢复窗口（见上方“不做前台类自动化”），改用命令输出作证据。
 - UE4SS 的 UFunction 钩子对蓝图函数按字符串比较每次脚本调用，热路径别用；需要蓝图事件时照 `party/transit` 的指针比较 ProcessLocalScriptFunction 回调做，并且只在有座位时注册。
 - 读档后回标题再读档：`bridge.py dev eval "local gs=StaticFindObject('/Script/Engine.Default__GameplayStatics'); gs:OpenLevel(FindFirstOf('GameInstance'), FName('TitleMap'), true, ''); return 'ok'"`（测试辅助，登记）。
 - 代码里避免名为 `check` / `verify` 的任何标识符（含控制台辅助函数）：UE 宏会吞掉。

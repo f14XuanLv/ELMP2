@@ -399,6 +399,11 @@ ELMP 包零 Lua；对 Lua Mod 注入 C 函数；语法糖随 SDK 仓库。`elmp.
 3. **旧 `party_<saveId>.profile.lua` 解析失败**（C12 迁移）：旧文件永不修改 / 删除；不导入任何内容、不写该档 JSON；原因记一次 UE4SS.log 并在 `elmp storage` 与管理器存储页显示（英文）“Old ELMP profile for this save could not be read (<reason>). Nothing was imported; the file was kept.”；存储页提供显式 “New PX data” 按钮（需确认）让玩家主动以空队伍开始该档。**永不自动以空队伍开始。**
 4. **规则 1 授予切图权限**：规则 1 生效期间所有本地座位（slot 2..100 的本地输入座位）的有效 `travel` = 开；切回规则 2/3 恢复逐座位值。测试 / 第三方 slot（101+）与远程座位不受规则 1 影响（远程切图归 C18 多地图逻辑）。
 
+### 7.14 P1d 实施决定（2026-10-26）→ **[定，可复议]**
+1. **管理器按钮可见性与 G0**：按钮每帧只用直读判定（世界就位、P1 有 Pawn、世界未暂停〔`PersistentLevel.WorldSettings.PauserPlayerState`〕、无过图、无 PX 菜单、管理器未开）。原版可导航菜单检测要 `IsInViewport`（ProcessEvent），只在有座位时做；**无座位时不暂停的原版菜单（椅子休息菜单）期间按钮仍显示**，以保持“无座位无会话 0 次反射调用”。v1 在此情况下隐藏按钮，这是有意的偏离。
+2. **打开的 ELMP 窗口算活动**：管理器 / PX 菜单打开期间（会暂停世界并轮询设备）不计入 G0 空闲帧。
+3. 界面语言仍为英文（v1 决定 2026-10-07），`data/catalog/items.json` 已带 5 种语言。
+
 ---
 
 ## 8. 验收口径（继承并细化）

@@ -24,6 +24,10 @@ ue::UObject* p1_controller();
 ue::UObject* p1_pawn();
 ue::UObject* world_loader(); // cached handle; located by one object-array walk when missing (cold)
 
+// UWorld::IsPaused without ProcessEvent: PersistentLevel.WorldSettings.PauserPlayerState != null (the vanilla
+// SetGamePaused path; the pause delay and editor / client cases do not apply to this game).
+bool paused();
+
 ue::FName current_map_id();  // WorldLoaderSubsystem.CurrentGameMapID (direct read); None if unknown
 bool loader_flags(bool& loading, bool& ready); // IsLoading(true) / IsGameMapReady(true) via ProcessEvent
 

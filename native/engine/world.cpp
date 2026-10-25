@@ -15,7 +15,7 @@ struct Schema {
     bool tried = false, ok = false;
     std::string failure;
     reflect::PropRef engine_viewport, viewport_world, world_instance, instance_players, player_controller, controller_pawn;
-    reflect::PropRef loader_map;
+    reflect::PropRef loader_map, world_level, level_settings, settings_pauser;
     reflect::FuncRef loader_is_loading, loader_is_ready, ksl_saved_dir;
     ObjHandle ksl;
 };
@@ -43,7 +43,14 @@ bool resolve() {
     take(v);
     reflect::Resolver w("World", reflect::find_class(L"/Script/Engine.World"));
     g.world_instance = w.prop(L"OwningGameInstance", reflect::Kind::Object);
+    g.world_level = w.prop(L"PersistentLevel", reflect::Kind::Object);
     take(w);
+    reflect::Resolver lv("Level", reflect::find_class(L"/Script/Engine.Level"));
+    g.level_settings = lv.prop(L"WorldSettings", reflect::Kind::Object);
+    take(lv);
+    reflect::Resolver ws("WorldSettings", reflect::find_class(L"/Script/Engine.WorldSettings"));
+    g.settings_pauser = ws.prop(L"PauserPlayerState", reflect::Kind::Object);
+    take(ws);
     reflect::Resolver gi("GameInstance", reflect::find_class(L"/Script/Engine.GameInstance"));
     g.instance_players = gi.prop(L"LocalPlayers", reflect::Kind::Array);
     take(gi);
@@ -104,6 +111,13 @@ UObject* p1_controller() {
 UObject* p1_pawn() {
     UObject* pc = p1_controller();
     return pc ? g.controller_pawn.object(pc) : nullptr;
+}
+
+bool paused() {
+    UObject* w = world();
+    UObject* level = w ? g.world_level.object(w) : nullptr;
+    UObject* settings = level ? g.level_settings.object(level) : nullptr;
+    return settings && g.settings_pauser.read<UObject*>(settings) != nullptr;
 }
 
 UObject* find_instance(UClass* cls) {

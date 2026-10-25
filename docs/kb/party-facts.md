@@ -50,11 +50,34 @@
 ### 性能（P1 + P2 + P3 脚本座位，church_08 静止，15 s）
 - `frame.elmp_us` P50 9 / P95 30 / P99 124 µs（门槛 300）；`party.patrol` 每 250 ms P99 42 µs；`party.progress` 每秒 P99 156 µs。两人离开后回调注销，6 s 内 `g0.reflect_calls = 0`，`registry verify` consistent。`[E-实测]`
 
+## P1d 覆盖层：HUD / PX 装备菜单 / 管理器 / 规则页（v2 2026-10-26，Dev2）
+
+### 数据与渲染
+- `tools/catalog`（CUE4Parse + devconfig 的 usmap）重新生成 `data/catalog/items.json`（精灵 26、遗物 41：5 语言名字 / 简介、`ItemSpiritType`、`SlotCount`、`bAvailableInGame`、图标 id）、`data/icons`（68 张，含 `ui_mouse_cursor`）、`data/fonts`（FOT-PearlStd-L + chinese-traditional / korean / russian）。与 v1 数据一致（遗物槽位逐条相同）。`[E-CUE]`
+- 覆盖层：探针交换链取 Present / ResizeBuffers（system 来源 detour，预检后安装），ImGui 只用 DX11 渲染后端。**不用 ImGui Win32 平台后端**：它在游戏窗口处于前台时每帧用 `GetCursorPos` 覆盖鼠标位置（imgui_impl_win32 `UpdateMouseData`），注入 / 窗口钩子给的位置会被冲掉；鼠标只来自窗口过程钩子（`input/rawinput` 的 `set_mouse_hook`），`DeltaTime` 自算。`[E-源码][E-实测]`
+- 模型：`overlay/model.h` 固定尺寸结构体，游戏线程 staging → seqlock 发布，渲染线程拷出后只画；界面操作经 SPSC 环回游戏线程。渲染线程每帧约 45 µs（P50，含拷贝）。`[E-实测]`
+- HUD 头顶锚点：P1 `PlayerCameraManager.CameraCachePrivate.POV`（Location / Rotation / 水平 FOV，MaintainXFOV）+ 覆盖层后备缓冲尺寸自算投影；每秒与原版 `ProjectWorldToScreen` 对账一次，实测偏差 **0.00 px**（church_08，1280×720）；连续 3 次 > 2 px 则改回原版函数。`[E-实测]`
+
+### 实测（church_08，P1 + P2 设备座位 + P3 / P4 脚本座位）
+- HUD：头顶标签 / 血条 / 祈祷点 / 椅子提示，右侧面板（敌方座位紫色），技能格图标与 ∞（`p1d-hud-dev.png`）。经菜单给 P3 装上无头骑士（s2002）后 SkillCache 重建：CastCount、剩余 12、Recast 4.5 s（与 v1 技能表一致）；`elmp press 3 SUMMON_1` 后 0.9 s 读到剩余 11、冷却 0.93，5 s 后冷却 0（`p1d-cooldown-dev.png`）。`[E-实测]`
+- PX 菜单（`elmp menu 3 …`）：打开即 `IsGamePaused=true`、PX HUD 隐藏；列表 26 精灵 / 34 遗物（P1 共享），布局同 v1（`p1d-menu-list-dev.png`）；装精灵走 profile 精确应用（原版 Unequip / Equip），遗物 `EquipPassive` → 槽位 2/20；关闭恢复世界。座位死亡（`kill`）与回标题时菜单自动关闭、世界恢复运行。`[E-实测]`
+- 管理器：按钮（`p1d-button-dev.png`）经覆盖层注入点击打开，暂停世界、列 8 个设备（中文设备名正常显示）；规则页切换 `equipAnywhere` 1 → 0 写进 settings.json；P2 手柄“Up”绑定经模拟手柄捕获为 Y（随后重置）。设备勾选显示**有效**归属：保存给已离开座位的设备显示在 P1 列（`p1d-manager-dev.png`、`p1d-rules-dev.png`、`p1d-bindings-dev.png`）。`[E-实测]`
+- 注入点击的细节：ImGui 标签页等允许重叠的控件要求按下前一帧已悬停，测试时先 `elmp ui move` 再 `elmp ui click`；普通按钮一次 click 即可。`[E-实测]`
+
+### 性能与 G0
+- 无座位、覆盖层常驻：`g0.reflect_calls = 0`；空闲帧 ELMP P50 11–12 / P99 31–38 µs（管理器按钮判定每帧约 3 µs，全直读）。
+- P1 + 3 座位（HUD 可见）：初版 `frame.elmp_us` P99 222 µs（HUD 段 P50 30 µs，主要是每座位一次 `ProjectWorldToScreen` 与 250 ms 慢节拍对齐）；改为自算投影 + 每帧最多一个座位做慢节拍后 **P50 32 / P95 89 / P99 184 µs**，HUD 段 P50 14 / P99 76 µs。
+- 回标题重进（带敌方座位、菜单打开中）后 `registry verify` consistent，G0 仍为 0。
+
+### 测试辅助（P1d，登记）
+- 读档 ×5、回标题 ×1；`elmp menu`（P3 装 s2002、遗物 dmgcut_LV1，仍保留在测试世界）；`elmp press 3 SUMMON_1` ×1；`elmp kill 3` ×1；Dev `elmp ui move/click`（只进覆盖层自己的队列）约 12 次；`fakepad 1 Y` ×1；`equipAnywhere` 临时改动已恢复 0；P2 绑定已 `reset`（同时清掉了 P1b 留下的 J 跳跃测试绑定）。
+- 早期两次用 `ShowWindow(SW_SHOWNOACTIVATE)` 恢复 Dev2 窗口、一次 PostMessage 鼠标点击（无效）；按用户要求此后不再做任何前台类操作（AGENTS.md）。
+
 ## P1c-2 共享镜头 / 队伍 / PvP 命中窗口（v2 2026-10-26，Dev2）
 
 ### 共享镜头（C10 / M15）
 - 实现：`party/camera_sync` 每 500 ms 经 P1 的 `PlayerCameraManager.RegisteredGameplayCamera`（弱指针直读）取镜头，直读 `AllyAIControllerTargets` 核对并对缺失的座位控制器调原版 `RegisterAllyController`；离开时立即 `UnregisterAllyController`，最后一名座位离开时关放宽，空闲帧不留镜头工作（G0）。`camera/framing` 两个 manifest detour（`GameplayCameraUpdate` / `GameplayCameraTargetBounds`，SHA + 前缀校验）：≥ 2 个友方目标时本次 Update 期间 `MaxDistance × scale`、目标框加边距（竖直偏移补到反侧），返回即还原。偏移经反射：`PlayerControllerTargets` / `AllyAIControllerTargets`（16 B 数组）、`CurrentSettings.MaxDistance`、`WorldSpaceLocationOffset.Z`。`[E-实测]`
-- church_08，P1 + P2 相距 70：框 Y 宽 1030 = 原版 330 + 2×350，Z 高 780 = 260 + 150 + 250 + 120（WorldSpaceLocationOffset.Z）。相距 1800：开 → 框宽 2760、距离 1380；关 → 原版框宽 2060、距离 1030。相距 4500（框被房间边界钳到 Y −5860）：关 → 距离钳在 MaxDistance 2000；开 → 2191（上限 3000），Update 后 `CurrentSettings.MaxDistance` 读回 2000（未残留）。截图 `p1c2-framing-on-dev.png`（两人同框带留白）、`p1c2-far-on/off-dev.png`。`[E-实测]`
+- church_08，P1 + P2 相距 70：框 Y 宽 1030 = 原版 330 + 2×350，Z 高 780 = 260 + 150 + 250 + 120（WorldSpaceLocationOffset.Z）。相距 1800：开 → 框宽 2760、距离 1380；关 → 原版框宽 2060、距离 1030。相距 4500（框被房间边界钳到 Y −5860）：关 → 距离钳在 MaxDistance 2000；开 → 2191（上限 3000），Update 后 `CurrentSettings.MaxDistance` 读回 2000（未残留）。截图 `p1c2-framing-on-dev.png`（两人同框带留白）；`p1c2-framing-off` / `p1c2-far-on/off` 拍摄时窗口最小化，是 1×1 空图，数字以命令输出为准。`[E-实测]`
 - **新事实**：SwitchGameMap（church_08 → 07，流式切图）后 `BP_GameplayCamera` 是同一对象，原有 Ally 注册保留（`rebinds = 0`）；回标题重进则随世界销毁，seat 随世界丢弃，放宽在 teardown 关闭。`[E-实测]`
 
 ### 队伍与 PvP（C4 / M8）

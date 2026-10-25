@@ -30,6 +30,8 @@ std::mutex g_ids_mutex;
 std::map<HANDLE, std::string> g_ids;
 std::atomic<bool> g_capturing{false};
 std::atomic<std::uint32_t> g_captured{0};
+std::atomic<MouseHook> g_mouse{nullptr};
+std::atomic<bool> g_observe{false};
 
 constexpr GUID kKeyboardInterface = {0x884b96c3, 0x56ef, 0x11d1, {0xbc, 0x8c, 0x00, 0xa0, 0xc9, 0x14, 0x05, 0xdd}}; // GUID_DEVINTERFACE_KEYBOARD
 
@@ -120,7 +122,9 @@ void on_raw_input(LPARAM lparam) {
 }
 
 LRESULT CALLBACK hooked(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
-    if (!router::active() && !g_capturing) return CallWindowProcW(g_original, hwnd, msg, wparam, lparam);
+    if (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST)
+        if (auto* m = g_mouse.load(std::memory_order_acquire); m && m(hwnd, msg, wparam, lparam)) return 0;
+    if (!router::active() && !g_capturing && !g_observe) return CallWindowProcW(g_original, hwnd, msg, wparam, lparam);
     if (!g_registered) register_keyboard(hwnd);
     switch (msg) {
     case WM_INPUT: on_raw_input(lparam); break;
@@ -231,6 +235,13 @@ std::string post_key(const std::string& keyboard, std::uint32_t vk, bool down) {
     return PostMessageW(g_hwnd, down ? WM_KEYDOWN : WM_KEYUP, vk, lp) ? std::string{} : "PostMessage failed";
 }
 #endif
+
+void set_mouse_hook(MouseHook hook) { g_mouse.store(hook, std::memory_order_release); }
+
+void set_observe(bool on) {
+    g_observe = on;
+    if (on && g_hwnd) PostMessageW(g_hwnd, WM_NULL, 0, 0); // registers Raw Input on the window thread
+}
 
 void begin_capture() {
     g_captured = 0;

@@ -4,6 +4,7 @@
   "python": "C:\\Dev\\miniconda\\python.exe",
   "paks": "{game}\\Content\\Paks",
   "usmap": "{game}\\Binaries\\Win64_For_Mod_Dev2\\ue4ss\\EnderLilies-4.26.2-0+++UE4+Release-4.26-0c574377.usmap",
+  "cue4parse": "C:\\Code2\\Ender5\\CUE4ParseProject\\CUE4Parse",
   "fetchCache": "",
   "instances": {
     "dev": {

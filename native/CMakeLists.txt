@@ -52,6 +52,16 @@ set(ELMP_MOD_SOURCES
     core/hitrules.cpp
     camera/framing.cpp
     pvp/hitgate.cpp
+    core/catalog.cpp
+    party/ui.cpp
+    party/hud_feed.cpp
+    party/menu_ctrl.cpp
+    party/manager.cpp
+    overlay/model.cpp
+    overlay/render.cpp
+    overlay/hud_draw.cpp
+    overlay/menu_draw.cpp
+    overlay/manager_draw.cpp
     console/console.cpp
     console/commands.cpp
     console/core_commands.cpp
@@ -64,7 +74,7 @@ function(elmp_add_mod target package dev)
     add_library(${target} SHARED ${ELMP_MOD_SOURCES})
     target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_options(${target} PRIVATE /utf-8)
-    target_link_libraries(${target} PRIVATE elmp_base setupapi hid)
+    target_link_libraries(${target} PRIVATE elmp_base setupapi hid windowscodecs d3d11 dxgi)
     target_link_libraries(${target} PUBLIC UE4SS)
     if(dev)
         target_compile_definitions(${target} PRIVATE ELMP_DEV=1)

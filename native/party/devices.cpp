@@ -1,4 +1,5 @@
 #include "party/devices.h"
+#include "party/menu_ctrl.h"
 
 #include "input/bindings.h"
 #include "input/rawinput.h"
@@ -109,6 +110,10 @@ void pump(std::int64_t now_us) {
     (void)now_us;
     for (const auto slot : g_seats) {
         if (!input::router::has_devices(slot)) continue;
+        if (slot == menu_ctrl::open_slot()) { // the menu reads this seat's devices; the character gets nothing
+            input::pad::set(slot, 0, 0, 0);
+            continue;
+        }
         const auto a = input::router::seat_actions(slot, &input::xinput::read);
         g_ui_presses[slot] |= input::router::pressed(slot, a) & ((1u << input::bindings::Menu) | (1u << input::bindings::HudToggle));
         input::pad::set(slot, a.x, a.y, input::bindings::command_bits(a));

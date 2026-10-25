@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Dev tool: regenerates data/catalog/items.json, data/icons and data/fonts from the local game paks
+       (CUE4Parse source and usmap paths come from devconfig.json via tools/catalog/extract.py). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <Target Name="RequireCUE4ParseRoot" BeforeTargets="Restore;Build" Condition="'$(CUE4ParseRoot)' == ''">
+    <Error Text="CUE4ParseRoot is not set; run tools/catalog/extract.py (reads devconfig.json)" />
+  </Target>
+
+  <ItemGroup>
+    <ProjectReference Include="$(CUE4ParseRoot)\CUE4Parse\CUE4Parse.csproj" />
+    <ProjectReference Include="$(CUE4ParseRoot)\CUE4Parse-Conversion\CUE4Parse-Conversion.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -33,6 +33,14 @@ std::vector<Device> devices(); // Raw Input keyboards (merged per physical devic
 std::string post_key(const std::string& keyboard, std::uint32_t vk, bool down);
 #endif
 
+// Overlay mouse: WM_MOUSEFIRST..WM_MOUSELAST go to the hook first (also while the router is inactive);
+// true = an ELMP window uses this click, the game does not get it.
+using MouseHook = bool (*)(void* hwnd, unsigned msg, std::uintptr_t wparam, std::intptr_t lparam);
+void set_mouse_hook(MouseHook hook);
+
+// While the manager is open: per-keyboard key state is recorded (device indicator) even with no seat.
+void set_observe(bool on);
+
 void begin_capture();             // GUI key capture: the next key-down of any keyboard
 std::uint32_t take_captured_key(); // 0 = none yet
 

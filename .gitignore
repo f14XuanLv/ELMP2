@@ -5,3 +5,5 @@ dist/
 *.log
 __pycache__/
 devconfig.local.json
+tools/catalog/bin/
+tools/catalog/obj/

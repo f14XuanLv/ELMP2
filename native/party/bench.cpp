@@ -72,6 +72,12 @@ std::string rest(std::int64_t slot) {
     return {};
 }
 
+bool nearby(std::int64_t slot) {
+    auto* p = core::pawn(slot);
+    const auto pos = p ? core::location(p) : std::nullopt;
+    return pos && near_bench(*pos);
+}
+
 void poll(std::int64_t slot) {
     if (!(input::pad::take_presses(slot) & kInteract)) return;
     if (auto why = rest(slot); !why.empty() && why != "not at a bench") log::info("party: P{} rest refused: {}", slot, why);

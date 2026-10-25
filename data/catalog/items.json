@@ -1,0 +1,1288 @@
+{
+  "schema": 1,
+  "generator": "tools/catalog",
+  "cultures": [
+    "en-US",
+    "zh-Hans",
+    "zh-Hant",
+    "ja-JP",
+    "ko-KR"
+  ],
+  "spirits": {
+    "s2002": {
+      "name": {
+        "en-US": "Headless Defender",
+        "zh-Hans": "无头骑士",
+        "zh-Hant": "無頭騎士",
+        "ja-JP": "首なしの騎士",
+        "ko-KR": "목 없는 기사"
+      },
+      "desc": {
+        "en-US": "A knight with shield at the ready.\nWell-timed blocks will counter enemies,\nleaving them stunned and vulnerable.",
+        "zh-Hans": "骑士拿着盾牌极短时间内抵御敌人攻击，\n抓好时机挡住敌人的攻击即可反击。",
+        "zh-Hant": "騎士的盾牌能在短時間內擋下敵人攻擊，\n若能抓準格擋時機還可進行反擊。",
+        "ja-JP": "盾を構えた騎士が、わずかな間敵の攻撃を\n防ぎ、タイミングよく攻撃を受け止める\nことで反撃を行う",
+        "ko-KR": "방패를 쥔 기사가 잠시 적의 공격을\n막아줍니다. 타이밍 좋게 공격을 막아내면\n반격합니다"
+      },
+      "type": "EItemSpiritType::Sub",
+      "boss": false,
+      "icon": "spirits_s2002"
+    },
+    "s2012": {
+      "name": {
+        "en-US": "Cliffside Hamlet Youth",
+        "zh-Hans": "悬崖村的少年",
+        "zh-Hant": "懸崖村的少年",
+        "ja-JP": "崖の村の少年",
+        "ko-KR": "벼랑 마을 소년"
+      },
+      "desc": {
+        "en-US": "Performs an arced leap and lands with\nenough force to scatter and damage\nsurrounding enemies.",
+        "zh-Hans": "抛物线般的跳跃，着落时分散开，\n攻击周围的敌人。",
+        "zh-Hant": "以抛物線跳出，著地時飛濺四散\n攻擊周圍敵人。",
+        "ja-JP": "液状の体で山なりに飛びかかり、着地時に\n飛散して周囲を攻撃する",
+        "ko-KR": "액체 형태의 몸으로 호를 그리며 뛰어듭니다\n착지하자마자 주변으로 흩어지며 피해를 줍니다"
+      },
+      "type": "EItemSpiritType::Sub",
+      "boss": false,
+      "icon": "spirits_s2012"
+    },
+    "s2022": {
+      "name": {
+        "en-US": "Fallen Archer",
+        "zh-Hans": "堕落的弓兵",
+        "zh-Hant": "墮落的弓箭手",
+        "ja-JP": "堕ちた弓使い",
+        "ko-KR": "타락한 궁수"
+      },
+      "desc": {
+        "en-US": "Releases a fan-shaped volley of arrows\nskyward to attack airborne enemies.",
+        "zh-Hans": "多个箭头以扇形射击，攻击天空中的敌人。",
+        "zh-Hant": "以扇形射出複數支箭矢，\n攻擊上空的敵人。",
+        "ja-JP": "複数の矢を扇状に撃ち出し、上空の敵に\n攻撃する",
+        "ko-KR": "여러 화살을 부채꼴로 쏘아 상공의 적을\n공격합니다"
+      },
+      "type": "EItemSpiritType::Sub",
+      "boss": false,
+      "icon": "spirits_s2022"
+    },
+    "s2032": {
+      "name": {
+        "en-US": "One-Eyed Royal Aegis",
+        "zh-Hans": "单眼的王之盾",
+        "zh-Hant": "單眼的王之盾",
+        "ja-JP": "隻眼の王の盾",
+        "ko-KR": "외눈박이 왕의 방패"
+      },
+      "desc": {
+        "en-US": "The giant knight thrusts his greatsword\ninto the ground, creating a shockwave\nthat launches surrounding enemies\ninto the air.",
+        "zh-Hans": "魁伟的骑士刺出大剑，通过冲击波\n将周围地上的敌人打到空中。",
+        "zh-Hant": "高大的騎士將巨劍刺入大地，\n利用衝擊波將周圍的敵人彈飛至空中。",
+        "ja-JP": "巨体の騎士が大剣を突き立て、衝撃波\nによって周囲の地上の敵を打ち上げる",
+        "ko-KR": "거구의 기사가 대검을 꽂아 충격파로\n지상에 있는 주변의 적을 쳐올립니다"
+      },
+      "type": "EItemSpiritType::Sub",
+      "boss": false,
+      "icon": "spirits_s2032"
+    },
+    "s2052": {
+      "name": {
+        "en-US": "Incompetent Sinner",
+        "zh-Hans": "半秽变的罪犯",
+        "zh-Hant": "未完全穢變的罪人",
+        "ja-JP": "なりそこないの罪人",
+        "ko-KR": "미숙한 죄인"
+      },
+      "desc": {
+        "en-US": "The Incompetent Sinner will grab hold of\nyou and dart forward, propelling you\nboth some distance.",
+        "zh-Hans": "召唤半秽变的罪犯，\n与他一同进行冲刺攻击。",
+        "zh-Hant": "抓住未完全穢變的罪人一起衝刺，\n進行攻擊。",
+        "ja-JP": "喚び出したなりそこないの罪人と一緒に\n突進攻撃を行う",
+        "ko-KR": "미숙한 죄인을 소환해\n함께 돌진 공격을 수행합니다"
+      },
+      "type": "EItemSpiritType::Sub",
+      "boss": false,
+      "icon": "spirits_s2052"
+    },
+    "s2072": {
+      "name": {
+        "en-US": "Hidden Test Subject",
+        "zh-Hans": "隐藏的实验体",
+        "zh-Hant": "潛伏的實驗體",
+        "ja-JP": "隠れ潜む実験体",
+        "ko-KR": "은신 실험체"
+      },
+      "desc": {
+        "en-US": "Uses the urn holding the test subject's\nbody as a shield. Well-timed blocks\nunleash a counterattack on surrounding\nfoes.",
+        "zh-Hans": "使用装有实验体的水缸，\n短时间内防止敌人的攻击。\n抓好时机挡住敌人的攻击，\n可对周围的敌人进行反击。",
+        "zh-Hant": "利用裝著實驗體的大壺，\n能在短時間內擋下敵人攻擊。\n若能抓準時機格擋，\n可對周圍敵人進行反擊。",
+        "ja-JP": "実験体の入った壺を使い、わずかな間\n敵からの攻撃を防ぎ、タイミングよく攻撃を\n受けることで周囲の敵に反撃を行う",
+        "ko-KR": "실험체가 든 항아리로 적의 공격을\n일시적으로 막습니다. 타이밍 좋게\n공격을 받아내면 주위의 적에게 반격합니다"
+      },
+      "type": "EItemSpiritType::Sub",
+      "boss": false,
+      "icon": "spirits_s2072"
+    },
+    "s2082": {
+      "name": {
+        "en-US": "Castle Town Maiden",
+        "zh-Hans": "城堡里的姑娘",
+        "zh-Hant": "城鎮姑娘",
+        "ja-JP": "城下の娘",
+        "ko-KR": "성 밑 지역 여인"
+      },
+      "desc": {
+        "en-US": "Summons the spirit of the Castle Town\nMaiden, who strikes enemies she finds\non the ground with melee attacks.",
+        "zh-Hans": "在限定的时间内，\n来自城堡的姑娘的灵魂会一起行动，\n发现地面上的敌人时，会进行攻击支援。",
+        "zh-Hant": "召喚城鎮姑娘的靈魂並令其追隨，\n在周圍徘徊一段時間，\n發現地面上的敵人會進行支援攻擊。",
+        "ja-JP": "城下の娘の魂を喚び出し、追従させる\n一定時間周囲を走り回り、地上の敵を\n見つけると、近接攻撃を行って支援する",
+        "ko-KR": "성 밑 지역에 살던 여인의 혼이\n주변을 일정 시간 따라다니며\n지상의 적이 나타나면 지원 공격을\n해줍니다"
+      },
+      "type": "EItemSpiritType::Sub",
+      "boss": false,
+      "icon": "spirits_s2082"
+    },
+    "s2092": {
+      "name": {
+        "en-US": "Chief Guardian",
+        "zh-Hans": "守护者之长",
+        "zh-Hant": "守護者之長",
+        "ja-JP": "守り人の長",
+        "ko-KR": "수석 수호자"
+      },
+      "desc": {
+        "en-US": "Hurls a chain fitted with a circular blade. ",
+        "zh-Hans": "用链条旋转圆形刀片，\n攻击周围的敌人。",
+        "zh-Hant": "迴轉鎖鏈環刃攻擊自身周圍的敵人。",
+        "ja-JP": "鎖付きの円刃を飛ばして範囲攻撃を行う",
+        "ko-KR": "둥근 칼날이 달린 쇠사슬을\n빙빙 돌려 주변의 적을 공격합니다"
+      },
+      "type": "EItemSpiritType::Sub",
+      "boss": false,
+      "icon": "spirits_s2092"
+    },
+    "s2102": {
+      "name": {
+        "en-US": "Western Merchant",
+        "zh-Hans": "西方商人",
+        "zh-Hant": "西方商人",
+        "ja-JP": "西の商人",
+        "ko-KR": "서쪽 상인"
+      },
+      "desc": {
+        "en-US": "Summons the spirit of the Western\nMerchant, who launches ranged attacks\nat enemies on sight.",
+        "zh-Hans": "西方商人的灵魂追随着莉莉，\n发现敌人时，会发出远距离攻击来提供支援。",
+        "zh-Hant": "召喚西方商人的靈魂，並令其追隨。\n發現敵人後以遠距離攻擊支援。",
+        "ja-JP": "西の商人の魂を喚び出し、追従させる\n敵を見つけると遠隔攻撃で支援する",
+        "ko-KR": "서쪽 상인의 영혼이 릴리의 주변을\n따라다니다 적이 보이면\n원거리 지원 공격을 해줍니다"
+      },
+      "type": "EItemSpiritType::Sub",
+      "boss": false,
+      "icon": "spirits_s2102"
+    },
+    "s2112": {
+      "name": {
+        "en-US": "Cliffside Hamlet Elder",
+        "zh-Hans": "悬崖村村长",
+        "zh-Hant": "懸崖村村長",
+        "ja-JP": "崖の村の村長",
+        "ko-KR": "벼랑 마을 촌장"
+      },
+      "desc": {
+        "en-US": "Their bloated body arcs up into the air,\nlanding with force enough to level the\nsurrounding area.",
+        "zh-Hans": "用肥胖的身体抛物线般的跳跃，\n着落时会压向周围造成伤害。",
+        "zh-Hant": "以拋物線跳出，肥大的身體\n在著地時壓扁周圍的敵人進行攻擊。",
+        "ja-JP": "肥大した体で山なりに飛びかかり\n着地時に周囲を押しつぶして攻撃する",
+        "ko-KR": "비대한 몸으로 호를 그리며 달려들어\n착지와 동시에 주위를 마구 뭉개버립니다"
+      },
+      "type": "EItemSpiritType::Sub",
+      "boss": false,
+      "icon": "spirits_s2112"
+    },
+    "s2122": {
+      "name": {
+        "en-US": "Fungal Sorcerer",
+        "zh-Hans": "菌之魔术师",
+        "zh-Hant": "菌類魔術師",
+        "ja-JP": "菌の魔術師",
+        "ko-KR": "포자 마법사"
+      },
+      "desc": {
+        "en-US": "Generates a toxic mist that reduces\nenemy health over time.\nDamage from the mist cannot\nbe blocked.",
+        "zh-Hans": "产生毒雾。\n接触到毒雾的敌人会被慢慢降低体力。\n无法防止由毒雾造成的伤害。",
+        "zh-Hant": "散發出有毒的霧，\n碰到毒霧的敵人體力會慢慢減少。\n毒霧的傷害無法防禦。",
+        "ja-JP": "毒性の霧を発生させ、霧に触れている\n敵の体力を時間をかけて減らす\n霧によるダメージはガードされない",
+        "ko-KR": "독성 안개를 만듭니다. 안개에 닿은 적은\n시간이 지나며 체력을 잃습니다\n안개에 의한 대미지는 가드할 수 없습니다"
+      },
+      "type": "EItemSpiritType::Sub",
+      "boss": false,
+      "icon": "spirits_s2122"
+    },
+    "s2132": {
+      "name": {
+        "en-US": "Floral Sorceress",
+        "zh-Hans": "花之魔女",
+        "zh-Hant": "花之魔女",
+        "ja-JP": "花の魔女",
+        "ko-KR": "꽃의 마녀"
+      },
+      "desc": {
+        "en-US": "Harnesses the wind to blow away enemies\nbefore you.",
+        "zh-Hans": "唤起强风，吹飞前方的敌人。",
+        "zh-Hant": "捲起旋風，吹飛前方的敵人。",
+        "ja-JP": "風を巻き起こして、前方の敵を吹き飛ばす",
+        "ko-KR": "바람을 일으켜 주위의 적을 날려 버립니다"
+      },
+      "type": "EItemSpiritType::Sub",
+      "boss": false,
+      "icon": "spirits_s2132"
+    },
+    "s2162": {
+      "name": {
+        "en-US": "Elder Crypt Keeper",
+        "zh-Hans": "老守墓人",
+        "zh-Hant": "古代守墓者",
+        "ja-JP": "古き墓守",
+        "ko-KR": "고대 묘지기"
+      },
+      "desc": {
+        "en-US": "Fires arcane projectiles that damage\nand trap enemies for a short time.",
+        "zh-Hans": "分散魔法子弹，对触弹的敌人造成伤害。\n能够暂时封住行动。",
+        "zh-Hant": "散布魔法彈，不僅能對敵人造成傷害，\n還能讓敵人在短時間內動彈不得。",
+        "ja-JP": "魔法弾を散布し、触れた敵にダメージを\n与えつつ、少しの間動きを封じる",
+        "ko-KR": "마법탄을 마구 뿌립니다. 여기에 닿으면\n대미지를 입으며 움직임이 잠시 멈춥니다"
+      },
+      "type": "EItemSpiritType::Sub",
+      "boss": false,
+      "icon": "spirits_s2162"
+    },
+    "s2172": {
+      "name": {
+        "en-US": "Verboten Champion",
+        "zh-Hans": "禁区的战士",
+        "zh-Hant": "禁域的戰士",
+        "ja-JP": "禁域の戦士",
+        "ko-KR": "금역의 전사"
+      },
+      "desc": {
+        "en-US": "Leap upward with the Verboten Champion,\nshredding airborne enemies with his\nrazor-sharp claws.",
+        "zh-Hans": "与禁区的战士一起跳跃，\n攻击空中的敌人。",
+        "zh-Hant": "與禁域的戰士一同跳躍，\n攻擊空中的敵人。",
+        "ja-JP": "禁域の戦士と共に跳躍し、空中の敵に\n向けた攻撃を行う",
+        "ko-KR": "금역의 전사와 함께\n뛰어올라 공중의 적을 공격합니다"
+      },
+      "type": "EItemSpiritType::Sub",
+      "boss": false,
+      "icon": "spirits_s2172"
+    },
+    "s2182": {
+      "name": {
+        "en-US": "Dark Executioner",
+        "zh-Hans": "暗部的执行人",
+        "zh-Hant": "暗部處刑人",
+        "ja-JP": "暗部の執行人",
+        "ko-KR": "암부 집행인"
+      },
+      "desc": {
+        "en-US": "Phases behind an enemy in visible range\nand brings down their blade on the\nunsuspecting victim.",
+        "zh-Hans": "在可见范围内的敌人身后出现并向他们砍去。",
+        "zh-Hant": "突然出現在敵人背後揮刀攻擊。\n只能對可見範圍內的敵人使用。",
+        "ja-JP": "目視できる範囲内の敵の背後に\n出現して斬りつける",
+        "ko-KR": "가시 범위의 적 뒤편에 나타나\n베어버립니다"
+      },
+      "type": "EItemSpiritType::Sub",
+      "boss": false,
+      "icon": "spirits_s2182"
+    },
+    "s2192": {
+      "name": {
+        "en-US": "Fallen Sentinel",
+        "zh-Hans": "异变的守卫",
+        "zh-Hant": "異形的衛兵",
+        "ja-JP": "なれ果ての衛兵",
+        "ko-KR": "영락한 몰골의 위병"
+      },
+      "desc": {
+        "en-US": "Flies forward, piercing enemies in their\npath with their blade.",
+        "zh-Hans": "向前滑行，并用剑刺穿前方敌人。",
+        "zh-Hant": "向前滑翔並用劍刺穿前方敵人。",
+        "ja-JP": "真っ直ぐ滑空し、前方の敵を剣で貫いていく",
+        "ko-KR": "직선으로 활공해 전방의 적을\n검으로 찌릅니다"
+      },
+      "type": "EItemSpiritType::Sub",
+      "boss": false,
+      "icon": "spirits_s2192"
+    },
+    "s2232": {
+      "name": {
+        "en-US": "Forsaken Fellwyrm",
+        "zh-Hans": "腐龙的孤儿",
+        "zh-Hant": "腐龍的孤兒",
+        "ja-JP": "腐竜の孤児",
+        "ko-KR": "버려진 부패룡"
+      },
+      "desc": {
+        "en-US": "Exhales a breath of toxic mist that\nspreads over a wide area. Enemies that\nmake contact will lose health over time.\nBreath damage cannot be guarded.",
+        "zh-Hans": "呼出有炎毒的气息并且广泛传播。\n触碰到气息的敌人将渐渐失去体力。\n无法防止由此造成的伤害。",
+        "zh-Hant": "噴出熱毒的氣息，毒氣會擴散至廣範圍。\n觸碰到毒氣的敵人會持續減少生命值，\n毒氣的傷害無法防禦。",
+        "ja-JP": "熱毒の息を広範囲にわたって蔓延させ\n息に触れている敵の体力を\n時間をかけて減らす\n息によるダメージはガードされない",
+        "ko-KR": "독성이 있는 숨을 내뿜습니다\n숨은 광범위하게 퍼지는데, 여기에 닿는\n적은 시간이 지나며 체력을 잃습니다\n이 대미지는 가드할 수 없습니다"
+      },
+      "type": "EItemSpiritType::Sub",
+      "boss": false,
+      "icon": "spirits_s2232"
+    },
+    "s5000": {
+      "name": {
+        "en-US": "Umbral Knight",
+        "zh-Hans": "黑色骑士",
+        "zh-Hant": "黑衣騎士",
+        "ja-JP": "黒衣の騎士",
+        "ko-KR": "흑기사"
+      },
+      "desc": {
+        "en-US": "Unleashes a flurry of sword attacks.\nAttack direction can be changed during\nthe advance by moving right or left.",
+        "zh-Hans": "用剑连续发动攻击，\n同时按左右键可以边前进边发出攻击。",
+        "zh-Hant": "揮舞大劍進行連續攻擊。\n攻擊時輸入左右按鈕即可邊前進邊攻擊。",
+        "ja-JP": "剣による連続攻撃を行う\n同時に左右入力によって前進しながら\n攻撃することもできる",
+        "ko-KR": "검으로 연속 공격을 합니다\n동시에 좌우 입력을 통해 전진하며\n공격할 수도 있습니다"
+      },
+      "type": "EItemSpiritType::Main",
+      "boss": true,
+      "icon": "spirits_s5000"
+    },
+    "s5010": {
+      "name": {
+        "en-US": "Guardian Siegrid",
+        "zh-Hans": "守护者西丽德",
+        "zh-Hant": "守護者希格麗德",
+        "ja-JP": "守り人シーグリッド",
+        "ko-KR": "수호자 시그리드"
+      },
+      "desc": {
+        "en-US": "Swings an iron ball to attack\nsurrounding enemies. Subskills have a\ncooldown and limited number of uses,\nbut can be used in conjunction with\nother skills.",
+        "zh-Hans": "挥舞铁球攻击周围的敌人。\n虽有冷却时间和使用次数限制，\n这个副技能能够结合其它的技能使用。",
+        "zh-Hant": "揮舞鐵球攻擊自己周圍的敵人。\n副技能有冷卻時間和使用次數限制，\n但可以和其他技能同時發動。",
+        "ja-JP": "鉄球を振り回し、周囲の敵に攻撃する\nサブスキルは再使用までのリキャストタイム\nや使用回数の制限があるが\n他のスキルと合わせて発動することができる",
+        "ko-KR": "철구를 돌려 주위의 적을 공격합니다\n서브 스킬은 재사용 대기 시간과 사용 횟수\n제한이 있으나, 다른 스킬과 함께\n사용할 수 있습니다"
+      },
+      "type": "EItemSpiritType::Sub",
+      "boss": true,
+      "icon": "spirits_s5010"
+    },
+    "s5020": {
+      "name": {
+        "en-US": "Guardian Silva",
+        "zh-Hans": "守护者西丽亚",
+        "zh-Hant": "守護者希爾芭",
+        "ja-JP": "守り人シルヴァ",
+        "ko-KR": "수호자 실바"
+      },
+      "desc": {
+        "en-US": "Chains attacks with a hammer. Hold to\ncharge an attack. Charged attacks cause\nmore damage and cover a wider area.",
+        "zh-Hans": "用槌子连续发动攻击。\n可以通过长按输入键来蓄力，\n使攻击范围加大，\n造成更多伤害。",
+        "zh-Hant": "以槌子進行連續攻擊。\n按住按鈕可以蓄氣，\n蓄氣攻擊能造成更大的傷害和彈飛敵人。",
+        "ja-JP": "槌による連続攻撃を行う\n長押し入力によってチャージが可能\nチャージ攻撃は、より広い範囲に大きな\nダメージを与える",
+        "ko-KR": "망치로 연속 공격을 합니다\n길게 눌러서 힘을 모은 상태에서 공격하면\n타격 대미지와 타격 범위가 늘어납니다"
+      },
+      "type": "EItemSpiritType::Main",
+      "boss": true,
+      "icon": "spirits_s5020"
+    },
+    "s5030": {
+      "name": {
+        "en-US": "Knight Captain Julius",
+        "zh-Hans": "骑士长尤利乌斯",
+        "zh-Hant": "騎士長尤利烏斯",
+        "ja-JP": "騎士長ユリウス",
+        "ko-KR": "기사장 율리우스"
+      },
+      "desc": {
+        "en-US": "Unleashes a series of jabbing attacks\nwith a lance that allows for maximum\nreach. Advancing thrusts can be made by\nusing this skill while moving sideways.",
+        "zh-Hans": "利用骑枪进行连续性的攻击。\n骑枪的前方攻击距离长，\n同时按左右键可以边前进边发出攻击。",
+        "zh-Hant": "以長槍進行連續攻擊，\n長槍有較長的前方射程。\n輸入左右按鈕即可邊前進邊攻擊。",
+        "ja-JP": "槍による連続攻撃を行う\n槍は前方へ長いリーチを持ち、左右入力に\nよって前進しながら攻撃することができる",
+        "ko-KR": "창으로 연속 공격을 수행합니다\n창은 전방 공격 거리가 깁니다\n좌우 입력을 통해 전진하면서\n공격할 수 있습니다"
+      },
+      "type": "EItemSpiritType::Main",
+      "boss": true,
+      "icon": "spirits_s5030"
+    },
+    "s5040": {
+      "name": {
+        "en-US": "Dark Witch Eleine",
+        "zh-Hans": "黑色魔女伊莱恩",
+        "zh-Hant": "黑魔女伊萊嫣",
+        "ja-JP": "黒の魔女イレイェン",
+        "ko-KR": "흑마녀 일레인"
+      },
+      "desc": {
+        "en-US": "Fires ranged arcane projectiles.\nProjectiles will home in slightly on\nenemies in front of you.",
+        "zh-Hans": "用魔法子弹进行远距离攻击。\n魔法子弹会飞向前方的敌人，\n拥有略微的自寻功能。",
+        "zh-Hant": "以魔法彈進行遠距離攻擊。\n魔法彈有微弱的導彈性能，\n會瞄準飛向前方敵人。",
+        "ja-JP": "魔法弾による遠隔攻撃を行う\n魔法弾は前方の敵に向かってわずかに\n誘導して飛ぶ",
+        "ko-KR": "마법탄으로 원거리 공격을 합니다\n유도탄 같은 느낌으로\n전방의 적을 향해 움직입니다"
+      },
+      "type": "EItemSpiritType::Main",
+      "boss": true,
+      "icon": "spirits_s5040"
+    },
+    "s5050": {
+      "name": {
+        "en-US": "Gerrod, the Elder Warrior",
+        "zh-Hans": "老战士格落特",
+        "zh-Hant": "老戰士格洛特",
+        "ja-JP": "老戦士ゲルロッド",
+        "ko-KR": "노전사 겔로드"
+      },
+      "desc": {
+        "en-US": "Swings a heavy, powerful hammer slowly,\nbut with force and range enough to blow\nenemies away.",
+        "zh-Hans": "用巨大的锤子重重地给与强烈的一击。\n动作缓慢，可是攻击范围广，\n可以把敌人击飞。",
+        "zh-Hant": "以大槌使出強烈的重擊。\n動作緩慢，但攻擊範圍廣，\n還能彈飛敵人。",
+        "ja-JP": "大槌による重く強烈な一撃を与える\n動作は遅いが範囲が広く、敵を吹き飛ばす\nことができる",
+        "ko-KR": "큰 망치로 강렬하고 육중한 일격을\n가합니다. 느리지만 범위가\n넓고 적을 날려 보낼 수 있습니다"
+      },
+      "type": "EItemSpiritType::Main",
+      "boss": true,
+      "icon": "spirits_s5050"
+    },
+    "s5060": {
+      "name": {
+        "en-US": "Hoenir, Keeper of the Abyss",
+        "zh-Hans": "深渊的守卫海尼尔",
+        "zh-Hant": "深淵守衛海尼爾",
+        "ja-JP": "深淵の番人ヘニール",
+        "ko-KR": "심연 파수꾼 회니르"
+      },
+      "desc": {
+        "en-US": "Launches a blitz of dark blades to shred\nthe enemy to pieces from a distance.\nTheir short range is made up for with\nspeed.",
+        "zh-Hans": "丢出暗器，进行远距离攻击。\n虽然攻击距离短，\n但是速度快而且能连续攻击。",
+        "zh-Hant": "投擲暗器，進行遠距離攻擊。\n射程短但攻擊速度快。",
+        "ja-JP": "暗器の刃を投げつけ、遠隔攻撃を行う\n射程は短いが素早く連射がきく",
+        "ko-KR": "비밀 무기인 칼날을 던져서\n원거리 공격을 수행합니다\n빠른 속도가 짧은 사거리를 보완합니다"
+      },
+      "type": "EItemSpiritType::Main",
+      "boss": true,
+      "icon": "spirits_s5060"
+    },
+    "s5070": {
+      "name": {
+        "en-US": "Ulv, the Mad Knight",
+        "zh-Hans": "狂骑士狼",
+        "zh-Hant": "狂騎士沃爾弗",
+        "ja-JP": "狂い騎士ウルヴ",
+        "ko-KR": "미친 기사 울브"
+      },
+      "desc": {
+        "en-US": "Slashes twice with giant claws.\nCharging will unleash a series of\ngouging attacks and a devastating\nfinisher, but leaves you wide open.",
+        "zh-Hans": "用大爪子快速发动两连击。\n可以通过长按输入键来蓄力。\n虽然可以在输出连续伤害后，\n转变为强大的拉扯攻击，但是破绽很大。",
+        "zh-Hant": "以巨爪進行快速的二連擊。\n按住按鈕可進行蓄氣，\n在連續攻擊後使出強勁的撕裂攻擊，\n但破綻較大。",
+        "ja-JP": "大爪による素早い二連攻撃を行う\n長押し入力でチャージが可能\nえぐるように連続ダメージを与えた後\n強烈な引き抜き攻撃に変化するが\n隙は大きい",
+        "ko-KR": "큰 손톱으로 재빨리 2연속 공격을\n합니다. 길게 눌러 힘을 모을 수 있으며,\n도려내듯 연속 대미지를 입힌 후에\n강렬한 분리 공격으로 변화하나 틈이 큽니다"
+      },
+      "type": "EItemSpiritType::Main",
+      "boss": true,
+      "icon": "spirits_s5070"
+    },
+    "s5080": {
+      "name": {
+        "en-US": "Faden, the Heretic",
+        "zh-Hans": "异端者法腾",
+        "zh-Hant": "異端者法登",
+        "ja-JP": "異端者ファーデン",
+        "ko-KR": "이단자 파딘"
+      },
+      "desc": {
+        "en-US": "Manipulates Blighted to blast enemies.\nWhile slow, this deals heavy damage\nand can blow enemies away at a distance.",
+        "zh-Hans": "操纵秽鬼进行炮击。\n虽然动作缓慢，但能从远距离\n造成巨大的伤害，并击飞敌人。",
+        "zh-Hant": "操縱穢者進行砲擊。\n動作緩慢，但能從遠距離造成大傷害\n以及將敵人彈飛。",
+        "ja-JP": "穢者を操り砲撃を行う\n動作が遅いが、遠隔から高いダメージを\n与えて吹き飛ばすことができる",
+        "ko-KR": "타락자를 조종해 공격합니다\n움직임은 느리지만, 원거리 대미지가\n크고 적을 날려 보낼 수 있습니다"
+      },
+      "type": "EItemSpiritType::Main",
+      "boss": true,
+      "icon": "spirits_s5080"
+    }
+  },
+  "passives": {
+    "i_passive_dmgcut_LV1": {
+      "name": {
+        "en-US": "Broken Music Box",
+        "zh-Hans": "破损的音乐盒",
+        "zh-Hant": "壞掉的音樂盒",
+        "ja-JP": "壊れたオルゴール",
+        "ko-KR": "망가진 오르골"
+      },
+      "desc": {
+        "en-US": "Slightly reduces damage received from\nenemies.",
+        "zh-Hans": "稍微减轻敌人所造成的伤害",
+        "zh-Hant": "稍微減輕敵人造成的傷害",
+        "ja-JP": "敵から受けるダメージを少し軽減する",
+        "ko-KR": "피격 대미지 소폭 경감"
+      },
+      "slots": 2,
+      "available": true,
+      "icon": "passives_i_passive_dmgcut_LV1"
+    },
+    "i_passive_dmgcut_LV2": {
+      "name": {
+        "en-US": "Cracked Familiar Stone",
+        "zh-Hans": "破裂的魔石",
+        "zh-Hant": "破裂的魔石",
+        "ja-JP": "ひび割れた魔石",
+        "ko-KR": "금이 간 마석"
+      },
+      "desc": {
+        "en-US": "Reduces damage received from enemies.",
+        "zh-Hans": "减轻敌人所造成的伤害",
+        "zh-Hant": "減輕敵人造成的傷害",
+        "ja-JP": "敵から受けるダメージを軽減する",
+        "ko-KR": "피격 대미지 경감"
+      },
+      "slots": 3,
+      "available": true,
+      "icon": "passives_i_passive_dmgcut_LV2"
+    },
+    "i_passive_dmgcut_LV3": {
+      "name": {
+        "en-US": "Snowdrop Bracelet",
+        "zh-Hans": "雪之花手镯",
+        "zh-Hant": "雪花手鐲",
+        "ja-JP": "雪花の腕輪",
+        "ko-KR": "눈꽃의 팔찌"
+      },
+      "desc": {
+        "en-US": "Greatly reduces damage received from\nenemies.",
+        "zh-Hans": "大量减轻敌人所造成的伤害",
+        "zh-Hant": "大幅減輕敵人造成的傷害",
+        "ja-JP": "敵から受けるダメージを大きく軽減する",
+        "ko-KR": "피격 대미지 대폭 경감"
+      },
+      "slots": 4,
+      "available": true,
+      "icon": "passives_i_passive_dmgcut_LV3"
+    },
+    "i_passive_dmgup": {
+      "name": {
+        "en-US": "Blighted Appendage",
+        "zh-Hans": "秽鬼之指",
+        "zh-Hant": "穢者的手指",
+        "ja-JP": "穢者の指",
+        "ko-KR": "타락자의 손가락"
+      },
+      "desc": {
+        "en-US": "Increases damage dealt.",
+        "zh-Hans": "增加所造成的伤害",
+        "zh-Hant": "所有給予的傷害增加",
+        "ja-JP": "与えるダメージが増加する",
+        "ko-KR": "타격 대미지 증가"
+      },
+      "slots": 3,
+      "available": true,
+      "icon": "passives_i_passive_dmgup"
+    },
+    "i_passive_dmgup_airborne": {
+      "name": {
+        "en-US": "Ancient Dragon Claw",
+        "zh-Hans": "古龙爪",
+        "zh-Hant": "古龍的爪子",
+        "ja-JP": "古の竜の爪",
+        "ko-KR": "고룡의 발톱"
+      },
+      "desc": {
+        "en-US": "Slightly increases damage dealt by\nairborne attacks.",
+        "zh-Hans": "稍微增加空中发动攻击所造成的伤害",
+        "zh-Hant": "稍微增加於空中發動攻擊時造成的傷害",
+        "ja-JP": "空中で発動した攻撃で与えるダメージが\n少し増加する",
+        "ko-KR": "공중 발동 공격 대미지 소폭 증가"
+      },
+      "slots": 2,
+      "available": true,
+      "icon": "passives_i_passive_dmgup_airborne"
+    },
+    "i_passive_dmgup_airborne_LV2": {
+      "name": {
+        "en-US": "Unused Relic",
+        "zh-Hans": "古龙爪",
+        "zh-Hant": "古龍的爪子",
+        "ja-JP": "実装しないレリック",
+        "ko-KR": "비장착 유품"
+      },
+      "desc": {
+        "en-US": "Increases damage dealt by airborne\nattacks.",
+        "zh-Hans": "增加空中发动攻击所造成的伤害",
+        "zh-Hant": "增加在空中發動的攻擊傷害",
+        "ja-JP": "空中で発動した攻撃で与えるダメージが\n増加する",
+        "ko-KR": "공중 발동 공격 대미지 증가"
+      },
+      "slots": 3,
+      "available": false,
+      "icon": "passives_i_passive_dmgup_airborne_LV2"
+    },
+    "i_passive_dmgup_grounded": {
+      "name": {
+        "en-US": "Giant's Ring",
+        "zh-Hans": "巨人的戒指",
+        "zh-Hant": "巨人的戒指",
+        "ja-JP": "巨人の指輪",
+        "ko-KR": "거인의 반지"
+      },
+      "desc": {
+        "en-US": "Slightly increases damage dealt by\nattacks made while on the ground.",
+        "zh-Hans": "稍微增加地面上发动攻击所造成的伤害",
+        "zh-Hant": "稍微增加於地面發動攻擊時造成的傷害",
+        "ja-JP": "地上で発動した攻撃で与えるダメージが\n少し増加する",
+        "ko-KR": "지상 발동 공격 대미지 소폭 증가"
+      },
+      "slots": 2,
+      "available": true,
+      "icon": "passives_i_passive_dmgup_grounded"
+    },
+    "i_passive_dmgup_grounded_LV2": {
+      "name": {
+        "en-US": "Unused Relic",
+        "zh-Hans": "巨人的戒指",
+        "zh-Hant": "巨人的戒指",
+        "ja-JP": "実装しないレリック",
+        "ko-KR": "비장착 유품"
+      },
+      "desc": {
+        "en-US": "Increases damage dealt by attacks made\nstanding on the ground.",
+        "zh-Hans": "增加地面上发动攻击所造成的伤害",
+        "zh-Hant": "增加在地上發動的攻擊傷害",
+        "ja-JP": "地上で発動した攻撃で与えるダメージが\n増加する",
+        "ko-KR": "지상 발동 공격 대미지 증가"
+      },
+      "slots": 3,
+      "available": false,
+      "icon": "passives_i_passive_dmgup_grounded_LV2"
+    },
+    "i_passive_dmgup_maxhp": {
+      "name": {
+        "en-US": "Executioner's Gloves",
+        "zh-Hans": "执行人的手套",
+        "zh-Hant": "處刑人的手套",
+        "ja-JP": "執行人の手袋",
+        "ko-KR": "집행인의 장갑"
+      },
+      "desc": {
+        "en-US": "Increases damage dealt while at maximum\nHP.",
+        "zh-Hans": "增加HP达到上限时所造成的伤害",
+        "zh-Hant": "HP增加到最大值時給予的傷害增加",
+        "ja-JP": "HPが最大の時与えるダメージが増加する",
+        "ko-KR": "HP 최대 시 타격 대미지 증가"
+      },
+      "slots": 2,
+      "available": true,
+      "icon": "passives_i_passive_dmgup_maxhp"
+    },
+    "i_passive_dmgup_swimming": {
+      "name": {
+        "en-US": "Rusted Blue Ornament",
+        "zh-Hans": "生锈的蓝色花卉装饰",
+        "zh-Hant": "生鏽的藍花飾品",
+        "ja-JP": "錆びれた青の花飾り",
+        "ko-KR": "녹슨 청색 꽃문양 장식"
+      },
+      "desc": {
+        "en-US": "Increases damage dealt by attacks\nperformed in or on a body of water.",
+        "zh-Hans": "增加水中和水面发动攻击所造成的伤害",
+        "zh-Hant": "增加在水中發動的攻擊傷害",
+        "ja-JP": "水中・水面で発動した攻撃で与えるダメージが\n増加する",
+        "ko-KR": "수중・수면 발동 공격 대미지 증가"
+      },
+      "slots": 1,
+      "available": true,
+      "icon": "passives_i_passive_dmgup_swimming"
+    },
+    "i_passive_expup_1": {
+      "name": {
+        "en-US": "Bloodstained Ribbon",
+        "zh-Hans": "血染的丝带",
+        "zh-Hant": "染血的緞帶",
+        "ja-JP": "血染めのリボン",
+        "ko-KR": "피로 물든 리본"
+      },
+      "desc": {
+        "en-US": "Slightly increases the amount of the\nBlight (experience) acquired.",
+        "zh-Hans": "稍微增加污秽（经验值）的获取量",
+        "zh-Hant": "污穢（經驗值）獲得量稍微增加",
+        "ja-JP": "穢れ（経験値）の獲得量が少し増加する",
+        "ko-KR": "오염(경험치) 획득량 소폭 증가"
+      },
+      "slots": 1,
+      "available": true,
+      "icon": "passives_i_passive_expup_1"
+    },
+    "i_passive_expup_2": {
+      "name": {
+        "en-US": "Blightwreathed Blade",
+        "zh-Hans": "带有污秽的刀",
+        "zh-Hant": "帶有污穢的刀",
+        "ja-JP": "穢れを帯びた刃物",
+        "ko-KR": "옅게 오염된 칼날"
+      },
+      "desc": {
+        "en-US": "Increases the amount of the Blight\n(experience) acquired.",
+        "zh-Hans": "增加污秽（经验值）的获取量",
+        "zh-Hant": "污穢（經驗值）獲得量增加",
+        "ja-JP": "穢れ（経験値）の獲得量が増加する",
+        "ko-KR": "오염(경험치) 획득량 증가"
+      },
+      "slots": 2,
+      "available": true,
+      "icon": "passives_i_passive_expup_2"
+    },
+    "i_passive_flag_ending_c": {
+      "name": {
+        "en-US": "Luminant Aegis Curio",
+        "zh-Hans": "光耀的守护宝具",
+        "zh-Hant": "閃亮的守護寶具",
+        "ja-JP": "輝く護りの宝具",
+        "ko-KR": "빛나는 수호 보구"
+      },
+      "desc": {
+        "en-US": "Protects from the pain of purification.",
+        "zh-Hans": "抵御净化所带来的痛苦",
+        "zh-Hant": "能緩解淨化的痛苦",
+        "ja-JP": "浄化の苦痛から守ってくれる",
+        "ko-KR": "정화의 고통 억제"
+      },
+      "slots": 0,
+      "available": true,
+      "icon": "passives_i_passive_flag_ending_c"
+    },
+    "i_passive_heal_count_up_1": {
+      "name": {
+        "en-US": "White Priestess Statue",
+        "zh-Hans": "白巫女的雕像",
+        "zh-Hant": "白巫女的雕像",
+        "ja-JP": "白巫女の像",
+        "ko-KR": "백무녀 조각상"
+      },
+      "desc": {
+        "en-US": "Increases the maximum number of uses for\nthe Healing Prayer by 1.",
+        "zh-Hans": "恢复祈祷的次数增加1次",
+        "zh-Hant": "祈禱的次數上限增加1次",
+        "ja-JP": "回復の祈りの回数が1増加する",
+        "ko-KR": "회복 기도 횟수 1 증가"
+      },
+      "slots": 4,
+      "available": true,
+      "icon": "passives_i_passive_heal_count_up_1"
+    },
+    "i_passive_heal_count_up_2": {
+      "name": {
+        "en-US": "White Priestess' Earrings",
+        "zh-Hans": "白巫女的耳环",
+        "zh-Hant": "白巫女的耳飾",
+        "ja-JP": "白巫女の耳飾り",
+        "ko-KR": "백무녀의 귀고리"
+      },
+      "desc": {
+        "en-US": "Increases the maximum number of uses for\nthe Healing Prayer by 1.",
+        "zh-Hans": "恢复祈祷的次数增加1次",
+        "zh-Hant": "祈禱的次數上限增加1次",
+        "ja-JP": "回復の祈りの回数が1増加する",
+        "ko-KR": "회복 기도 횟수 1 증가"
+      },
+      "slots": 2,
+      "available": true,
+      "icon": "passives_i_passive_heal_count_up_2"
+    },
+    "i_passive_heal_count_up_3": {
+      "name": {
+        "en-US": "Priestess' Doll",
+        "zh-Hans": "白巫女娃娃",
+        "zh-Hant": "白巫女娃娃",
+        "ja-JP": "白巫女の人形",
+        "ko-KR": "백무녀의 인형"
+      },
+      "desc": {
+        "en-US": "Increases the maximum number of uses for\nthe Healing Prayer by 1.",
+        "zh-Hans": "恢复祈祷的次数增加1次",
+        "zh-Hant": "祈禱的次數上限增加1次",
+        "ja-JP": "回復の祈りの回数が1増加する",
+        "ko-KR": "회복 기도 횟수 1 증가"
+      },
+      "slots": 3,
+      "available": true,
+      "icon": "passives_i_passive_heal_count_up_3"
+    },
+    "i_passive_heal_power_up": {
+      "name": {
+        "en-US": "Holy Spring Water",
+        "zh-Hans": "纯净清泉的圣水",
+        "zh-Hant": "清澈的泉之聖水",
+        "ja-JP": "穢れなき泉の聖水",
+        "ko-KR": "성스러운 샘물"
+      },
+      "desc": {
+        "en-US": "Increases the potency of the Healing\nPrayer.",
+        "zh-Hans": "增加恢复祈祷的恢复量",
+        "zh-Hant": "祈禱的回復量增加",
+        "ja-JP": "回復の祈りの回復量が上昇する",
+        "ko-KR": "회복 기도 회복량 증가"
+      },
+      "slots": 1,
+      "available": true,
+      "icon": "passives_i_passive_heal_power_up"
+    },
+    "i_passive_ignore_damage_area": {
+      "name": {
+        "en-US": "Heretic's Mask",
+        "zh-Hans": "异端者的面具",
+        "zh-Hant": "異端者的面罩",
+        "ja-JP": "異端者のマスク",
+        "ko-KR": "이단자의 가면"
+      },
+      "desc": {
+        "en-US": "Greatly reduces damage sustained while\nin Blighted fog and while in or on water.",
+        "zh-Hans": "大幅度减轻污秽之雾中、水中、水面受到的伤害",
+        "zh-Hant": "可大幅減輕於污穢的霧中和水中受到的傷害",
+        "ja-JP": "穢れた霧・水中・水面でのダメージを大きく軽減する",
+        "ko-KR": "오염된 안개・수중・수면에서의 대미지 대폭 감소"
+      },
+      "slots": 1,
+      "available": true,
+      "icon": "passives_i_passive_ignore_damage_area"
+    },
+    "i_passive_jump_height_up": {
+      "name": {
+        "en-US": "Vibrant Plume",
+        "zh-Hans": "七彩羽毛头饰",
+        "zh-Hant": "七彩的羽毛飾品",
+        "ja-JP": "極彩色の羽飾り",
+        "ko-KR": "현란한 깃털 장식"
+      },
+      "desc": {
+        "en-US": "Slightly increases the height of your\njump.",
+        "zh-Hans": "略微地增加跳跃时的高度",
+        "zh-Hant": "跳躍高度稍微增加",
+        "ja-JP": "ジャンプがわずかに高くなる",
+        "ko-KR": "점프 높이 소폭 증가"
+      },
+      "slots": 2,
+      "available": true,
+      "icon": "passives_i_passive_jump_height_up"
+    },
+    "i_passive_maxhpup_LV1": {
+      "name": {
+        "en-US": "Soiled Prayer Beads",
+        "zh-Hans": "脏污的银念珠",
+        "zh-Hant": "髒污的銀念珠",
+        "ja-JP": "汚れた銀のロザリオ",
+        "ko-KR": "더러워진 은제 묵주"
+      },
+      "desc": {
+        "en-US": "Slightly increases maximum HP.",
+        "zh-Hans": "略微增加最大HP值",
+        "zh-Hant": "最大HP稍微增加",
+        "ja-JP": "最大HPがわずかに増加する",
+        "ko-KR": "최대 HP 소폭 증가"
+      },
+      "slots": 1,
+      "available": true,
+      "icon": "passives_i_passive_maxhpup_LV1"
+    },
+    "i_passive_maxhpup_LV2": {
+      "name": {
+        "en-US": "Royal Aegis Crest",
+        "zh-Hans": "王之盾的徽章",
+        "zh-Hant": "王之盾的徽章",
+        "ja-JP": "王の盾の証",
+        "ko-KR": "왕의 방패 징표"
+      },
+      "desc": {
+        "en-US": "Increases maximum HP.",
+        "zh-Hans": "增加最大HP值",
+        "zh-Hant": "最大HP增加",
+        "ja-JP": "最大HPが増加する",
+        "ko-KR": "최대 HP 증가"
+      },
+      "slots": 2,
+      "available": true,
+      "icon": "passives_i_passive_maxhpup_LV2"
+    },
+    "i_passive_maxhpup_LV3": {
+      "name": {
+        "en-US": "Unused Relic",
+        "zh-Hans": "王之盾的徽章",
+        "zh-Hant": "雪花手鐲",
+        "ja-JP": "実装しないレリック",
+        "ko-KR": "비장착 유품"
+      },
+      "desc": {
+        "en-US": "Greatly increases maximum HP.",
+        "zh-Hans": "大量增加最大HP值",
+        "zh-Hant": "最大HP大幅增加",
+        "ja-JP": "最大HPが大きく増加する",
+        "ko-KR": "최대 HP 대폭 증가"
+      },
+      "slots": 3,
+      "available": false,
+      "icon": "passives_i_passive_maxhpup_LV3"
+    },
+    "i_passive_maxmpup": {
+      "name": {
+        "en-US": "Ricorus' Ring",
+        "zh-Hans": "莉柯莉斯的戒指",
+        "zh-Hant": "麗可莉絲的戒指",
+        "ja-JP": "リコリースの指輪",
+        "ko-KR": "리콜리스의 반지"
+      },
+      "desc": {
+        "en-US": "Increases the SP Gauge by 1.",
+        "zh-Hans": "增加1档奥义能量槽",
+        "zh-Hant": "增加奧義條的上限1次",
+        "ja-JP": "奥義ゲージが1つ増加する",
+        "ko-KR": "오의 게이지 1 증가"
+      },
+      "slots": 2,
+      "available": true,
+      "icon": "passives_i_passive_maxmpup"
+    },
+    "i_passive_move_speed_up": {
+      "name": {
+        "en-US": "Spellbound Anklet",
+        "zh-Hans": "魔线脚链",
+        "zh-Hant": "魔絲腳環",
+        "ja-JP": "魔糸のアンクレット",
+        "ko-KR": "마법 발목 밴드"
+      },
+      "desc": {
+        "en-US": "Slightly increases movement and dashing\nspeed.",
+        "zh-Hans": "略微地增加行走或冲刺时的速度",
+        "zh-Hant": "稍微增加走路與衝刺速度",
+        "ja-JP": "走行・ダッシュがわずかに速くなる",
+        "ko-KR": "달리기/돌진 속도 소폭 증가"
+      },
+      "slots": 2,
+      "available": true,
+      "icon": "passives_i_passive_move_speed_up"
+    },
+    "i_passive_mp_restore_up_LV1": {
+      "name": {
+        "en-US": "Eldred's Ring",
+        "zh-Hans": "儿汝莉德的戒指",
+        "zh-Hant": "奧德烈德的戒指",
+        "ja-JP": "エルドレッドの指輪",
+        "ko-KR": "엘드레드의 반지"
+      },
+      "desc": {
+        "en-US": "Speeds up accumulation of the SP Gauge.",
+        "zh-Hans": "增加奥义能量槽累积的速度",
+        "zh-Hant": "增加奧義條的充能速度1次",
+        "ja-JP": "奥義ゲージが溜まる速度が上昇する",
+        "ko-KR": "오의 게이지 축적 속도 증가"
+      },
+      "slots": 3,
+      "available": true,
+      "icon": "passives_i_passive_mp_restore_up_LV1"
+    },
+    "i_passive_override_skin_level": {
+      "name": {
+        "en-US": "Lost Heirloom",
+        "zh-Hans": "曾经失去的东西",
+        "zh-Hant": "曾經失去的東西",
+        "ja-JP": "かつて失ったモノ",
+        "ko-KR": "잃어버린 것"
+      },
+      "desc": {
+        "en-US": "Allows the recollection of one's unblighted form.",
+        "zh-Hans": "能够想起污秽染身前的样貌",
+        "zh-Hant": "能回想起受到污穢前的模樣",
+        "ja-JP": "穢れを受ける前の姿を思い出すことができる",
+        "ko-KR": "오염되기 전의 기억을 떠올릴 수 있게 해줌"
+      },
+      "slots": 0,
+      "available": true,
+      "icon": "passives_i_passive_override_skin_level"
+    },
+    "i_passive_override_skin_level_max": {
+      "name": {
+        "en-US": "Blighted Phantom",
+        "zh-Hans": "污秽的幻影",
+        "zh-Hant": "污穢的幻影",
+        "ja-JP": "穢れの幻影",
+        "ko-KR": "오염의 환영"
+      },
+      "desc": {
+        "en-US": "Calls forth the visage of the Blighted White Priestess.",
+        "zh-Hans": "显示白巫女饱受污秽侵蚀的模样",
+        "zh-Hant": "映照出白巫女污穢的身影",
+        "ja-JP": "白巫女が穢れ果てた姿を映し出す",
+        "ko-KR": "백무녀가 오염된 모습을 보여줌"
+      },
+      "slots": 0,
+      "available": true,
+      "icon": "passives_i_passive_override_skin_level_max"
+    },
+    "i_passive_parry": {
+      "name": {
+        "en-US": "Fretia's Ring",
+        "zh-Hans": "芙莉蒂雅的戒指",
+        "zh-Hant": "芙莉緹亞的戒指",
+        "ja-JP": "フリーティアの指輪",
+        "ko-KR": "프리티아의 반지"
+      },
+      "desc": {
+        "en-US": "Grants the ability to parry once equipped.  Press {0} in time \nwith an incoming attack to repel the strike and nullify its effects.",
+        "zh-Hans": "装备后按下 {0} 会发动“格挡”。\n敌人攻击时，抓好时机按下 {0}，\n便能弹开敌人的攻击，使其无效。",
+        "zh-Hant": "裝備後按 {0} 能發動「格擋」技能。\n敵人攻擊時，在適當的時機按下 {0} \n即可格擋攻擊並使其無效。",
+        "ja-JP": "装備した状態で{0}を押すと「パリィ」が発動するようになる\n敵の攻撃に合わせてタイミング良く{0}を\n押すと攻撃を弾いて無効化できる",
+        "ko-KR": "장비하고 {0} 버튼을 누르면 「쳐내기」 발동\n적의 공격에 맞춰 {0} 버튼을 누르면\n공격을 튕겨내며 무효화 가능"
+      },
+      "slots": 0,
+      "available": true,
+      "icon": "passives_i_passive_parry"
+    },
+    "i_passive_post_damage_invincibility": {
+      "name": {
+        "en-US": "Iris' Ring",
+        "zh-Hans": "伊莉斯的戒指",
+        "zh-Hant": "伊莉絲的戒指",
+        "ja-JP": "イーリスの指輪",
+        "ko-KR": "이리스의 반지"
+      },
+      "desc": {
+        "en-US": "Extends the period of invulnerability after taking damage.",
+        "zh-Hans": "延长受到伤害后的无敌状态时间",
+        "zh-Hant": "受到傷害時的無敵時間增加",
+        "ja-JP": "ダメージを受けた際の無敵時間が増加する",
+        "ko-KR": "대미지 입은 후의 무적 시간 증가"
+      },
+      "slots": 1,
+      "available": false,
+      "icon": "passives_i_passive_post_damage_invincibility"
+    },
+    "i_passive_recast_time_cut_LV1": {
+      "name": {
+        "en-US": "Kilteus' Ring",
+        "zh-Hans": "柯蒂斯的戒指",
+        "zh-Hant": "柯蒂絲的戒指",
+        "ja-JP": "キルティスの指輪",
+        "ko-KR": "킬티스의 반지"
+      },
+      "desc": {
+        "en-US": "Slightly reduces Cooldown times.",
+        "zh-Hans": "稍微减少冷却时间",
+        "zh-Hant": "稍微減少技能冷卻時間",
+        "ja-JP": "スキルのリキャストタイムを少し軽減する",
+        "ko-KR": "스킬 재사용 대기 시간 소폭 감소"
+      },
+      "slots": 2,
+      "available": true,
+      "icon": "passives_i_passive_recast_time_cut_LV1"
+    },
+    "i_passive_recast_time_cut_LV2": {
+      "name": {
+        "en-US": "Calivia's Ring",
+        "zh-Hans": "加莉比雅的戒指",
+        "zh-Hant": "加利薇亞的戒指",
+        "ja-JP": "カリヴィアの指輪",
+        "ko-KR": "칼리비아의 반지"
+      },
+      "desc": {
+        "en-US": "Reduces Cooldown times.",
+        "zh-Hans": "减少冷却时间",
+        "zh-Hant": "減少技能冷卻時間",
+        "ja-JP": "スキルのリキャストタイムを軽減する",
+        "ko-KR": "스킬 재사용 대기 시간 감소"
+      },
+      "slots": 3,
+      "available": true,
+      "icon": "passives_i_passive_recast_time_cut_LV2"
+    },
+    "i_passive_recast_time_cut_LV3": {
+      "name": {
+        "en-US": "Unused Relic",
+        "zh-Hans": "雅若拉的戒指",
+        "zh-Hant": "奧拉的戒指",
+        "ja-JP": "実装しないレリック",
+        "ko-KR": "비장착 유품"
+      },
+      "desc": {
+        "en-US": "Greatly reduces Cooldown times.",
+        "zh-Hans": "大幅度减少冷却时间",
+        "zh-Hant": "大幅減少冷卻時間",
+        "ja-JP": "スキルのリキャストタイムを大きく軽減する",
+        "ko-KR": "스킬 재사용 대기 시간 대폭 감소"
+      },
+      "slots": 4,
+      "available": false,
+      "icon": "passives_i_passive_recast_time_cut_LV3"
+    },
+    "i_passive_regenHP_attack": {
+      "name": {
+        "en-US": "Immortal's Crest",
+        "zh-Hans": "不死骑士的徽章",
+        "zh-Hant": "不死騎士的徽章",
+        "ja-JP": "不死騎士の証",
+        "ko-KR": "불사 기사의 징표"
+      },
+      "desc": {
+        "en-US": "Recover a small amount of HP when you\ndeal damage.",
+        "zh-Hans": "对敌人造成伤害时略微恢复HP",
+        "zh-Hant": "對敵人造成傷害時回復微量HP",
+        "ja-JP": "敵にダメージを与える度にHPがわずかに\n回復する",
+        "ko-KR": "적을 타격할 때마다 HP 소량 회복"
+      },
+      "slots": 3,
+      "available": true,
+      "icon": "passives_i_passive_regenHP_attack"
+    },
+    "i_passive_regenHP_kill": {
+      "name": {
+        "en-US": "Weathered Necklace",
+        "zh-Hans": "风化的战士项链",
+        "zh-Hant": "風化的首飾",
+        "ja-JP": "風化した首飾り",
+        "ko-KR": "풍화한 목걸이"
+      },
+      "desc": {
+        "en-US": "Recover some HP whenever you defeat an\nenemy.",
+        "zh-Hans": "击败敌人时恢复HP",
+        "zh-Hant": "擊敗敵人時回復HP",
+        "ja-JP": "敵を倒す度にHPが回復する",
+        "ko-KR": "적을 처치할 때마다 HP 회복"
+      },
+      "slots": 2,
+      "available": true,
+      "icon": "passives_i_passive_regenHP_kill"
+    },
+    "i_passive_shortheal": {
+      "name": {
+        "en-US": "Nymphilia's Ring",
+        "zh-Hans": "宁菲莉雅的戒指",
+        "zh-Hant": "寧菲莉亞的戒指",
+        "ja-JP": "ニンフェリアの指輪",
+        "ko-KR": "님필리아의 반지"
+      },
+      "desc": {
+        "en-US": "Hastens the Healing Prayer.",
+        "zh-Hans": "加快恢复祈祷的完成速度",
+        "zh-Hant": "加快祈禱的發動速度",
+        "ja-JP": "回復の祈りの発動速度が速くなる",
+        "ko-KR": "회복 기도 발동 속도 증가"
+      },
+      "slots": 1,
+      "available": true,
+      "icon": "passives_i_passive_shortheal"
+    },
+    "i_passive_spirit_maxcast_count_up_LV1": {
+      "name": {
+        "en-US": "Manisa's Ring",
+        "zh-Hans": "玛尼萨的戒指",
+        "zh-Hant": "瑪妮薩的戒指",
+        "ja-JP": "マニサの指輪",
+        "ko-KR": "매니사의 반지"
+      },
+      "desc": {
+        "en-US": "Slightly increases Spirit uses.",
+        "zh-Hans": "稍微增加技能的可使用次数",
+        "zh-Hant": "稍微增加技能使用次數",
+        "ja-JP": "スキルの使用回数が少し増加する",
+        "ko-KR": "스킬 사용 횟수 소폭 증가"
+      },
+      "slots": 2,
+      "available": true,
+      "icon": "passives_i_passive_spirit_maxcast_count_up_LV1"
+    },
+    "i_passive_spirit_maxcast_count_up_LV2": {
+      "name": {
+        "en-US": "Aura's Ring",
+        "zh-Hans": "雅若拉的戒指",
+        "zh-Hant": "奧拉的戒指",
+        "ja-JP": "アウラの指輪",
+        "ko-KR": "아우라의 반지"
+      },
+      "desc": {
+        "en-US": "Increases Spirit uses.",
+        "zh-Hans": "增加技能的可使用次数",
+        "zh-Hant": "增加技能使用次數",
+        "ja-JP": "スキルの使用回数が増加する",
+        "ko-KR": "스킬 사용 횟수 증가"
+      },
+      "slots": 3,
+      "available": true,
+      "icon": "passives_i_passive_spirit_maxcast_count_up_LV2"
+    },
+    "i_passive_spirit_maxcast_count_up_LV3": {
+      "name": {
+        "en-US": "Unused Relic",
+        "zh-Hans": "儿汝莉德的戒指",
+        "zh-Hant": "奧德烈德的戒指",
+        "ja-JP": "実装しないレリック",
+        "ko-KR": "비장착 유품"
+      },
+      "desc": {
+        "en-US": "Greatly increases Spirit uses.",
+        "zh-Hans": "大量增加技能的可使用次数",
+        "zh-Hant": "大幅增加技能使用次數",
+        "ja-JP": "スキルの使用回数が大きく増加する",
+        "ko-KR": "스킬 사용 횟수 대폭 증가"
+      },
+      "slots": 4,
+      "available": false,
+      "icon": "passives_i_passive_spirit_maxcast_count_up_LV3"
+    },
+    "i_passive_stamina_up": {
+      "name": {
+        "en-US": "Unused Relic",
+        "zh-Hans": "Stamina up",
+        "zh-Hant": "不實裝的遺物",
+        "ja-JP": "実装しないレリック",
+        "ko-KR": "비장착 유품"
+      },
+      "desc": {
+        "en-US": "Enemy attacks will stun you less often.",
+        "zh-Hans": "受敌人攻击时较难陷入硬直状态",
+        "zh-Hant": "受到敵人攻擊時較不易退怯",
+        "ja-JP": "敵からの攻撃で怯みにくくなる",
+        "ko-KR": "적의 공격에 쉽게 기죽지 않음"
+      },
+      "slots": 3,
+      "available": false,
+      "icon": "passives_i_passive_stamina_up"
+    },
+    "i_passive_stunstamina_damage_up": {
+      "name": {
+        "en-US": "Decayed Crown",
+        "zh-Hans": "腐朽的王冠",
+        "zh-Hant": "腐朽的王冠",
+        "ja-JP": "朽ちた王冠",
+        "ko-KR": "낡은 왕관"
+      },
+      "desc": {
+        "en-US": "Enemies will be more easily stunned by\nattacks.",
+        "zh-Hans": "攻击较容易使敌人陷入硬直状态",
+        "zh-Hant": "攻擊容易造成敵人退怯",
+        "ja-JP": "攻撃で敵が怯みやすくなる",
+        "ko-KR": "공격 시 적이 쉽게 기죽음"
+      },
+      "slots": 3,
+      "available": true,
+      "icon": "passives_i_passive_stunstamina_damage_up"
+    },
+    "i_passive_swim_fast": {
+      "name": {
+        "en-US": "Ruined Witch's Book",
+        "zh-Hans": "污秽侵蚀的魔女之书",
+        "zh-Hant": "侵蝕的魔女之書",
+        "ja-JP": "蝕む魔女の書",
+        "ko-KR": "좀먹은 마녀의 서"
+      },
+      "desc": {
+        "en-US": "Increases aquatic movement speed.",
+        "zh-Hans": "提高水中和水面的移动速度",
+        "zh-Hant": "水中和水面上的移動速度增加",
+        "ja-JP": "水中・水面での移動が速くなる",
+        "ko-KR": "수중・수면 이동 속도 증가"
+      },
+      "slots": 1,
+      "available": true,
+      "icon": "passives_i_passive_swim_fast"
+    }
+  }
+}

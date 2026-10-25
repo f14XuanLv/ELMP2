@@ -54,6 +54,7 @@ std::uint64_t swallowed();
 void raw_key(const std::string& keyboard, std::uint32_t vk, bool down);
 bool legacy_allowed(std::uint32_t vk, bool down);
 void clear_keys();
+bool any_key(const std::string& keyboard); // manager device indicator
 
 // Bindings.
 void set_bindings(std::int64_t slot, bindings::Bindings b);

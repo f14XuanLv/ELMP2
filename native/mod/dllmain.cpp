@@ -20,7 +20,13 @@
 #include "party/rules.h"
 #include "party/transit.h"
 #include "party/camera_sync.h"
+#include "party/hud_feed.h"
+#include "party/manager.h"
+#include "party/menu_ctrl.h"
+#include "party/ui.h"
+#include "core/catalog.h"
 #include "core/hitrules.h"
+#include "overlay/render.h"
 #include "pvp/hitgate.h"
 #include "dev/lua_bridge.h"
 #include "engine/binary_checks.h"
@@ -72,6 +78,7 @@ void dev_dpi_awareness() {
 }
 
 bool g_settings_loaded = false;
+std::filesystem::path g_data_dir;
 
 // Work that needs a live engine (saved dir via ProcessEvent, offset checks via reflection); retried
 // on the frame pump until it succeeds, then the phase disables itself.
@@ -81,6 +88,7 @@ void deferred_init(const frame::Tick&) {
     const auto file = std::filesystem::path(saved) / L"ELMP" / L"ELMP" / L"settings.json";
     if (const auto err = settings::load(file); !err.empty()) log::warn("settings {}: {}", file.string(), err);
     binary_checks::run();
+    if (auto e = overlay::install(g_data_dir); !e.empty()) log::error("overlay disabled: {}", e);
     g_settings_loaded = true;
     log::info("saved dir {}", log::utf8(saved));
 }
@@ -106,6 +114,7 @@ public:
 
     ~ElmpMod() override {
         frame::uninstall();
+        overlay::uninstall();
         console::uninstall();
         lifecycle::uninstall();
         registry::uninstall();
@@ -124,6 +133,8 @@ public:
         }
         log::info("{} ({}) preflight ok: sha256 {}, {} functions verified in {:.0f} ms", build::version, build::dev ? "dev" : "shipping", pf.sha256,
                   pf.functions.size(), pf.ms);
+        g_data_dir = mod_dir_ / "data";
+        if (auto e = core::catalog::load(g_data_dir / "catalog" / "items.json"); !e.empty()) log::error("catalog: {}", e);
         registry::install();
         lifecycle::install();
         console::install();
@@ -140,9 +151,14 @@ public:
         core::hitrules::install();
         party::camera_sync::install();
         pvp::install();
+        party::ui::install();
+        party::hud_feed::install();
+        party::menu_ctrl::install();
+        party::manager::install();
         console::register_core_commands();
         console::register_party_commands();
-        frame::set_activity([] { return core::active() > 0; }, nullptr);
+        // An open ELMP window is activity too (it pauses the world and polls devices).
+        frame::set_activity([] { return core::active() > 0 || party::manager::is_open() || party::menu_ctrl::open_slot() != 0; }, nullptr);
         frame::add_phase("lifecycle", [](const frame::Tick& t) { lifecycle::step(t.now_us); });
         frame::add_phase("init", deferred_init, [] { return !g_settings_loaded; }, 250);
         frame::add_phase("registry.drain", [](const frame::Tick&) { registry::drain(); });

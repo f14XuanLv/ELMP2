@@ -5,7 +5,11 @@
 
 #include "party/bench.h"
 #include "party/camera_sync.h"
+#include "party/hud_feed.h"
+#include "party/manager.h"
+#include "party/menu_ctrl.h"
 #include "pvp/hitgate.h"
+#include "overlay/render.h"
 #include "party/devices.h"
 #include "party/progress.h"
 #include "party/respawn.h"
@@ -213,6 +217,32 @@ void pvp_cmd(Args, std::string& out) { out += pvp::describe(); }
 
 void camera_cmd(Args, std::string& out) { out += party::camera_sync::describe(); }
 
+// elmp menu <slot> [close | up|down|left|right|confirm|back|context|prev|next]
+void menu_cmd(Args a, std::string& out) {
+    if (a.empty()) return void(out += party::menu_ctrl::describe());
+    if (a[0] == "close") {
+        party::menu_ctrl::close();
+        return line(out, "menu closed");
+    }
+    if (party::menu_ctrl::open_slot() == 0) {
+        must(party::menu_ctrl::open(to_int(a[0])));
+        if (a.size() == 1) return line(out, std::format("menu of P{} opened", a[0]));
+    }
+    for (std::size_t i = a.size() > 1 ? 1 : 0; i < a.size(); ++i) {
+        if (a[i] == "close") party::menu_ctrl::close();
+        else must(party::menu_ctrl::input(a[i]));
+    }
+    out += party::menu_ctrl::describe();
+}
+
+void manager_cmd(Args a, std::string& out) {
+    if (!a.empty() && a[0] == "open") must(party::manager::open());
+    else if (!a.empty() && a[0] == "close") party::manager::close();
+    out += party::manager::describe();
+}
+
+void hud_cmd(Args, std::string& out) { out += party::hud_feed::describe(); }
+
 void transit_cmd(Args, std::string& out) {
     out += party::transit::describe();
     out += party::respawn::describe();
@@ -251,6 +281,13 @@ void tp_cmd(Args a, std::string& out) {
 }
 
 // elmp kbd <device> <key> down|up|tap
+// elmp ui click|move <x> <y>   (Dev) feed the ELMP overlay directly; nothing reaches the window or the OS cursor
+void ui_cmd(Args a, std::string& out) {
+    if (a.size() < 3 || (a[0] != "click" && a[0] != "move")) throw std::runtime_error("usage: elmp ui click|move <x> <y>  (back-buffer pixels)");
+    overlay::inject_mouse(static_cast<int>(to_int(a[1])), static_cast<int>(to_int(a[2])), a[0] == "click");
+    line(out, std::format("overlay {} at ({},{})", a[0], a[1], a[2]));
+}
+
 void kbd_cmd(Args a, std::string& out) {
     std::size_t i = 0;
     const auto device = device_arg(a, i);
@@ -314,10 +351,14 @@ void register_party_commands() {
     add("team", "<slot> friendly|enemy  (P1 is always friendly; opposing teams can hurt each other)", team_cmd);
     add("pvp", "hit windows: teams, damage / knockback rule, flip counters (rule via elmp set pvpDamage|pvpKnockback)", pvp_cmd);
     add("camera", "shared camera: framing hooks, ally targets, registrations", camera_cmd);
+    add("menu", "[<slot> [inputs…] | close]  PX equipment menu (inputs: up down left right confirm back context prev next)", menu_cmd);
+    add("manager", "[open|close]  ELMP manager window", manager_cmd);
+    add("hud", "HUD feed: per-seat values, skill cache, anchors", hud_cmd);
 #ifdef ELMP_DEV
     add("kill", "<slot> [damage]  (Dev aid) vanilla DoDamage on a seat", kill_cmd);
     add("tp", "<slot> <dy> <dz>  (Dev aid) teleport relative to P1", tp_cmd);
     add("kbd", "<device> <key> down|up|tap  (Dev) inject a keyboard event", kbd_cmd);
+    add("ui", "click|move <x> <y>  (Dev) mouse event straight into the ELMP overlay (no window message)", ui_cmd);
     add("fakepad", "<N> off | <buttons|-> [lx ly]  (Dev) simulated XInput pad", fakepad_cmd);
 #endif
 }
