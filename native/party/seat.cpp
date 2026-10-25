@@ -1,11 +1,13 @@
 #include "party/seat.h"
 
 #include "party/bench.h"
+#include "party/camera_sync.h"
 #include "party/devices.h"
 #include "party/progress.h"
 #include "party/respawn.h"
 #include "party/transit.h"
 
+#include "core/hitrules.h"
 #include "core/permission.h"
 #include "core/profile.h"
 #include "core/schema.h"
@@ -30,6 +32,8 @@ std::map<std::int64_t, Seat> g_seats;
 
 constexpr float kSpacing = 70.0f, kLift = 10.0f;
 constexpr int kCycle = 4;
+
+core::hitrules::Team to_rules(Team t) { return t == Team::Enemy ? core::hitrules::Team::Enemy : core::hitrules::Team::Friendly; }
 
 void sync_router() {
     std::set<std::int64_t> device_seats;
@@ -105,6 +109,7 @@ std::string join(const JoinOptions& opt, std::int64_t* slot_out) {
     progress::joined(slot);
     if (auto e = core::vitals::restore(slot); !e.empty()) return fail("restore: " + e);
 
+    if (auto e = core::hitrules::bind(owner, slot, to_rules(opt.team)); !e.empty()) return fail("team: " + e);
     g_seats[slot] = Seat{slot, opt.source, opt.team};
     core::permission::track(slot);
     transit::arm();
@@ -124,12 +129,23 @@ std::string leave(std::int64_t slot) {
     respawn::forget(slot);
     bench::forget(slot);
     core::permission::forget(slot);
+    core::hitrules::unbind(slot);
     const auto err = core::spawn::despawn(slot, false);
     core::leases().release({"ELMP", slots::OwnerKind::Elmp}, slot);
     g_seats.erase(slot);
+    camera_sync::left(slot);
     sync_router();
     log::info("party: seat {} left{}", slot, err.empty() ? "" : " (" + err + ")");
     return err;
+}
+
+std::string set_team(std::int64_t slot, Team team) {
+    auto it = g_seats.find(slot);
+    if (it == g_seats.end()) return std::format("no seat {}", slot);
+    if (auto e = core::hitrules::bind({"ELMP", slots::OwnerKind::Elmp}, slot, to_rules(team)); !e.empty()) return e;
+    it->second.team = team;
+    log::info("party: seat {} is now {}", slot, team_name(team));
+    return {};
 }
 
 const Seat* seat(std::int64_t slot) {

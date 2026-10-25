@@ -47,7 +47,11 @@ set(ELMP_MOD_SOURCES
     party/bench.cpp
     party/rules.cpp
     party/transit.cpp
+    party/camera_sync.cpp
     core/permission.cpp
+    core/hitrules.cpp
+    camera/framing.cpp
+    pvp/hitgate.cpp
     console/console.cpp
     console/commands.cpp
     console/core_commands.cpp

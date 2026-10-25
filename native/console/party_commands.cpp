@@ -4,6 +4,8 @@
 #include "console/console.h"
 
 #include "party/bench.h"
+#include "party/camera_sync.h"
+#include "pvp/hitgate.h"
 #include "party/devices.h"
 #include "party/progress.h"
 #include "party/respawn.h"
@@ -200,6 +202,17 @@ void rest_cmd(Args a, std::string& out) {
     line(out, std::format("P{}: {}", slot, why.empty() ? "rested" : why));
 }
 
+void team_cmd(Args a, std::string& out) {
+    if (a.size() < 2 || (a[1] != "friendly" && a[1] != "enemy")) throw std::runtime_error("usage: elmp team <slot> friendly|enemy");
+    const auto slot = to_int(a[0]);
+    must(party::set_team(slot, a[1] == "enemy" ? party::Team::Enemy : party::Team::Friendly));
+    line(out, std::format("{} is {}", slot_label(slot), a[1]));
+}
+
+void pvp_cmd(Args, std::string& out) { out += pvp::describe(); }
+
+void camera_cmd(Args, std::string& out) { out += party::camera_sync::describe(); }
+
 void transit_cmd(Args, std::string& out) {
     out += party::transit::describe();
     out += party::respawn::describe();
@@ -298,6 +311,9 @@ void register_party_commands() {
     add("perm", "<slot> <gate> on|off  (travel rest trigger.story trigger.world pickup interact save)", perm_cmd);
     add("rest", "[slot]  PX bench rest (restore own HP / prayers / skill uses)", rest_cmd);
     add("transit", "map-follow state, last transit, revive / recall counters", transit_cmd);
+    add("team", "<slot> friendly|enemy  (P1 is always friendly; opposing teams can hurt each other)", team_cmd);
+    add("pvp", "hit windows: teams, damage / knockback rule, flip counters (rule via elmp set pvpDamage|pvpKnockback)", pvp_cmd);
+    add("camera", "shared camera: framing hooks, ally targets, registrations", camera_cmd);
 #ifdef ELMP_DEV
     add("kill", "<slot> [damage]  (Dev aid) vanilla DoDamage on a seat", kill_cmd);
     add("tp", "<slot> <dy> <dz>  (Dev aid) teleport relative to P1", tp_cmd);

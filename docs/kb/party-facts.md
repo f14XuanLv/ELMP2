@@ -50,6 +50,36 @@
 ### 性能（P1 + P2 + P3 脚本座位，church_08 静止，15 s）
 - `frame.elmp_us` P50 9 / P95 30 / P99 124 µs（门槛 300）；`party.patrol` 每 250 ms P99 42 µs；`party.progress` 每秒 P99 156 µs。两人离开后回调注销，6 s 内 `g0.reflect_calls = 0`，`registry verify` consistent。`[E-实测]`
 
+## P1c-2 共享镜头 / 队伍 / PvP 命中窗口（v2 2026-10-26，Dev2）
+
+### 共享镜头（C10 / M15）
+- 实现：`party/camera_sync` 每 500 ms 经 P1 的 `PlayerCameraManager.RegisteredGameplayCamera`（弱指针直读）取镜头，直读 `AllyAIControllerTargets` 核对并对缺失的座位控制器调原版 `RegisterAllyController`；离开时立即 `UnregisterAllyController`，最后一名座位离开时关放宽，空闲帧不留镜头工作（G0）。`camera/framing` 两个 manifest detour（`GameplayCameraUpdate` / `GameplayCameraTargetBounds`，SHA + 前缀校验）：≥ 2 个友方目标时本次 Update 期间 `MaxDistance × scale`、目标框加边距（竖直偏移补到反侧），返回即还原。偏移经反射：`PlayerControllerTargets` / `AllyAIControllerTargets`（16 B 数组）、`CurrentSettings.MaxDistance`、`WorldSpaceLocationOffset.Z`。`[E-实测]`
+- church_08，P1 + P2 相距 70：框 Y 宽 1030 = 原版 330 + 2×350，Z 高 780 = 260 + 150 + 250 + 120（WorldSpaceLocationOffset.Z）。相距 1800：开 → 框宽 2760、距离 1380；关 → 原版框宽 2060、距离 1030。相距 4500（框被房间边界钳到 Y −5860）：关 → 距离钳在 MaxDistance 2000；开 → 2191（上限 3000），Update 后 `CurrentSettings.MaxDistance` 读回 2000（未残留）。截图 `p1c2-framing-on-dev.png`（两人同框带留白）、`p1c2-far-on/off-dev.png`。`[E-实测]`
+- **新事实**：SwitchGameMap（church_08 → 07，流式切图）后 `BP_GameplayCamera` 是同一对象，原有 Ally 注册保留（`rebinds = 0`）；回标题重进则随世界销毁，seat 随世界丢弃，放宽在 teardown 关闭。`[E-实测]`
+
+### 队伍与 PvP（C4 / M8）
+- 实现：`core/hitrules` = slot → team 表（P1 固定友方；只能绑定自己租约内的 slot）+ 配对规则（`pvpDamage`、`pvpKnockback`）；`pvp/hitgate` 在**第一次出现异队配对时**才装 3 个 UFunction pre/post（`AbilityHitbox:OnActorOverlapBegin` / `ProcessActorEnter`、`Ability:ExecuteAbilityEffectsOnTarget`）+ manifest detour `AbilityEffectQueue`，之后全队同队即 `active=false`（直通）。配对解析：Owner → Instigator 链走到 Pawn / Controller，按控制器句柄比较（每 250 ms 从 hitrules 世代重建缓存），热路径无名字查找；击退组件取法 `K2_GetComponentsByClass` 只在档位 1..3 的异队命中里调用。`[E-实测]`
+- 实测（church_08 / 07，script 座位，P3 敌方）：
+  | 格 | 结果 |
+  |---|---|
+  | 敌 → 友（P3 一挥同时打到 P1、P2） | 两人各 400 → 362，flips / scales 增长 |
+  | 倍率 0.1 vs 1.0（只打 P2） | 0.1：−38；1.0：一挥致死（≥ 400）→ 原版死亡 → ELMP 复活链 1.5 s 回满 |
+  | 同队（`elmp team 3 friendly`） | 0 伤，且无异队配对 → `active=false` |
+  | 击退档 2 | 第一刀即 `damage_launch_neutral → launch_down → landing → wake`，位移约 184 UU |
+  | 击退档 0 | 只掉血（−38），无发射（原版韧性未打空） |
+  | 还原 | 三名莉莉 `Faction` 读回全 1；`AbilityHitbox_s5000_Medium` 的 AE_Knockback `bBypassStaminaCheck=false`、数据 (300,400) 原值 |
+  | 座位 → 怪物 | 敌方座 P3 砍死史莱姆（100 → 0），flips / scales 不变 |
+  | 怪物 → 座位 | 史莱姆打 P2 400 → 378，flips 不变 |
+  | 切图 | church_08 → 07 后命中窗口照常（calls 继续增长） |
+- 未验：P1 作为攻击方打敌方座（P1 只用作受击方；P1 身份同样按 `world::p1_controller` 绑定）；精灵 AI 对座位的命中（同 v1，精灵只主动攻击 Enemies 阵营）。
+
+### 性能与 G0（P1 + P2 + P3，church_07，放宽开 + PvP active，30 s）
+- `frame.elmp_us` P50 8 / P95 27 / P99 114 µs；`party.camera` 每 500 ms P99 31 µs；`pvp.bind` 每 250 ms P99 5 µs。镜头 detour 在引擎 Update 内，未计入 `frame.elmp_us`（只做标志判断 + 两个数组的弱指针读）。
+- 修正：初版在最后一名座位离开后由镜头 phase 在下一空闲帧注销 Ally（`g0.reflect_calls` +2）；改为离开时同步注销、同步关放宽后，加入 / 离开 / 回标题重进全程 `g0.reflect_calls = 0`，`registry verify` consistent。`[E-实测]`
+
+### 测试辅助（P1c-2，登记）
+- 读档 ×3、回标题 ×1；`elmp tp`（座位与 P1，约 15 次，含 P1 进 church_07 门 ×1）；`elmp vitals 2 restore` ×4（只写 P2）；`elmp set recall 0`（测试期间）、`cameraFraming`、`pvpDamage`、`pvpKnockback` 临时修改，结束后 settings.json 全部恢复默认；Dev2 窗口被最小化时用 `ShowWindow(SW_SHOWNOACTIVATE)` 恢复（只对 Dev2 窗口，不夺焦点）。
+
 ### 测试辅助（P1c-1，登记）
 - 读档 ×3；`elmp tp`（座位与 P1 的瞬移，约 15 次）；`elmp kill 2`（致死 ×1、150 伤害 ×1）；P2 背包 `AddCurrency(0,25)` ×1（经 UEBridge eval）；原版切图 4 次（church_08 ↔ 07）；`mapRule` / `recall` 设置临时修改后已恢复为 3 / 1。
 

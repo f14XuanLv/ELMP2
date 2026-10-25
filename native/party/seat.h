@@ -37,6 +37,7 @@ struct JoinOptions {
 
 std::string join(const JoinOptions& opt, std::int64_t* slot_out);
 std::string leave(std::int64_t slot);
+std::string set_team(std::int64_t slot, Team team); // pushed to core/hitrules (P1 is always friendly)
 const Seat* seat(std::int64_t slot);
 std::vector<Seat> seats();
 std::size_t count();

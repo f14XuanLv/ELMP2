@@ -19,6 +19,9 @@
 #include "party/respawn.h"
 #include "party/rules.h"
 #include "party/transit.h"
+#include "party/camera_sync.h"
+#include "core/hitrules.h"
+#include "pvp/hitgate.h"
 #include "dev/lua_bridge.h"
 #include "engine/binary_checks.h"
 #include "engine/frame.h"
@@ -108,6 +111,7 @@ public:
         registry::uninstall();
         input::rawinput::uninstall();
         input::xinput::uninstall();
+        pvp::uninstall();
         hook::uninstall_all();
         log::set_sink(nullptr);
     }
@@ -133,6 +137,9 @@ public:
         party::respawn::install();
         party::progress::install();
         party::transit::install();
+        core::hitrules::install();
+        party::camera_sync::install();
+        pvp::install();
         console::register_core_commands();
         console::register_party_commands();
         frame::set_activity([] { return core::active() > 0; }, nullptr);
