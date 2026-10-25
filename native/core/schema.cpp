@@ -94,7 +94,11 @@ bool resolve_script() {
         s.zc_mp = r.prop(L"MPComponent", Kind::Object);
         s.zc_faction = r.prop(L"FactionComponent", Kind::Object);
         s.zc_command_queue = r.prop(L"CommandQueueComponent", Kind::Object);
+        s.zc_locomotion = r.prop(L"LocomotionComponent", Kind::Object);
         c.take(r);
+        Resolver l("LocomotionComponent", cls(L"/Script/Zenith.LocomotionComponent"));
+        s.loco_facing_right = l.func(L"IsFacingRight", 0);
+        c.take(l);
     }
     {
         Resolver r("ZenithInputComponent", cls(L"/Script/Zenith.ZenithInputComponent"));

@@ -53,6 +53,7 @@
 - 帧时间 A/B：部署探针后 `bridge.py dev console "elmpprobe start 60 <label> 2"`，结果写 `Mods\ElmpFrameProbe\out\<label>.json` 与 UE4SS.log；ELMP 自身每帧开销看 `elmp perf`（`frame.idle_elmp_us`、`g0.reflect_calls`）。测量前 `r.VSync 0` + `t.MaxFPS 60`。
 - 控制台命令：`elmp status | preflight | perf [reset] | registry [verify|list <kind> [n]|menu on|off] | lifecycle | events [n] | set | get`。
 - core（P1a）：`elmp spawn <slot> [baseline|default|full|max|mirror|{json}] [skin]`（101–1000 为 Dev 测试 slot，租约归 console）、`despawn <slot> [keep]`、`respawn <slot>`、`lily <slot>`、`profile <slot> [json|apply <p> [exact]|reset <p>]`、`vitals <slot> [restore]`、`skin <slot> [n]`、`pad <slot>|allow1 on|off`、`move <slot> x y`、`hold <slot> CMD[+CMD] [0]`、`press <slot> CMD`、`stop <slot>`、`trace <slot> [ms]`（Dev：记录 track-0 动画变化沿，再次不带 ms 调用读取）。时序输入用多次 bridge 调用 + `Start-Sleep`；点按后至少隔一次调用再改轴（v1 core-facts「输入」）。
+- party（P1b）：`elmp join [script] [pad N] [slot N] [friendly|enemy]`、`leave [slot]`、`seats`、`devices`、`assign <pad N|kbd#N|id> <slot|p1>`、`bind <slot> <action> key|pad <label>`、`bindings <slot> [reset]`、`mute [0|1]`；Dev 测试辅助 `kbd <device> <key> down|up|tap`（只 PostMessage 到实例窗口）、`fakepad <N> off|<buttons> [lx ly]`。Dev2 机器上 `xinput:0` 是真实手柄（只读）。座位不要绑定未连接的手柄做性能测量。
 - 读档后回标题再读档：`bridge.py dev eval "local gs=StaticFindObject('/Script/Engine.Default__GameplayStatics'); gs:OpenLevel(FindFirstOf('GameInstance'), FName('TitleMap'), true, ''); return 'ok'"`（测试辅助，登记）。
 - 代码里避免名为 `check` / `verify` 的任何标识符（含控制台辅助函数）：UE 宏会吞掉。
 

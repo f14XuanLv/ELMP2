@@ -8,6 +8,11 @@
 #include "base/settings.h"
 #include "console/console.h"
 #include "core/player.h"
+#include "input/rawinput.h"
+#include "input/xinput.h"
+#include "party/config.h"
+#include "party/devices.h"
+#include "party/seat.h"
 #include "dev/lua_bridge.h"
 #include "engine/binary_checks.h"
 #include "engine/frame.h"
@@ -73,6 +78,7 @@ void deferred_init(const frame::Tick&) {
 
 void define_settings() {
     settings::define({.key = "verboseLog", .def = false, .help = "extra diagnostics in UE4SS.log"});
+    party::config::define();
 }
 
 class ElmpMod final : public RC::CppUserModBase {
@@ -94,6 +100,8 @@ public:
         console::uninstall();
         lifecycle::uninstall();
         registry::uninstall();
+        input::rawinput::uninstall();
+        input::xinput::uninstall();
         hook::uninstall_all();
         log::set_sink(nullptr);
     }
@@ -111,7 +119,10 @@ public:
         console::install();
         console::register_p0_commands();
         core::install();
+        party::install();
+        party::devices::install();
         console::register_core_commands();
+        console::register_party_commands();
         frame::set_activity([] { return core::active() > 0; }, nullptr);
         frame::add_phase("lifecycle", [](const frame::Tick& t) { lifecycle::step(t.now_us); });
         frame::add_phase("init", deferred_init, [] { return !g_settings_loaded; }, 250);

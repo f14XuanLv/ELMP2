@@ -31,7 +31,8 @@ struct Script {
     PropRef zpc_inventory, zpc_param, zpc_spirit_equip, zpc_heal, zpc_passive;
     FuncRef zpc_fully_restore, zpc_aptitude_unlocked;
     // ZenithCharacter
-    PropRef zc_input, zc_hp, zc_mp, zc_faction, zc_command_queue;
+    PropRef zc_input, zc_hp, zc_mp, zc_faction, zc_command_queue, zc_locomotion;
+    FuncRef loco_facing_right;
     PropRef zic_pawn_owner, zic_snapshot;
     PropRef hp_curr, hp_max;
     FuncRef hp_alive;
