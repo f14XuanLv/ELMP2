@@ -189,6 +189,7 @@ template<class R, class... A> R call(UObject* o, FuncRef f, A... a);  // 栈上�
 | 监听 | `FUObjectCreateListener/DeleteListener` | UE4SS | engine/registry |
 | 导入表 | `XInputGetState` | IAT 改写 | input/xinput |
 | vtable | DXGI `Present/ResizeBuffers` | PolyHook2 | overlay |
+| 直接调用（不 hook） | `InteractablePressInteract 0xCE8BF0`（交互物 UE 动作 `"Interact"` 的 Pressed 处理，前缀校验；PX 按交互时对“交互者 = 该座位”的交互物调用，需求树 §7.16.1） | manifest 地址 | party/interact |
 
 安装时机：`on_unreal_init` 预检 → 成功后装 detour 类（不依赖世界）；UFunction 类在目标 UFunction 首次可用时装（蓝图类读档后才加载 → 由 `lifecycle` 在世界就位阶段触发，失败不缓存重试）。卸载：`uninstall_mod` 逆序。
 

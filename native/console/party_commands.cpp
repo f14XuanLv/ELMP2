@@ -6,6 +6,7 @@
 #include "party/bench.h"
 #include "party/camera_sync.h"
 #include "party/hud_feed.h"
+#include "party/interact.h"
 #include "party/manager.h"
 #include "party/menu_ctrl.h"
 #include "party/storage.h"
@@ -189,6 +190,7 @@ void progress_cmd(Args, std::string& out) { out += party::progress::describe(); 
 void gates_cmd(Args, std::string& out) {
     out += core::permission::describe();
     out += party::rules::describe();
+    line(out, party::interact::status());
 }
 
 void perm_cmd(Args a, std::string& out) {
@@ -347,7 +349,7 @@ void fakepad_cmd(Args a, std::string& out) {
 
 void register_party_commands() {
     add("join", "[script] [pad N] [slot N] [friendly|enemy]  add a local player behind P1", join_cmd);
-    add("leave", "[slot]  remove a local player (equipment saved with save_scope, P1e)", leave_cmd);
+    add("leave", "[slot]  remove a local player (record kept for this save)", leave_cmd);
     add("seats", "list local players", seats_cmd);
     add("devices", "keyboards / pads, effective owners, wiring state", devices_cmd);
     add("assign", "<pad N|kbd#N|device-id> <slot|p1>  (saved in devices.json)", assign_cmd);

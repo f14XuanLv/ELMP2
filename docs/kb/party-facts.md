@@ -50,6 +50,53 @@
 ### 性能（P1 + P2 + P3 脚本座位，church_08 静止，15 s）
 - `frame.elmp_us` P50 9 / P95 30 / P99 124 µs（门槛 300）；`party.patrol` 每 250 ms P99 42 µs；`party.progress` 每秒 P99 156 µs。两人离开后回调注销，6 s 内 `g0.reflect_calls = 0`，`registry verify` consistent。`[E-实测]`
 
+## P1f 总验收：闸门矩阵 / 原版交互 / 存档 / 性能（v2 2026-10-26，Dev2）
+
+### 原版交互入口（新取证）
+- 交互物的输入类型 `AInteractable::GetInteractableInputType()` 读 `+587`；`ActivateInteractable(PC)`（native 0x140CCEF20）把它设为配置值 `+588`，若 P1 当前设备给 UE 动作 `"Interact"` 绑了专用键（0x140D0C8F0 + 0x140D14600，设备来自 0x140D0C050）则清成 `NONE`。`[E-IDA]`
+- `BP_Interactable_Base.OnActivateInteractable` 往交互者 Pawn 的 `RuntimeCommandSet` 加 `DATA_Command_Interact_*` 的副本：`NONE` → 方向档全空（`CommandInputType=ANY`），`UP` / `DOWN` → `UpDirectionProfile` / `DownDirectionProfile`。命令入队 0x140CC2840 先查 `DirectionInputProfile[快照方向]`，全空 = 永不经输入快照触发。`[E-CUE]`（`tools/catalog --dump`）`[E-IDA]`
+- `NONE` 类型的真正入口：交互物自己的 InputComponent 绑 UE 动作 `"Interact"`（0x140CF1E80），Pressed → 0x140CE8BF0：取 `+616` 弱指针 InteractingController → `!IsPaused && IsInteractable(PC)` → `OnInteract(PC)` + `OnInteractDelegate` + 可清除时 `OnMarkCleared`；Released → 0x140CE8D40 清该 PC 的 Pawn 输入快照。只有 P1 的本地玩家会喂这个动作，虚拟手柄的 `INTERACT` 位（`ECommandInputTypes` 9）原版没有任何读者。`[E-IDA][E-实测]`（P1 / P2 在 Tip 旁按 INTERACT、按上都只出 `CA_LookUp`，`InteractComponent:OnStartCommand` 钩子取证）
+- 选择与激活本身对 PX 原生可用：每个 Lily 的 `UInteractComponent`（Tick 0x140CC1160 → 0x140CB6240）在球形重叠里挑最近的 `IsInteractable(PC)` 交互物并 `ActivateInteractable(该 Pawn 的 PC)`；`interact` 闸门关时重叠被忽略，交互物不激活（`active=false interacting=nil`）。`[E-IDA][E-实测]`
+- **补齐（`party/interact`）**：PX 的 INTERACT 按下沿（椅子巡检同一累计沿，250 ms 节拍）→ 在 Interactable 桶里找 `GetInteractingController() == 该座位 PC` 的交互物；`NONE` 类型调 manifest `InteractablePressInteract`（0xCE8BF0，前缀校验），`UP` / `DOWN` 类型不动（座位按上 / 下走原版命令）。事件驱动，每次按键几次反射调用，帧内 0。`elmp gates` 末行显示 `interact: delivered / directionType / last`。
+
+### §7.2 闸门矩阵（本地 PX 列；Host 远程座位 / Client 副本两列随 P2）
+| 闸门 | 关 | 开 | 判据 |
+|---|---|---|---|
+| travel | P1c：P2 站进门不切图 | 切图，P1 与座位都过去 | 切图发生 |
+| rest | P2 在椅子旁按交互只走 ELMP 回满（P1c） | 槽 0 church_08：P3 按交互 → 原版 `EVT_Rest`：P1 被摆到椅子 `rest_loop`、P1 的 `WBP_RestMenu_C` 打开、原版异步保存（`.sav` 40F5… → 33F3…）并被 save_scope 登记（`registered=1`，指纹 2 → 3） | 原版事件 / 存档哈希 |
+| trigger.world | 槽 2 church_12：P2 两次传送进 `BP_Trigger_HideFakeWall2` 盒，`BP_FakeWall_2.Disappeared=false` | 同一序列 → `Disappeared=true`（第二面墙 `BP_Trigger_HideFakeWall_2` 同样关 / 开对照） | 假墙消失 |
+| trigger.story | 槽 3 church_01：P2 进 `BP_TriggerConditioned_Conversation_2D_2`，`ClearableComponent.IsCleared=false` | 同一序列 → `IsCleared=true`、`CanTrigger=false` | 剧情触发器被消耗 |
+| interact | 槽 2：P2 在 `BP_Interactable_Item_Tip1` 旁：不激活、按交互 delivered=0、Tip 行 0 | 激活给 P2 的 PC；按交互 → 原版取得弹窗「白巫女像的文字」（世界暂停）；确认后 P1 背包 Tip 行 0 → 1 | 弹窗 / 背包行数 |
+| pickup | 未能验证 | — | church_07 打死的史莱姆掉 `BP_Collectable_Experience_C`：`IsDropGranted()=true`、`GetCollectingPlayerController()=nil` —— 经验在生成时已发放，光球只是表现，P1 / P2 站上去都不收；测试图里没有找到待领取的掉落物 |
+| save | 无独立目标（§7.15.3） | — | — |
+
+- 教程体积（`BP_Trigger_Tutorial_C`）是世界空间提示文字（「space 跳跃」「J 攻击」），不是弹窗，不作判据。
+
+### F1.1–F1.17 对等补测
+- F1.5 共享进度（槽 2，P1 1 级）：测试辅助给 P2 `AddExperiencePoints(500)` + `AddItem(s2002)` + `AddItem(i_passive_dmgcut_LV1)` → 1 s 内 P1 1 级 → 4 级（exp 55 / 166）、精灵 1 → 2、遗物 0 → 1，日志 `P2 -> P1: exp 500 … rows 2`；P2 读回一致。精灵升级收益仍未测（需要货币 + 原版升级入口）。`[E-实测]`
+- F1.7 P1 死亡：church_07 对 P1 `DoDamage(9999)` → P1 在 church_08 椅子重生（新 Pawn、`rest_sleep_loop`），P2 / P3 在淡入时被带到 P1 身后（`transit: placed fade-in, released fade-in`）。`[E-实测]`
+- F1.13 P1 作攻击方：P3 敌方在 P1 前方 120 / 200 UU 时 P1 一击各掉 13（倍率 0.1），`flips` / `scales` 递增；身后 −120 与贴身 45 UU（精灵出手点之外）不命中。`[E-实测]`
+- F1.14 / F1.15：槽 0 回标题再读档，P2 / P3 / P4 自动重入；P2 280 → 400、P3 374 → 400、MP 100（奥义已解锁）；普通切图与 P1 死亡重生后座位 HP 保持（不回满）。A 档（槽 0）的队伍不进入槽 2 / 槽 3。`[E-实测]`
+- F1.16：物品进 P1 背包（上表 interact 行）；剧情触发器默认被 PX 忽略（story 关）。
+- 存档复制 / 删除：标题处原版 `DeleteSaveDataAtSlotIndex(2)` → post 剔除 `GameSlot_2` 索引条目（`party_3ab5….json` 保留）；`CopyGameDataToEmptySlot(0)` → 目标槽 2，读取后作为**新世代、空队伍**绑定（槽 0 的 PX 不跟随复制件）。`[E-实测]`
+- 原版 P1 死亡重生时的自动保存（`b05d…`）同样被登记（保存调用后 30 s 窗口内）。
+
+### 性能（church_08，Dev 构建，`t.MaxFPS` / `GameUserSettings.FrameRateLimit` 显式设置，VSync 关，探针 30 s + 2 s 热身）
+| 场景 | 帧时间 P50 / P95 / P99（ms） | ELMP 每帧 P99（`frame.elmp_us`） |
+|---|---|---|
+| 裸 UE4SS（`--elmp off`） 60 fps | 16.667 / 16.705 / 16.800 | — |
+| ELMP 无座位 60 fps | 16.667 / 16.721 / 16.797 | 82 µs → 优化后 36 µs；`g0.reflect_calls = 0` |
+| P1 + 3 座位（1 敌方）HUD + 镜头 + PvP，60 fps | 16.667 / 16.745 / 16.856 | 166 µs |
+| 同上 144 fps | 6.944 / 6.999 / 7.071 | 131 µs |
+| 同上 60 ↔ 144 每 2 s 切换 | 6.952 / 16.702 / 16.789 | 151 µs |
+- G0：无座位与裸 UE4SS 的帧时间 P99 差 −0.003 ms（门槛 < 0.2 ms）。本地 P1 + 3 座位 ELMP P99 ≤ 166 µs（门槛 0.3 ms）。
+- 无座位 P99 的大头是 `save_scope` 1 Hz 读 `.sav` 修改时间（约 65 µs/次）。改为：原版保存调用后 32 s 内 1 Hz，其余 0.1 Hz（外部改动只需计数，下次读档照样询问）→ 无座位 P99 36 µs；保存登记延迟仍约 2–6 s（两次采样确认稳定）。
+- Shipping 构建部署到 Dev2：`0.2.0 (shipping) preflight ok … 16 functions verified`，读档绑定正常；发布包 78 项、无 `.lua` / `.pdb`。
+
+### 测试辅助（P1f，登记）
+- 读档 ×13、回标题 ×8；传送约 40 次；P1 `DoDamage(9999)` ×1、史莱姆 `DoDamage(9999)` ×2、`elmp kill` ×1；原版 `SaveGame()` ×3、`DeleteSaveDataAtSlotIndex(2)` ×1、`CopyGameDataToEmptySlot(0)` ×1；给 P2 经验 / 精灵 / 遗物各 1 次；取得弹窗用 `WBP_Get_Item_Generic_C:OnConfirm()` 关闭 ×1；Dev 虚拟手柄注入 P1（`pad allow1`）攻击 ×5、按交互 / 按上若干次；UEBridge 临时 Lua 钩子 `InteractComponent:OnStartCommand` 等（只在实例内）。
+- 测试前把 Dev2 的 `SaveGames\*.sav` 与 `Saved\ELMP\ELMP\*` 全部备份，结束后整体还原并删除本轮生成的文件（原版备份档 `GameSlot_backup_0_{0,1,3,4}`、`party_3ab5…` / `party_402a…`）；`settings.json` 回到全默认（`recall` 开）。
+
 ## P1e 闸门策略 / 存档作用域 / 冷存储 / v1 迁移（v2 2026-10-26，Dev2）
 
 ### 原版事实
@@ -70,7 +117,7 @@
 - v1 迁移：放入 v1 格式 `save_index.profile.lua` + `party_<id>.profile.lua`（P2 皮肤 2 + s2072、P4 敌方皮肤 5 + s5020 + `i_passive_maxmpup`、P5 非活动）→ 读档后迁移、P2 / P4 按原样重入、P5 不加入；生成 `party_<id>.json`，两个 v1 文件保留不改。
 - v1 损坏：`party_<id>.profile.lua` 截断 → `Old ELMP profile for this save could not be read (3:1: unterminated table). Nothing was imported; the file was kept.`；`join` 被拒、`reuse` 被拒；`elmp storage new` → 新世代 `830c…`、空队伍，之后可正常加入。
 - 闸门：P2 在 church_08 忽略 5 个目标（3 门 + 椅子 + `BP_Trigger_Event_Unique_C`）；`g0.reflect_calls = 0`。
-- 未验（留 P1f 的 §7.2 矩阵）：story / world 触发器开关的原版副作用（弹窗 / 假墙）、pickup / interact 关闭时的拾取 / 交互、椅子异步保存路径的登记、删除 / 复制存档的剔除。
+- 未验项已在 P1f 补测（见上节「P1f」）；pickup 仍未能验证。
 
 ### 测试辅助（P1e，登记）
 - 读档 ×6、回标题 ×1；原版 `SaveSubsystem:SaveGame()` ×1（写隔离测试存档）；手动编辑 / 放置 ELMP 自己的数据文件 3 次（删指纹、放 v1 文件、放损坏 v1 文件，临时脚本已删除）；测试结束删除了本次放置 / 生成的文件并把 `save_index.json` 还原为 `87a4…` 世代（P2 / P3 记录保留）。

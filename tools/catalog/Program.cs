@@ -66,6 +66,22 @@ if (options.ContainsKey("triggers"))
     return 0;
 }
 
+// --dump <file name> --out <dir>: write every matching package (exports + blueprint bytecode) as JSON, for research.
+if (options.TryGetValue("dump", out var dumpName))
+{
+    var outDir = options.GetValueOrDefault("out") ?? throw new ArgumentException("--out is required with --dump");
+    Directory.CreateDirectory(outDir);
+    provider.ReadScriptData = true;
+    foreach (var path in provider.Files.Keys.Where(k => k.EndsWith(".uasset") && Path.GetFileNameWithoutExtension(k).Equals(dumpName, StringComparison.OrdinalIgnoreCase)))
+    {
+        var dumped = Newtonsoft.Json.JsonConvert.SerializeObject(provider.LoadPackage(path).GetExports(), Newtonsoft.Json.Formatting.Indented);
+        var file = Path.Combine(outDir, Path.GetFileNameWithoutExtension(path) + ".json");
+        File.WriteAllText(file, dumped);
+        Console.WriteLine($"{path} -> {file}");
+    }
+    return 0;
+}
+
 var iconDir = Path.Combine(repo, "data", "icons");
 var fontDir = Path.Combine(repo, "data", "fonts");
 var catalogDir = Path.Combine(repo, "data", "catalog");

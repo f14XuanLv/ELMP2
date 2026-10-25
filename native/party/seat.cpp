@@ -44,7 +44,7 @@ void sync_router() {
 }
 
 void on_teardown() {
-    if (!g_seats.empty()) log::info("party: {} seat(s) dropped with the world (re-join per save arrives with save_scope)", g_seats.size());
+    if (!g_seats.empty()) log::info("party: {} seat(s) dropped with the world (stored ones rejoin when their save loads)", g_seats.size());
     g_seats.clear();
     progress::forget_all();
     sync_router();

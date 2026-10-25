@@ -1,5 +1,6 @@
 #include "party/bench.h"
 
+#include "party/interact.h"
 #include "party/seat.h"
 #include "party/storage.h"
 #include "party/transit.h"
@@ -82,6 +83,7 @@ bool nearby(std::int64_t slot) {
 
 void poll(std::int64_t slot) {
     if (!(input::pad::take_presses(slot) & kInteract)) return;
+    interact::press(slot);
     if (auto why = rest(slot); !why.empty() && why != "not at a bench") log::info("party: P{} rest refused: {}", slot, why);
 }
 

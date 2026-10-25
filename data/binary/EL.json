@@ -113,6 +113,14 @@
       "source": "[E-IDA][E-实测] v1 data/RVA.json（IDA 2026-10-14）",
       "note": "FAbilityTimeline::Tick(0xCBABE0) 直调，不经 ProcessEvent；pre 取参"
     },
+    "InteractablePressInteract": {
+      "rva": "0x00CE8BF0",
+      "prefix": "48895C2410574883EC20488BD94881C168020000",
+      "signature": "void AInteractable::OnInteractActionPressed(this)",
+      "owner": "party/interact",
+      "source": "[E-IDA] v2 2026-10-26：AInteractable 输入绑定 0xCF1E80 把 UE 动作 \"Interact\"（FName 0x144466178）Pressed 绑到此函数（Released → 0xCE8D40）",
+      "note": "读 +616 弱指针 InteractingController → !IsPaused && IsInteractable(PC) → OnInteract(PC)（0xD6D030）+ OnInteractDelegate(+544) + 可清除时 OnMarkCleared(+560)；输入类型 NONE（+587，P1 设备绑了专用交互键）时原版只经此入口"
+    },
     "ClearedQueryCurrentMapId": {
       "rva": "0x00CAAFF0",
       "prefix": "48895C24084889742410574883EC20488BF9488BCA",

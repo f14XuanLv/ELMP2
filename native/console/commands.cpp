@@ -24,6 +24,8 @@
 #include <format>
 #include <vector>
 
+#include <Windows.h>
+
 namespace elmp::console {
 
 namespace {
@@ -142,6 +144,20 @@ void set_cmd(Args args, std::string& out) {
     line(out, err.empty() ? args[0] + " = " + args[1] : "refused: " + err);
 }
 
+void native_cmd(Args args, std::string& out) {
+    if (args.empty()) return line(out, "usage: elmp native </Script/Pkg.Class:Function> [...]");
+    const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+    for (const auto& a : args) {
+        auto* fn = static_cast<ue::UFunction*>(reflect::find_object(log::wide(a)));
+        if (!fn) {
+            line(out, a + ": not found");
+            continue;
+        }
+        const auto p = reinterpret_cast<std::uintptr_t>(fn->GetFuncPtr());
+        line(out, std::format("{}: exec rva 0x{:X} flags 0x{:08X}", a, p - base, static_cast<std::uint32_t>(fn->GetFunctionFlags())));
+    }
+}
+
 void get_cmd(Args args, std::string& out) {
     for (const auto& e : settings::all()) {
         if (!args.empty() && args[0] != e.spec.key) continue;
@@ -160,6 +176,7 @@ void register_p0_commands() {
     add("events", "recent event bus entries [n]", events_cmd);
     add("set", "<key> <value> (persisted unless transient)", set_cmd);
     add("get", "[key] list settings", get_cmd);
+    add("native", "<UFunction path> [...]  (Dev) exec thunk RVA for IDA", native_cmd);
 }
 
 } // namespace elmp::console

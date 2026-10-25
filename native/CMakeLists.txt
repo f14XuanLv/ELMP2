@@ -46,6 +46,7 @@ set(ELMP_MOD_SOURCES
     party/seat.cpp
     party/respawn.cpp
     party/bench.cpp
+    party/interact.cpp
     party/rules.cpp
     party/transit.cpp
     party/camera_sync.cpp

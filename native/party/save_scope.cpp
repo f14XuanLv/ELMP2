@@ -284,7 +284,8 @@ bool try_bind() {
 
 void poll_saves(std::int64_t now) {
     if (g_status.state != State::Bound || now < g_next_poll) return;
-    g_next_poll = now + 1'000'000;
+    const bool saving = g_stable || now - g_last_save_call.load() <= kSaveWindowUs + 2'000'000;
+    g_next_poll = now + (saving ? 1'000'000 : 10'000'000); // external changes only need counting
     const auto f = sav_file(g_status.slot_name);
     std::error_code ec;
     const auto t = fs::last_write_time(f, ec);
