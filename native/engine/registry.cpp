@@ -99,6 +99,8 @@ ClassInfo& class_info(UClass* cls) {
     return g.classes.emplace(h, info).first->second;
 }
 
+std::array<std::uint64_t, kKinds> g_versions{};
+
 void insert(UObject* o, std::uint32_t mask, std::uint16_t class_id) {
     const auto h = ObjHandle::of(o);
     auto& m = g.members[h.index];
@@ -127,6 +129,7 @@ void insert(UObject* o, std::uint32_t mask, std::uint16_t class_id) {
         if (!(add & (1u << k))) continue;
         g.pos[k][h.index] = static_cast<std::uint32_t>(g.buckets[k].size());
         g.buckets[k].push_back(Entry{h, o->GetNamePrivate(), class_id});
+        ++g_versions[k];
     }
     ++g.stats.inserted;
 }
@@ -320,6 +323,7 @@ void audit() {
 
 std::span<const Entry> bucket(Kind k) { return g.buckets[static_cast<std::size_t>(k)]; }
 std::size_t size(Kind k) { return g.buckets[static_cast<std::size_t>(k)].size(); }
+std::uint64_t version(Kind k) { return g_versions[static_cast<std::size_t>(k)]; }
 
 std::string class_name(std::uint16_t id) { return id < g.class_names.size() ? g.class_names[id] : std::string{}; }
 

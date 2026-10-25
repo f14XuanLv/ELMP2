@@ -1,9 +1,20 @@
 #pragma once
 
-// Shared progress (C6, F1.5). P1b provides the join baseline: P1's shared fields (aptitudes, parameter
-// items, spirit levels, owned relics and relic slots, level / experience / prayer levels) without P1's
-// equipment (spirit sets, equipped relics stay per seat). The 1 s merge / mirror / read-back tick lands
-// in P1c on top of the same per-seat records.
+// Shared progress (C6, F1.5; v1 party-facts「共享进度」「状态恢复与进度对齐修复验收」).
+// Every second (frame-pump cadence, only with seats, never during a map transit):
+//   1. snapshot each seat (direct reads: inventory Items rows, Currencies map, UnlockedAptitudes,
+//      SpiritLevels, experience; a few getters) and compare with its baseline → the seat's own gains
+//      (total experience across level-ups, three currencies, new rows in the aptitude / parameter /
+//      passive / spirit inventories, spirit level increases);
+//   2. grant them to P1 through vanilla entries (AddExperiencePoints(Δ, true), AddCurrency, AddItem,
+//      SetSpiritLevel) — the only place ELMP writes P1 (X-4);
+//   3. mirror P1 back to every seat whose signature differs (aptitudes and spirit levels exact, owned
+//      items only added, level / prayer levels / relic slots only written when different, so prayers
+//      are not refilled), then read back: success only when the seat matches P1; otherwise the reason
+//      is kept per seat and retried next tick;
+//   4. re-take the baseline after mirroring (no echo).
+// HP / MP / remaining prayers / skill uses are not part of the signature.
+// Join uses the same service: shared_profile() for the baseline, then sync().
 
 #include "core/profile.h"
 
@@ -15,8 +26,14 @@ namespace elmp::party::progress {
 
 std::optional<core::profile::Profile> shared_profile(std::string* err);
 
-void joined(std::int64_t slot); // seat baseline taken (P1c: start of its increment window)
+void joined(std::int64_t slot);
 void forget(std::int64_t slot);
 void forget_all();
+
+std::string sync(std::int64_t slot); // immediate tick for one seat (respawn / menu); empty = aligned
+void tick();                         // 1 s
+std::string describe();
+
+void install();
 
 } // namespace elmp::party::progress

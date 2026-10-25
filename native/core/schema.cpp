@@ -85,6 +85,7 @@ bool resolve_script() {
         s.zpc_passive = r.prop(L"PassiveEquipComponent", Kind::Object);
         s.zpc_fully_restore = r.func(L"FullyRestore", 1);
         s.zpc_aptitude_unlocked = r.func(L"IsAptitudeUnlocked", 1);
+        s.zpc_unlocked = r.prop(L"UnlockedAptitudes", Kind::Array);
         c.take(r);
     }
     {
@@ -227,6 +228,58 @@ bool resolve_script() {
         s.te_track_time = r.func(L"GetTrackTime", 0);
         s.te_loop = r.func(L"GetLoop", 0);
         c.take(r);
+    }
+    {
+        Resolver r("BaseInventory", cls(L"/Script/Zenith.BaseInventory"));
+        s.binv_items = r.prop(L"Items", Kind::Array);
+        c.take(r);
+        Resolver d("InventoryBaseItemData", cls(L"/Script/Zenith.InventoryBaseItemData"));
+        s.item_row_name = d.prop(L"RowName", Kind::Name, 8);
+        c.take(d);
+        Resolver i("InventoryComponent", cls(L"/Script/Zenith.InventoryComponent"));
+        s.inv_currencies = i.prop(L"Currencies", Kind::Map);
+        s.inv_sub[0] = i.prop(L"ItemAptitudeInventory", Kind::Object);
+        s.inv_sub[1] = i.prop(L"ItemParameterInventory", Kind::Object);
+        s.inv_sub[2] = i.prop(L"ItemPassiveInventory", Kind::Object);
+        s.inv_sub[3] = i.prop(L"ItemSpiritInventory", Kind::Object);
+        s.inv_add_currency = i.func(L"AddCurrency", 2);
+        c.take(i);
+        Resolver p("ParameterPlayerComponent", cls(L"/Script/Zenith.ParameterPlayerComponent"));
+        s.pp_add_experience = p.func(L"AddExperiencePoints", 2);
+        c.take(p);
+        Resolver w("World", cls(L"/Script/Engine.World"));
+        s.world_game_mode = w.prop(L"AuthorityGameMode", Kind::Object);
+        c.take(w);
+        Resolver g("GameModeZenithBase", cls(L"/Script/Zenith.GameModeZenithBase"));
+        s.gm_level_table = g.prop(L"ParameterLevelTable", Kind::Object);
+        c.take(g);
+    }
+    {
+        Resolver ch("Character", cls(L"/Script/Engine.Character"));
+        s.char_movement = ch.prop(L"CharacterMovement", Kind::Object);
+        c.take(ch);
+        Resolver cm("CharacterMovementComponent", cls(L"/Script/Engine.CharacterMovementComponent"));
+        s.cm_mode = cm.prop(L"MovementMode", Kind::Any, 1);
+        s.cm_disable = cm.func(L"DisableMovement", 0);
+        s.cm_set_mode = cm.func(L"SetMovementMode", 2);
+        s.mc_stop = cm.func(L"StopMovementImmediately", 0);
+        c.take(cm);
+        Resolver pr("PrimitiveComponent", cls(L"/Script/Engine.PrimitiveComponent"));
+        s.prim_ignore_actor = pr.func(L"IgnoreActorWhenMoving", 2);
+        c.take(pr);
+        Resolver a("Actor", cls(L"/Script/Engine.Actor"));
+        s.actor_components_by_class = a.func(L"K2_GetComponentsByClass", 1);
+        c.take(a);
+        s.primitive_class = ObjHandle::of(reflect::find_object(L"/Script/Engine.PrimitiveComponent"));
+        Resolver t("TriggerBase", cls(L"/Script/Engine.TriggerBase"));
+        s.trigger_collision = t.prop(L"CollisionComponent", Kind::Object);
+        c.take(t);
+        Resolver b("BoxComponent", cls(L"/Script/Engine.BoxComponent"));
+        s.box_extent = b.prop(L"BoxExtent", Kind::Struct, 12);
+        c.take(b);
+        Resolver sc("SceneComponent", cls(L"/Script/Engine.SceneComponent"));
+        s.scene_rel_scale = sc.prop(L"RelativeScale3D", Kind::Struct, 12);
+        c.take(sc);
     }
     {
         Resolver r("GameplayStatics", cls(L"/Script/Engine.GameplayStatics"));

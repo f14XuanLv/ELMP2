@@ -4,6 +4,7 @@
 // (v1 core-facts「档案」):
 //   aptitudes    DT_Items_Aptitudes rows      InventoryComponent:AddItem / aptitude inventory RemoveItem
 //   parameters   DT_Items_Parameters rows (repeats)   AddItem / RemoveItem + AddMaxHPBonusPercentage(0)
+//   spiritItems  DT_Items_Spirits rows (owned)  AddItem / spirit inventory RemoveItem
 //   spiritLevels {id: level} or "max"         ItemSpiritInventory:SetSpiritLevel (max = rows of SpiritLevelTable)
 //   spirits      [{set, command, id}] + summonSet   SpiritEquipComponent:EquipSpirit / UnequipSpirit / SwitchSummonSet
 //   passives     {equipped, owned, slots}     PassiveEquipComponent:EquipPassive / UnequipPassive / SetSlotCount
@@ -43,6 +44,7 @@ struct Stats {
 struct Profile {
     std::optional<std::vector<std::string>> aptitudes;
     std::optional<std::vector<std::string>> parameters;
+    std::optional<std::vector<std::string>> spirit_items; // owned spirits (DT_Items_Spirits rows), not equipment
     std::optional<std::map<std::string, int>> spirit_levels; // ignored when spirit_levels_max
     bool spirit_levels_max = false;
     std::optional<std::vector<SpiritSlot>> spirits;

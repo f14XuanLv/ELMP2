@@ -3,10 +3,19 @@
 
 #include "console/console.h"
 
+#include "party/bench.h"
 #include "party/devices.h"
+#include "party/progress.h"
+#include "party/respawn.h"
+#include "party/rules.h"
 #include "party/seat.h"
+#include "party/transit.h"
 
+#include "core/permission.h"
 #include "core/player.h"
+#include "core/schema.h"
+
+#include "engine/reflect.h"
 
 #include "input/bindings.h"
 #include "input/rawinput.h"
@@ -168,7 +177,66 @@ void mute_cmd(Args a, std::string& out) {
     line(out, std::format("local input {}", on ? "muted (assignments kept)" : "unmuted"));
 }
 
+void progress_cmd(Args, std::string& out) { out += party::progress::describe(); }
+
+void gates_cmd(Args, std::string& out) {
+    out += core::permission::describe();
+    out += party::rules::describe();
+}
+
+void perm_cmd(Args a, std::string& out) {
+    if (a.size() < 3) throw std::runtime_error("usage: elmp perm <slot> <travel|rest|...> on|off");
+    core::permission::Gate g;
+    if (!core::permission::gate_named(a[1], g)) throw std::runtime_error("unknown gate " + a[1]);
+    const auto slot = to_int(a[0]);
+    if (slot < 2) throw std::runtime_error("P1 is not managed");
+    core::permission::set(slot, g, a[2] == "on" || a[2] == "1");
+    line(out, std::format("P{} {} = {} (effective {})", slot, a[1], a[2], core::permission::allows(slot, g) ? "on" : "off"));
+}
+
+void rest_cmd(Args a, std::string& out) {
+    const auto slot = a.empty() ? (party::seats().empty() ? 0 : party::seats().front().slot) : to_int(a[0]);
+    const auto why = party::bench::rest(slot);
+    line(out, std::format("P{}: {}", slot, why.empty() ? "rested" : why));
+}
+
+void transit_cmd(Args, std::string& out) {
+    out += party::transit::describe();
+    out += party::respawn::describe();
+}
+
 #ifdef ELMP_DEV
+// Test aids (write the world; register in reports): vanilla damage to a seat, teleport relative to P1.
+void kill_cmd(Args a, std::string& out) {
+    if (a.empty()) throw std::runtime_error("usage: elmp kill <slot> [damage]");
+    const auto slot = to_int(a[0]);
+    if (slot < 2) throw std::runtime_error("P1 is not a test target");
+    const auto* s = core::schema::script();
+    auto* p = core::pawn(slot);
+    auto* hp = s && p ? s->zc_hp.object(p) : nullptr;
+    if (!hp) throw std::runtime_error("no pawn");
+    reflect::Resolver r("HPComponent", reflect::find_class(L"/Script/Zenith.HPComponent"));
+    const auto f = r.func(L"DoDamage", 4);
+    must(r.failure());
+    const int dmg = a.size() > 1 ? static_cast<int>(to_int(a[1])) : 100000;
+    reflect::Frame(f).arg(0, static_cast<ue::UObject*>(nullptr)).arg(1, dmg).arg_bool(2, false).arg_bool(3, false).invoke(hp);
+    line(out, std::format("P{} took {} damage (vanilla DoDamage)", slot, dmg));
+}
+
+void tp_cmd(Args a, std::string& out) {
+    if (a.size() < 3) throw std::runtime_error("usage: elmp tp <slot> <dy> <dz>  (relative to P1)");
+    const auto slot = to_int(a[0]);
+    auto* p1 = core::pawn(1);
+    const auto base = p1 ? core::location(p1) : std::nullopt;
+    if (!base) throw std::runtime_error("no P1 pawn");
+    auto at = *base;
+    at.y += static_cast<float>(std::stod(a[1]));
+    at.z += static_cast<float>(std::stod(a[2]));
+    must(party::respawn::teleport(slot, at));
+    party::respawn::release(slot);
+    line(out, std::format("P{} -> ({:.0f},{:.0f})", slot, at.y, at.z));
+}
+
 // elmp kbd <device> <key> down|up|tap
 void kbd_cmd(Args a, std::string& out) {
     std::size_t i = 0;
@@ -225,7 +293,14 @@ void register_party_commands() {
     add("bind", "<slot> <action> key|pad <label[,label]>", bind_cmd);
     add("bindings", "<slot> [reset]", bindings_cmd);
     add("mute", "[0|1]  silence every physical input (not saved)", mute_cmd);
+    add("progress", "shared progress: per-seat sync state, failures, grant log", progress_cmd);
+    add("gates", "permission gates per seat, map rule 2 door state", gates_cmd);
+    add("perm", "<slot> <gate> on|off  (travel rest trigger.story trigger.world pickup interact save)", perm_cmd);
+    add("rest", "[slot]  PX bench rest (restore own HP / prayers / skill uses)", rest_cmd);
+    add("transit", "map-follow state, last transit, revive / recall counters", transit_cmd);
 #ifdef ELMP_DEV
+    add("kill", "<slot> [damage]  (Dev aid) vanilla DoDamage on a seat", kill_cmd);
+    add("tp", "<slot> <dy> <dz>  (Dev aid) teleport relative to P1", tp_cmd);
     add("kbd", "<device> <key> down|up|tap  (Dev) inject a keyboard event", kbd_cmd);
     add("fakepad", "<N> off | <buttons|-> [lx ly]  (Dev) simulated XInput pad", fakepad_cmd);
 #endif

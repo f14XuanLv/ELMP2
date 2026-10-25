@@ -12,6 +12,7 @@
 #include "engine/handle.h"
 #include "engine/reflect.h"
 
+#include <array>
 #include <string>
 
 namespace elmp::core::schema {
@@ -30,6 +31,7 @@ struct Script {
     FuncRef controller_possess, controller_unpossess;
     PropRef zpc_inventory, zpc_param, zpc_spirit_equip, zpc_heal, zpc_passive;
     FuncRef zpc_fully_restore, zpc_aptitude_unlocked;
+    PropRef zpc_unlocked; // TArray<EAptitudeType>, read directly by the progress snapshot
     // ZenithCharacter
     PropRef zc_input, zc_hp, zc_mp, zc_faction, zc_command_queue, zc_locomotion;
     FuncRef loco_facing_right;
@@ -60,6 +62,17 @@ struct Script {
     FuncRef sp_replace, sp_setup_pose, sp_slots_setup, sp_update_world, sp_set_animation, sp_get_current;
     FuncRef sp_force_tick; // optional (logged when missing)
     FuncRef te_animation_name, te_track_time, te_loop;
+    // Progress snapshots (direct reads, no ProcessEvent)
+    PropRef binv_items, item_row_name, inv_currencies;
+    std::array<PropRef, 4> inv_sub; // aptitude, parameter, passive, spirit sub-inventories (direct pointers)
+    FuncRef inv_add_currency, pp_add_experience;
+    PropRef world_game_mode, gm_level_table;
+    // Movement / placement / gates
+    PropRef char_movement, cm_mode;
+    FuncRef cm_disable, cm_set_mode, mc_stop;
+    FuncRef prim_ignore_actor, actor_components_by_class;
+    ObjHandle primitive_class;
+    PropRef trigger_collision, box_extent, scene_rel_scale;
     // Spawning (GameplayStatics CDO)
     FuncRef gs_begin_spawn, gs_finish_spawn;
     ObjHandle gs_cdo;

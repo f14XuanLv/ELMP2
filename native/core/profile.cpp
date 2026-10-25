@@ -490,6 +490,7 @@ Profile fresh(const Profile& p) {
     Profile r = preset(Preset::Baseline);
     if (p.aptitudes) r.aptitudes = p.aptitudes;
     if (p.parameters) r.parameters = p.parameters;
+    if (p.spirit_items) r.spirit_items = p.spirit_items;
     if (p.spirit_levels || p.spirit_levels_max) {
         r.spirit_levels = p.spirit_levels;
         r.spirit_levels_max = p.spirit_levels_max;
@@ -517,6 +518,7 @@ json::Value to_json(const Profile& p) {
     auto o = json::Value::object();
     if (p.aptitudes) o.set("aptitudes", strings(*p.aptitudes));
     if (p.parameters) o.set("parameters", strings(*p.parameters));
+    if (p.spirit_items) o.set("spiritItems", strings(*p.spirit_items));
     if (p.spirit_levels_max) o.set("spiritLevels", "max");
     else if (p.spirit_levels) {
         auto m = json::Value::object();
@@ -566,10 +568,10 @@ bool from_json(const json::Value& v, Profile& out, std::string* err) {
     if (!v.is_object()) return fail("profile must be an object");
     Profile p;
     for (const auto& [key, val] : v.obj) {
-        if (key == "aptitudes" || key == "parameters") {
+        if (key == "aptitudes" || key == "parameters" || key == "spiritItems") {
             std::vector<std::string> list;
             if (!read_strings(val, list, key.c_str(), err)) return false;
-            (key == "aptitudes" ? p.aptitudes : p.parameters) = std::move(list);
+            (key == "aptitudes" ? p.aptitudes : key == "parameters" ? p.parameters : p.spirit_items) = std::move(list);
         } else if (key == "spiritLevels") {
             if (val.is_string() && val.str == "max") p.spirit_levels_max = true;
             else if (val.is_object()) {
@@ -665,7 +667,9 @@ std::optional<Profile> read(ue::UObject* pc, std::string* err) {
     p.aptitudes = rows(*s, call_obj(s->inv_aptitudes, inv));
     p.parameters = rows(*s, call_obj(s->inv_parameters, inv));
     std::map<std::string, int> levels;
-    if (auto* si = call_obj(s->inv_spirits, inv))
+    auto* si = call_obj(s->inv_spirits, inv);
+    p.spirit_items = rows(*s, si);
+    if (si)
         for (const auto& pr : reflect::map_pairs(si, s->spirit_levels)) levels[text(*reinterpret_cast<const FName*>(pr.key))] = *reinterpret_cast<const std::int32_t*>(pr.value);
     p.spirit_levels = std::move(levels);
     auto* equip = s->zpc_spirit_equip.object(pc);
@@ -716,6 +720,7 @@ Report apply(ue::UObject* pc, const Profile& p, bool exact) {
     };
     field("aptitudes", p.aptitudes.has_value(), [&] { return apply_aptitudes(c, *p.aptitudes, exact); });
     field("parameters", p.parameters.has_value(), [&] { return align_items(c, call_obj(s->inv_parameters, inv), b->table_parameter.get(), *p.parameters, exact, true); });
+    field("spiritItems", p.spirit_items.has_value(), [&] { return align_items(c, call_obj(s->inv_spirits, inv), b->table_spirit.get(), *p.spirit_items, exact, false); });
     field("spiritLevels", p.spirit_levels.has_value() || p.spirit_levels_max, [&] { return apply_spirit_levels(c, p, exact); });
     field("spirits", p.spirits.has_value() || p.summon_set.has_value(), [&] { return apply_spirits(c, p, exact); });
     field("passives", p.passives.has_value(), [&] { return apply_passives(c, *p.passives, exact); });

@@ -60,6 +60,8 @@ void want_menu(bool on);
 bool menu_wanted();
 
 std::span<const Entry> bucket(Kind k);
+// Incremented on every insert into the bucket (consumers re-apply per-object state when it changes).
+std::uint64_t version(Kind k);
 std::size_t size(Kind k);
 std::string class_name(std::uint16_t class_id);
 

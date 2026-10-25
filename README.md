@@ -26,7 +26,8 @@
 **P1 core + 本地多人（进行中）**：
 - **P1a core 内核已完成（2026-10-25）**：`native/core`（schema 一次解析约 110 个字段、player 槽位表 / 身份标签、spawn 生成 / 移除 / 复活、profile 读 / 增量 / 精确 / 重置、vitals、skin）、`native/input`（pad_state、virtual_pad = `InputConsume` detour）、控制台 `elmp core|spawn|despawn|respawn|lily|profile|vitals|skin|pad|move|hold|press|stop|trace`。Dev2 实测（动画序列、MP 规则、镜像幂等、复活保留装备、G0）见 `docs/kb/core-facts.md`。产品决定见需求树 §7.13。
 - **P1b 输入与座位已完成（2026-10-25）**：`native/input`（bindings 默认 = 原版键位、router、xinput 导入表改写 + 后台连接探测、rawinput 窗口子类化 + 按设备键盘）、`native/party`（config 设置定义、devices 持久化 `devices.json` + 每帧输入泵、seat 加入 / 离开 / 摆位、progress 共享进度基线）、控制台 `elmp join|leave|seats|devices|assign|bind|bindings|mute`（Dev：`kbd`、`fakepad`）。实测见 `docs/kb/party-facts.md`「P1b」。
-- 下一步 P1c：共享进度 1 s 节拍、复活 / 召回、过图跟随与规则 1/2/3、椅子、镜头、队伍与 PvP。
+- **P1c-1 规则已完成（2026-10-25）**：`core/permission`（travel / rest 重叠忽略闸门 + GateCache）、`party/progress`（1 s 收益记 P1 + 镜像 + 读回）、`party/respawn`（复活 / 丢 Pawn 兜底 / 召回 / 摆位）、`party/bench`、`party/rules`（规则 1 授权、规则 2 出口盒 + P1 出口保持）、`party/transit`（过图跟随）；控制台 `elmp progress|gates|perm|rest|transit`（Dev：`kill`、`tp`）。实测见 `docs/kb/party-facts.md`「P1c-1」。
+- 下一步 P1c-2：共享镜头放宽（两个镜头 detour）、队伍与 PvP 命中窗口。
 
 ## 与现仓库的关系
 

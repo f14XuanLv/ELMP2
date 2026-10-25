@@ -27,6 +27,8 @@ enum class Type : std::uint16_t {
     PvpHit,
     NetPeerJoin,
     NetPeerLeave,
+    ProgressGrant,  // slot = seat, a = experience granted to P1
+    MapTransitDone, // a = seats carried
 };
 
 const char* name(Type t) noexcept;

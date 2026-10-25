@@ -13,6 +13,12 @@
 #include "party/config.h"
 #include "party/devices.h"
 #include "party/seat.h"
+#include "core/permission.h"
+#include "party/bench.h"
+#include "party/progress.h"
+#include "party/respawn.h"
+#include "party/rules.h"
+#include "party/transit.h"
 #include "dev/lua_bridge.h"
 #include "engine/binary_checks.h"
 #include "engine/frame.h"
@@ -121,6 +127,12 @@ public:
         core::install();
         party::install();
         party::devices::install();
+        core::permission::install();
+        party::rules::install();
+        party::bench::install();
+        party::respawn::install();
+        party::progress::install();
+        party::transit::install();
         console::register_core_commands();
         console::register_party_commands();
         frame::set_activity([] { return core::active() > 0; }, nullptr);

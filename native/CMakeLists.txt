@@ -43,6 +43,11 @@ set(ELMP_MOD_SOURCES
     party/devices.cpp
     party/progress.cpp
     party/seat.cpp
+    party/respawn.cpp
+    party/bench.cpp
+    party/rules.cpp
+    party/transit.cpp
+    core/permission.cpp
     console/console.cpp
     console/commands.cpp
     console/core_commands.cpp

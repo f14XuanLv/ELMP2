@@ -23,6 +23,8 @@ const char* name(Type t) noexcept {
     case Type::PvpHit: return "pvpHit";
     case Type::NetPeerJoin: return "netPeerJoin";
     case Type::NetPeerLeave: return "netPeerLeave";
+    case Type::ProgressGrant: return "progressGrant";
+    case Type::MapTransitDone: return "mapTransitDone";
     }
     return "?";
 }

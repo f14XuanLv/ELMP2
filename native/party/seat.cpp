@@ -1,8 +1,12 @@
 #include "party/seat.h"
 
+#include "party/bench.h"
 #include "party/devices.h"
 #include "party/progress.h"
+#include "party/respawn.h"
+#include "party/transit.h"
 
+#include "core/permission.h"
 #include "core/profile.h"
 #include "core/schema.h"
 #include "core/spawn.h"
@@ -102,6 +106,8 @@ std::string join(const JoinOptions& opt, std::int64_t* slot_out) {
     if (auto e = core::vitals::restore(slot); !e.empty()) return fail("restore: " + e);
 
     g_seats[slot] = Seat{slot, opt.source, opt.team};
+    core::permission::track(slot);
+    transit::arm();
     sync_router();
     if (opt.source == Source::Devices) {
         if (auto e = devices::auto_assign(slot, opt.pad); !e.empty()) log::warn("seat {}: device assignment: {}", slot, e);
@@ -115,6 +121,9 @@ std::string join(const JoinOptions& opt, std::int64_t* slot_out) {
 std::string leave(std::int64_t slot) {
     if (!g_seats.contains(slot)) return std::format("no seat {}", slot);
     progress::forget(slot);
+    respawn::forget(slot);
+    bench::forget(slot);
+    core::permission::forget(slot);
     const auto err = core::spawn::despawn(slot, false);
     core::leases().release({"ELMP", slots::OwnerKind::Elmp}, slot);
     g_seats.erase(slot);
