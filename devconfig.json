@@ -1,0 +1,25 @@
+{
+  "_comment": "开发环境路径的唯一来源（构建、部署、实例、桥接、截图都读这里）。本机不同就写 devconfig.local.json（同结构、只写要改的键，不提交）。字符串里的 {game} 展开为 game。",
+  "game": "C:\\Game\\Steam\\steamapps\\common\\ENDER LILIES\\EnderLilies",
+  "python": "C:\\Dev\\miniconda\\python.exe",
+  "paks": "{game}\\Content\\Paks",
+  "usmap": "{game}\\Binaries\\Win64_For_Mod_Dev2\\ue4ss\\EnderLilies-4.26.2-0+++UE4+Release-4.26-0c574377.usmap",
+  "fetchCache": "",
+  "instances": {
+    "dev": {
+      "root": "{game}\\Binaries\\Win64_For_Mod_Dev2",
+      "userDir": "{game}\\Binaries\\ELMP_Test_Data\\dev",
+      "mcp": "ue4ss-ender-lilies-win64-for-mod-dev2"
+    },
+    "host": {
+      "root": "{game}\\Binaries\\Win64_LAN_Host2",
+      "userDir": "{game}\\Binaries\\ELMP_Test_Data\\host",
+      "mcp": "ue4ss-ender-lilies-lan-host2"
+    },
+    "client": {
+      "root": "{game}\\Binaries\\Win64_LAN_Client2",
+      "userDir": "{game}\\Binaries\\ELMP_Test_Data\\client",
+      "mcp": "ue4ss-ender-lilies-lan-client2"
+    }
+  }
+}

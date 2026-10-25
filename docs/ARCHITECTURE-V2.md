@@ -59,7 +59,7 @@ v1 把“机制”（Hook / 手柄 / 传输 / 覆盖层）放在 C++，把“逻
 7. **状态常驻、事件驱动更新（缓存优先）**：C++ 可以无代价地长期持有大量状态，所以**任何“每帧重新查询”的读取都先问能不能变成“变化时更新一次的缓存”**。具体做法：UFunction post 钩子 / `BeginPlay` / `EndPlay` / 对象删除监听 / 属性变化沿 作为缓存失效源；每帧只读缓存与少量必须每帧读的原始字段（位置、HP、Spine 轨道时间）。缓存清单见 §16.1。
 8. **引擎访问集中在门面**：`engine/facades` 是“原版事实只写一次”的位置（ADR 0002），不是为了 mock；验证以真实实例为主（§13）。
 9. **数据表外置**：催化表（物品文本、输入知识、图标索引、闸门类策略、RVA）全部 JSON / 二进制在 `data/`，由工具生成；代码不含大常量表。
-10. **零新增依赖**：JSON（`RC::JSON`）、PolyHook2、ImGui、fmt、ScopedTimer / tracy 均来自 UE4SS 目标；网络仍用 CNG。
+10. **零新增依赖**：JSON（`base/json`，自写的极简解析 / 写出器——`RC::JSON` 依赖 UE4SS 的 File/Helpers 且为宽字符接口，与“base 不依赖 UE4SS、可 CTest”冲突，2026-10-25 实施决定）、PolyHook2、ImGui、fmt、ScopedTimer / tracy 均来自 UE4SS 目标；网络仍用 CNG。
 11. **拿走知识，不照搬代码**：新仓库以 `D:\CodeT\ELMP` 的代码、文档、kb 为知识来源（原版入口、偏移、实测结论、踩过的坑），**不复制其代码文件**；每个模块按本架构重新实现。工作规则见根目录 `AGENTS.md`。
 
 ---
@@ -178,7 +178,7 @@ template<class R, class... A> R call(UObject* o, FuncRef f, A... a);  // 栈上�
 | detour | `AbilityEffectQueue 0xCBB110` | PolyHook2 | pvp |
 | UFunction pre/post | `AbilityHitbox:OnActorOverlapBegin` / `ProcessActorEnter` / `Ability:ExecuteAbilityEffectsOnTarget` | `UFunction::RegisterPreHook/PostHook` | pvp |
 | detour | `DoDamage 0xCA0380`、`SkillDamage 0xCB07E0`、`IsPlayerThunk 0xCE3C90`、`SaveGame 0xD25410`、`SaveGameAsync 0xD25550` | PolyHook2 | guard |
-| detour | `EnemySetActive 0xCEFAE0`、`SetActorEnableCollision 0x22C78D0`、`SetActorTickEnabled 0x22C8540` | PolyHook2 | guard |
+| detour | `SetActorEnableCollision 0x22C78D0`、`SetActorTickEnabled 0x22C8540`（`0xCEFAE0` 经 2026-10-25 核实为 `AZenithSpirit::SetActive`，EL.json 名 `SpiritSetActive`；敌人激活入口 P2 重新定位，见 `docs/kb/engine-facts.md`） | PolyHook2 | guard |
 | detour | `AbilityLaunchFromDesc 0xCAD0C0` | PolyHook2 | coop/host/events |
 | detour | `ClearedQueryCurrentMapId 0xCAAFF0`、`ClearableBeginPlay 0xC997B0` | PolyHook2 | world/map_context |
 | UFunction post | `PC_Base_C:OnSwitchGameMapStart / OnGameMapSwitch / OnGameMapReadyPostFade`、`WBP_FaderLoading_C:LaunchFadeIn` | UE4SS | party/transit |
@@ -199,7 +199,7 @@ template<class R, class... A> R call(UObject* o, FuncRef f, A... a);  // 栈上�
 ### 7.1 `base`
 - `preflight`：不变（SHA-256 + 前缀）。`binary_manifest`：`data/binary/EL.json` **运行时加载**（取代 v1 构建期生成的 `symbols.h`）：支持的 EXE 哈希、每个 RVA Hook 的地址 + 前缀 + 用途、以及少数无反射的原始结构偏移（Spine 指针字段、`ZenithCharacter+1464/1465` 等）；每项都带来源标签，启动时逐项校验（前缀逐字节、偏移处相邻反射字段一致），任一失败 → 该项依赖的能力 fail closed。设计参考 `D:\CodeT\LilyInEM\native\core\binary_manifest.h`。
 - `events`：不变（有界环 + 游标）；新增类型枚举 `{Damaged, Death, MapSwitchStart, MapReady, SeatJoin, SeatLeave, Rested, Recalled, Revived, PvpHit, NetPeer*, …}`；消费者：party / coop / modes / SDK / 义肢。
-- `settings`：`Saved/ELMP/ELMP/settings.json`（`RC::JSON`），schema 版本；`set/get`、变更回调；`muteInput` 等瞬态项不落盘。
+- `settings`：`Saved/ELMP/ELMP/settings.json`（`base/json` + 原子写），schema 版本；`set/get`、变更回调；`muteInput` 等瞬态项不落盘。
 - `storage`：原子写（临时文件 + flush + `ReplaceFile`）+ `.bak`；通用 `load_json/save_json`。
 - `metrics`：每阶段 `ScopedTimer`，直方图（P50/P95/P99）与计数器；`elmp perf` 控制台命令与义肢读取。
 

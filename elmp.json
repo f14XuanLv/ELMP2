@@ -1,0 +1,18 @@
+{
+  "name": "ELMP",
+  "version": "0.2.0",
+  "api": {
+    "elmp.core": "1.0.0"
+  },
+  "protocol": 2,
+  "game": {
+    "exe": "EnderLiliesSteam-Win64-Shipping.exe",
+    "sha256": [
+      "9B939A44457D78AF1F5E8B90EF0F88B95D7DBC35A330350F2EF1E100CDD48329"
+    ]
+  },
+  "ue4ss": "32d8a381",
+  "shipping": {
+    "lua": false
+  }
+}

@@ -21,7 +21,7 @@
 
 ## 当前阶段
 
-设计阶段已完成（需求树 + 架构 + 工作规则，2026-10-25）；代码尚未开始。下一步 = `ARCHITECTURE-V2.md` §15 的 **P0 骨架**：建新仓库骨架、`base/` + `engine/`（反射缓存、注册表、帧泵、生命周期）、`console`，部署到 Dev2 替换旧 Mod，验证 G0 零开销门槛。
+**P0 骨架已完成（2026-10-25）**：`native/base`（log、clock、json + 原子写、binary_manifest、preflight、hook、settings、metrics、events、slots）、`native/engine`（ue、handle、reflect、world、registry、frame、lifecycle、binary_checks）、`native/console`、`native/dev`（Dev 的 UEBridge 注入、ElmpFrameProbe 帧时间探针）、`tools/`（devconfig / deploy / instance / bridge / capture / package）、`data/binary/EL.json`、3 个 CTest。Dev2 门槛实测见 `docs/kb/engine-facts.md`「P0 验收」。下一步 = §15 **P1 core + 本地多人**。
 
 ## 与现仓库的关系
 

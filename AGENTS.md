@@ -43,6 +43,17 @@
 - “某函数没被调用”必须有原生 detour 计数或 IDA xref 证据；UE4SS UFunction 钩子看不到原生直接 / 虚表调用。
 - 任何缓存必须带失效源与审计方式（`docs/ARCHITECTURE-V2.md` §16.1）。
 
+## 常用命令（仓库根目录；Python = `C:\Dev\miniconda\python.exe`）
+- 构建 + CTest：`cmd /c build.bat test`（首次配置约数分钟；离线依赖目录写在 `devconfig.local.json` 的 `fetchCache`）；只编 base + CTest：`build.bat base test`；发布包：`build.bat package`（Shipping zip 断言零 `.lua`）。
+- 产物：`build\Game__Shipping__Win64\{dev,shipping,frameprobe}\dlls\main.dll`。
+- 部署（实例必须已停止）：`python tools\deploy.py dev [--flavor shipping] [--elmp on|off] [--probe on|off]`；`--elmp off --probe on` = 裸 UE4SS 帧时间基线。
+- 实例：`python tools\instance.py start|stop|status|log dev [--grep ELMP]`（只结束 devconfig 内实例的进程）。
+- 桥接（Dev 构建，UEBridge 文件通道，不需要 MCP）：`python tools\bridge.py dev wait-ready`、`... dev elmp "elmp status"`、`... dev eval "<lua>"`、`... dev console "<cmd>"`。读档：eval `FindFirstOf('TitleMap_C'):OnSaveSlotSelected(0, 2)`（测试辅助，登记）。
+- 截图：`python tools\capture.py dev <name>` → `<userDir>\Saved\ELMP\pilot\shots\<name>-dev.png`。
+- 帧时间 A/B：部署探针后 `bridge.py dev console "elmpprobe start 60 <label> 2"`，结果写 `Mods\ElmpFrameProbe\out\<label>.json` 与 UE4SS.log；ELMP 自身每帧开销看 `elmp perf`（`frame.idle_elmp_us`、`g0.reflect_calls`）。测量前 `r.VSync 0` + `t.MaxFPS 60`。
+- 控制台命令：`elmp status | preflight | perf [reset] | registry [verify|list <kind> [n]|menu on|off] | lifecycle | events [n] | set | get`。
+- 引擎层代码避免函数名 `check` / `verify`（UE 宏）。
+
 ## 术语
 - 非 P1 的权限 / 结算说法用“权限闸门 / 结算拦截 / 存档保护”，不用“防火墙”。
 - Host 权威铁律：客人进程永不自行结算；Host 做不到的场景 fail closed。

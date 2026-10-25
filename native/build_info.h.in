@@ -1,0 +1,16 @@
+#pragma once
+// Generated from elmp.json by CMake. Do not edit.
+
+namespace elmp::build {
+inline constexpr const char* version = "@ELMP_VERSION@";
+inline constexpr const char* api_core = "@ELMP_API_CORE@";
+inline constexpr int protocol = @ELMP_PROTOCOL@;
+inline constexpr const wchar_t* game_exe = L"@ELMP_GAME_EXE@";
+inline constexpr const char* ue4ss = "@ELMP_UE4SS@";
+inline constexpr const char* game_sha256[] = {@ELMP_GAME_SHA256_LIST@};
+#ifdef ELMP_DEV
+inline constexpr bool dev = true;
+#else
+inline constexpr bool dev = false;
+#endif
+} // namespace elmp::build

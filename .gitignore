@@ -1,0 +1,7 @@
+build/
+build.configure.log
+dist/
+.vs/
+*.log
+__pycache__/
+devconfig.local.json

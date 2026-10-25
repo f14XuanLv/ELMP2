@@ -1,0 +1,173 @@
+{
+  "schema": 1,
+  "game": "ENDER LILIES",
+  "engine": "UE 4.26.2",
+  "module": "EnderLiliesSteam-Win64-Shipping.exe",
+  "image_base_note": "0x140000000",
+  "_comment": "运行时加载（Mods/ELMP/data/binary/EL.json）。只放没有反射入口的原生函数与无反射的原始结构偏移；适用的 EXE 由 elmp.json game.sha256 唯一给出（C1.5，本文件不重复哈希）。每个函数：预检通过（EXE SHA-256）且 rva 处字节与 prefix 逐字节一致才可武装（fail closed）。每个偏移：check 描述它与反射字段的关系（equals = 与该反射属性偏移相等；within = 落在 after 属性末尾与 before 属性起点之间，before 为 <end> 表示原生类 PropertiesSize；struct_size = 等于该结构体尺寸），世界就位后逐项校验，失败的项其依赖能力 fail closed。source 标注证据等级与出处。",
+  "functions": {
+    "InputConsume": {
+      "rva": "0x00CEF310",
+      "prefix": "48895C2410574883EC50",
+      "signature": "uintptr UZenithInputComponent::InputConsume(this, void*)",
+      "owner": "input/virtual_pad",
+      "source": "[E-IDA][E-实测] v1 data/RVA.json（ELMP 2026-10-06）；LilyInEM data/binary/EL.json",
+      "note": "快照消费：NextInputSnapshot(+184) → InputSnapshot(+224)；只被各 Pawn 类 Tick 调用（ZenithCharacter::Tick 0x140CF3740 取 this+1344）"
+    },
+    "GameplayCameraUpdate": {
+      "rva": "0x00CF7B60",
+      "prefix": "4C8BDC555356574157498DAB18FFFFFF",
+      "signature": "uint64 AGameplayCamera::Update(this, float DeltaTime, bool bLag)",
+      "owner": "camera",
+      "source": "[E-IDA] v1 data/RVA.json（ELMP 2026-10-09）",
+      "note": "目标框 → 距离钳到 CurrentSettings.MaxDistance(+2324) → 定位"
+    },
+    "GameplayCameraTargetBounds": {
+      "rva": "0x00CD63D0",
+      "prefix": "488BC448895808488970184889782048895010",
+      "signature": "bool AGameplayCamera::TargetBounds(this, FVector* Min, FVector* Max)",
+      "owner": "camera",
+      "source": "[E-IDA] v1 data/RVA.json（ELMP 2026-10-09）",
+      "note": "每个目标 位置 ± 2×根组件包围球半径（Y/Z）"
+    },
+    "AbilityEffectQueue": {
+      "rva": "0x00CBB110",
+      "prefix": "48895C241055565741544155415641574883EC60",
+      "signature": "void AAbility::AdvanceEffectQueue(this, FHitEntry* /*336B*/, float dt)",
+      "owner": "pvp",
+      "source": "[E-IDA] v1 data/RVA.json（ELMP 2026-10-11）",
+      "note": "FHitEntry +0 目标弱指针、+304 当前队列、+316 本队列已启动；POST_DEFAULT 的 AE_Knockback 由 AAbility::Tick(0xCBEE00) 续跑"
+    },
+    "GuardDoDamage": {
+      "rva": "0x00CA0380",
+      "prefix": "40535541564883EC3083B91401000000418BE84C8BF2488B",
+      "signature": "void UHPComponent::DoDamage(this, AActor* From, int32 Damage, bool bJustGuarding, bool bGuarding)",
+      "owner": "guard",
+      "reflect": "/Script/Zenith.HPComponent:DoDamage",
+      "source": "[E-IDA] v1 data/RVA.json（IDA 2026-10-11）",
+      "note": "有反射入口：优先取 UFunction 原生实现地址，RVA 只作交叉校验（FR-PLT-4a）"
+    },
+    "GuardSkillDamage": {
+      "rva": "0x00CB07E0",
+      "prefix": "4D85C00F840A0300005557415641574883EC48498BE94889",
+      "signature": "void UAE_DamageComponent::ApplyDamage(this, AActor* Instigator, AActor* Target, FHitEntry* Entry)",
+      "owner": "guard",
+      "source": "[E-IDA] v1 data/RVA.json（IDA 2026-10-11）；LilyInEM AEDamageApply",
+      "note": "技能伤害应用：直写目标 HPComponent+276 CurrHP 并广播；无反射入口"
+    },
+    "GuardIsPlayerThunk": {
+      "rva": "0x00CE3C90",
+      "prefix": "E95B140300CC",
+      "signature": "bool UActorBPFLibrary::IsPlayer thunk (JMP → 0xD150F0)",
+      "owner": "guard",
+      "source": "[E-IDA] v1 data/RVA.json（IDA 2026-10-11）",
+      "note": "蓝图侧 5 字节 JMP 跳板；本体 0xD150F0 不 Hook（X-5）"
+    },
+    "GuardSaveGame": {
+      "rva": "0x00D25410",
+      "prefix": "48895C241048896C2418565741564883EC30",
+      "signature": "bool USaveSubsystem::SaveGame(this)",
+      "owner": "guard",
+      "reflect": "/Script/Zenith.SaveSubsystem:SaveGame",
+      "source": "[E-IDA] v1 data/RVA.json（IDA 2026-10-11）",
+      "note": "SaveGameToSlot + OnSaveFinished 通知"
+    },
+    "GuardSaveGameAsync": {
+      "rva": "0x00D25550",
+      "prefix": "48895C2410488974241848897C242055488BEC4883EC5080",
+      "signature": "void USaveSubsystem::SaveGameAsync(this, TSubclassOf<UUserWidget>, FSaveGameResult OnFinished)",
+      "owner": "guard",
+      "reflect": "/Script/Zenith.SaveSubsystem:SaveGameAsync",
+      "source": "[E-IDA] v1 data/RVA.json（IDA 2026-10-11）",
+      "note": "拦截时回调 bSuccess=false"
+    },
+    "SpiritSetActive": {
+      "rva": "0x00CEFAE0",
+      "prefix": "48895C240848896C2410488974241857",
+      "signature": "void AZenithSpirit::SetActive(this, bool)",
+      "owner": "guard（P2 复核用途）",
+      "source": "[E-IDA][E-实测] v2 2026-10-25 更正：v1 RVA.json（2026-10-14）记作 AZenithCharacter 激活本体；IDA 证实调用者 0xCCFCB0 = AZenithSpirit::Appear（exec 0x140DA1C70 在 ZenithSpirit 原生函数表，名 \"Appear\"），且 this+1216/+1264/+1304 与 Dev2 反射 ZenithSpirit.StateComponent/OnSpiritAppearDelegate/MovementComponent 吻合；对 AZenithCharacter 而言 +1464 是反射的 OnParryDelegate",
+      "note": "+1465=active、虚表 +768、SetActorTickEnabled / SetActorEnableCollision、+1312 弱控制器 Possess/UnPossess。是精灵的出现/消失本体，不是敌人激活单汇点（见 docs/kb/engine-facts.md）"
+    },
+    "GuardActorSetCollision": {
+      "rva": "0x022C78D0",
+      "prefix": "4C8BDC564881EC00010000",
+      "signature": "void AActor::SetActorEnableCollision(this, bool)",
+      "owner": "guard",
+      "source": "[E-IDA] v1 data/RVA.json（IDA 2026-10-14）",
+      "note": "碰撞写入原语汇点"
+    },
+    "GuardActorSetTick": {
+      "rva": "0x022C8540",
+      "prefix": "48895C2408574883EC20F6413202",
+      "signature": "void AActor::SetActorTickEnabled(this, bool)",
+      "owner": "guard",
+      "source": "[E-IDA] v1 data/RVA.json（IDA 2026-10-14）",
+      "note": "actor tick 写入原语汇点"
+    },
+    "AbilityLaunchFromDesc": {
+      "rva": "0x00CAD0C0",
+      "prefix": "48895C2408488974241048897C241855488D6C24B04881EC",
+      "signature": "AAbility* UAbilityComponent::LaunchAbilityFromDescription(this, const FAbilityDescription&, const FTransform&)",
+      "owner": "coop/host/events",
+      "source": "[E-IDA][E-实测] v1 data/RVA.json（IDA 2026-10-14）",
+      "note": "FAbilityTimeline::Tick(0xCBABE0) 直调，不经 ProcessEvent；pre 取参"
+    },
+    "ClearedQueryCurrentMapId": {
+      "rva": "0x00CAAFF0",
+      "prefix": "48895C24084889742410574883EC20488BF9488BCA",
+      "signature": "FName* ClearedQueryCurrentMapId(FName* out, UObject* context)",
+      "owner": "world/map_context",
+      "source": "[E-IDA] v1 data/RVA.json（IDA 2026-10-25）",
+      "note": "UClearedObjectManagerComponent 检查 / 记账 / 通用变换读写取当前地图 ID 的单汇点"
+    },
+    "ClearableBeginPlay": {
+      "rva": "0x00C997B0",
+      "prefix": "4889742420574883EC30488BF9E8",
+      "signature": "void UClearableComponent::BeginPlay(this)",
+      "owner": "world/map_context",
+      "source": "[E-IDA] v1 data/RVA.json（IDA 2026-10-25）",
+      "note": "前台 IsLoading 时只挂 OnGameMapReady 委托"
+    }
+  },
+  "offsets": {
+    "ZenithInputComponent.PawnOwner": {
+      "value": 176,
+      "check": { "equals": { "class": "/Script/Zenith.ZenithInputComponent", "property": "PawnOwner" } },
+      "source": "[E-IDA] LilyInEM data/binary/EL.json；v1 core-facts（输入）"
+    },
+    "ZenithInputComponent.NextInputSnapshot": {
+      "value": 184,
+      "check": { "equals": { "class": "/Script/Zenith.ZenithInputComponent", "property": "NextInputSnapshot" } },
+      "source": "[E-IDA] LilyInEM data/binary/EL.json；v1 core-facts（输入）"
+    },
+    "ZenithInputComponent.InputSnapshot": {
+      "value": 224,
+      "check": { "equals": { "class": "/Script/Zenith.ZenithInputComponent", "property": "InputSnapshot" } },
+      "source": "[E-IDA] LilyInEM data/binary/EL.json；v1 core-facts（输入）"
+    },
+    "InputSnapshot.size": {
+      "value": 40,
+      "check": { "struct_size": "/Script/Zenith.InputSnapshot" },
+      "source": "[E-IDA] LilyInEM data/binary/EL.json"
+    },
+    "ZenithSpirit.ActivationState": {
+      "value": 1464,
+      "size": 1,
+      "check": { "within": { "class": "/Script/Zenith.ZenithSpirit", "after": "MovementComponent", "before": "<end>" } },
+      "source": "[E-IDA][E-实测] v2 2026-10-25：0xCCFCB0（AZenithSpirit::Appear）读写 +1464（!=2 → 置 2）；v1 net-facts 2026-10-14 误记为 ZenithCharacter（Dev2 反射：ZenithCharacter+1464 = OnParryDelegate）"
+    },
+    "ZenithSpirit.bActive": {
+      "value": 1465,
+      "size": 1,
+      "check": { "within": { "class": "/Script/Zenith.ZenithSpirit", "after": "MovementComponent", "before": "<end>" } },
+      "source": "[E-IDA][E-实测] v2 2026-10-25：0xCEFAE0（AZenithSpirit::SetActive）写 +1465；同上更正"
+    },
+    "HealComponent.RemainingHealCount": {
+      "value": 296,
+      "size": 4,
+      "check": { "within": { "class": "/Script/Zenith.HealComponent", "after": "HealPowerPercentageBonus", "before": "<end>" } },
+      "source": "[E-IDA] v1 net-facts「重构后联机验收」2026-10-24：UseHeal exec 0x140D64BA0 / GetRemainingHealCount 0x140CAAAE0 读 +296"
+    }
+  }
+}
