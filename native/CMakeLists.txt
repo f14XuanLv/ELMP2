@@ -27,8 +27,17 @@ set(ELMP_MOD_SOURCES
     engine/lifecycle.cpp
     engine/world.cpp
     engine/binary_checks.cpp
+    core/schema.cpp
+    core/player.cpp
+    core/spawn.cpp
+    core/profile.cpp
+    core/vitals.cpp
+    core/skin.cpp
+    input/pad_state.cpp
+    input/virtual_pad.cpp
     console/console.cpp
     console/commands.cpp
+    console/core_commands.cpp
     dev/lua_bridge.cpp
     mod/dllmain.cpp
 )

@@ -393,6 +393,12 @@ ELMP 包零 Lua；对 Lua Mod 注入 C 函数；语法糖随 SDK 仓库。`elmp.
 ### 7.12 剧情旗标载体 → **[定]**
 本作剧情旗标 = 当前图内的 `BP_Condition_*` actor（`ConditionResult`）；Client 落地 `SetConditionResult` 并摘掉本地求值源；条件 actor 之外的剧情状态报“未支持”。
 
+### 7.13 P1 开工产品决定（用户 2026-10-25）→ **[定]**
+1. **管理器“规则”页**（F1.17）只放玩法规则：切图规则 1/2/3、PvP 伤害倍率与击退档位、`equipAnywhere`、召回开关与阈值（`recallDistance / recallDelayMs / recallFallDepth`）、镜头放宽开关 `cameraFraming`。镜头留白 / 倍数（`cameraSideMargin / cameraTopMargin / cameraBottomMargin / cameraMaxDistanceScale`）只经 `elmp set`；所有项都持久化。
+2. **未登记的 `ATrigger` 子类**（F1.16 / §7.1.4）：对非 P1 座位按 `story` 处理（碰撞忽略，fail closed），并且每个未知类只记一次：UE4SS.log 一行 + `elmp gates` 列出，便于把纯表现触发器补进 `data/gates.json`。
+3. **旧 `party_<saveId>.profile.lua` 解析失败**（C12 迁移）：旧文件永不修改 / 删除；不导入任何内容、不写该档 JSON；原因记一次 UE4SS.log 并在 `elmp storage` 与管理器存储页显示（英文）“Old ELMP profile for this save could not be read (<reason>). Nothing was imported; the file was kept.”；存储页提供显式 “New PX data” 按钮（需确认）让玩家主动以空队伍开始该档。**永不自动以空队伍开始。**
+4. **规则 1 授予切图权限**：规则 1 生效期间所有本地座位（slot 2..100 的本地输入座位）的有效 `travel` = 开；切回规则 2/3 恢复逐座位值。测试 / 第三方 slot（101+）与远程座位不受规则 1 影响（远程切图归 C18 多地图逻辑）。
+
 ---
 
 ## 8. 验收口径（继承并细化）

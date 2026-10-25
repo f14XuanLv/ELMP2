@@ -15,7 +15,8 @@
 
 - `RegisterProcessConsoleExecCallback` 是 post 回调，且 UE4SS 只在 `Context` 是 `UGameViewportClient` 时调用（`Hooks.cpp`）；`UGameViewportClient::Exec` 在 `ProcessConsoleExec(Cmd, Ar, NULL)` 返回 false 后才交给 GameInstance / GEngine（UE 4.26 `GameViewportClient.cpp` 2916 行）。所以 `elmp …` 只来自本地玩家（Controller0）控制台路径。`[E-源码][E-实测]`
 - `mods.txt` 中 `ELMP : 0` 时 UE4SS 仍会把 `Mods/ELMP/dlls/main.dll` 映射进进程（`GetModuleHandle` 能取到），只是不调用 `start_mod`（日志 “Mod 'ELMP' disabled in mods.txt.”）。判断“ELMP 是否在运行”不能看模块是否加载；ELMP 导出 `elmp_started()` 供 Dev 工具使用。`[E-实测] 2026-10-25`
-- 标题画面：`GameViewport.World` 有效、`LocalPlayers[0].PlayerController` 有效、Pawn 为空、`WorldLoaderSubsystem.CurrentGameMapID = None`；读档时 LoadMap 触发两次（title → loading → title → loading → settling → settled）。`[E-实测]`
+- 标题画面：`GameViewport.World` 有效、`LocalPlayers[0].PlayerController` 有效、Pawn 为空；读档时 LoadMap 触发两次（title → loading → title → loading → settling → settled）。`[E-实测]`
+  - **更正（v2 2026-10-25，P1a）**：`WorldLoaderSubsystem.CurrentGameMapID = None` 只在进程首次进入标题时成立；从游戏里回标题后子系统（GameInstance 级）保留上一张图（实测仍为 `map_church_08`），lifecycle 因此停在 `settling (P1 pawn missing)` 而不是 `title`。不影响判定（非 Settled 即无座位上下文），但“标题”不能只靠地图 ID 识别。`[E-实测]`
 - `SwitchGameMap`（church_08 → church_07）不经过 LoadMap：生命周期保持 Settled，旧图 actor 走 EndPlay、新图 actor 走 BeginPlay，注册表无需重建（verify 一致，enemy 24 / spawnPoint 25）。`[E-实测]`
 - `KismetSystemLibrary::GetProjectSavedDirectory()` 在 `-UserDir` 隔离下返回 `<UserDir>/Saved/`（Dev2：`…/ELMP_Test_Data/dev/Saved/`）。`[E-实测]`
 - `HealComponent` 反射 `HealPowerPercentageBonus` 结束于 288，类尾 336；IDA 的剩余祈祷 `+296` 落在空洞内（v1 net-facts 结论成立）。`ZenithInputComponent.PawnOwner/NextInputSnapshot/InputSnapshot` = 176/184/224，`FInputSnapshot` 尺寸 40（与 IDA 一致）。`[E-实测]`

@@ -21,6 +21,7 @@ bool run(std::string_view line, std::string& out);
 void install();
 void uninstall();
 
-void register_p0_commands(); // commands.cpp
+void register_p0_commands();   // commands.cpp
+void register_core_commands(); // core_commands.cpp
 
 } // namespace elmp::console

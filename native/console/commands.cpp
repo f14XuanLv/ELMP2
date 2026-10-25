@@ -2,6 +2,9 @@
 
 #include "console/console.h"
 
+#include "core/player.h"
+#include "core/schema.h"
+
 #include "engine/binary_checks.h"
 #include "engine/frame.h"
 #include "engine/lifecycle.h"
@@ -40,7 +43,8 @@ void status(Args, std::string& out) {
     line(out, std::format("preflight: {}{}", pf.ok ? "ok" : "FAILED: ", pf.reason));
     line(out, std::format("world: {} generation={} map={}{}", lifecycle::name(lifecycle::state()), lifecycle::generation(),
                           ue::utf8(world::current_map_id()), lifecycle::waiting_for().empty() ? "" : " (waiting: " + lifecycle::waiting_for() + ")"));
-    line(out, std::format("frame: ticks={} idle={} seats=0 session=none", frame::ticks(), frame::idle()));
+    line(out, std::format("frame: ticks={} idle={} active_slots={} session=none", frame::ticks(), frame::idle(), core::active()));
+    line(out, "core: " + core::schema::status());
     const auto st = registry::stats();
     std::string counts;
     for (std::size_t k = 0; k < registry::kKinds; ++k) counts += std::format(" {}={}", registry::kind_name(static_cast<registry::Kind>(k)), st.count[k]);

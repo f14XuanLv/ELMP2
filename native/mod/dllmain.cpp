@@ -7,6 +7,7 @@
 #include "base/preflight.h"
 #include "base/settings.h"
 #include "console/console.h"
+#include "core/player.h"
 #include "dev/lua_bridge.h"
 #include "engine/binary_checks.h"
 #include "engine/frame.h"
@@ -109,6 +110,9 @@ public:
         lifecycle::install();
         console::install();
         console::register_p0_commands();
+        core::install();
+        console::register_core_commands();
+        frame::set_activity([] { return core::active() > 0; }, nullptr);
         frame::add_phase("lifecycle", [](const frame::Tick& t) { lifecycle::step(t.now_us); });
         frame::add_phase("init", deferred_init, [] { return !g_settings_loaded; }, 250);
         frame::add_phase("registry.drain", [](const frame::Tick&) { registry::drain(); });

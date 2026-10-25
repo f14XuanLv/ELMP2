@@ -21,7 +21,11 @@
 
 ## 当前阶段
 
-**P0 骨架已完成（2026-10-25）**：`native/base`（log、clock、json + 原子写、binary_manifest、preflight、hook、settings、metrics、events、slots）、`native/engine`（ue、handle、reflect、world、registry、frame、lifecycle、binary_checks）、`native/console`、`native/dev`（Dev 的 UEBridge 注入、ElmpFrameProbe 帧时间探针）、`tools/`（devconfig / deploy / instance / bridge / capture / package）、`data/binary/EL.json`、3 个 CTest。Dev2 门槛实测见 `docs/kb/engine-facts.md`「P0 验收」。下一步 = §15 **P1 core + 本地多人**。
+**P0 骨架已完成（2026-10-25）**：`native/base`（log、clock、json + 原子写、binary_manifest、preflight、hook、settings、metrics、events、slots）、`native/engine`（ue、handle、reflect、world、registry、frame、lifecycle、binary_checks）、`native/console`、`native/dev`（Dev 的 UEBridge 注入、ElmpFrameProbe 帧时间探针）、`tools/`（devconfig / deploy / instance / bridge / capture / package）、`data/binary/EL.json`、3 个 CTest。Dev2 门槛实测见 `docs/kb/engine-facts.md`「P0 验收」。
+
+**P1 core + 本地多人（进行中）**：
+- **P1a core 内核已完成（2026-10-25）**：`native/core`（schema 一次解析约 110 个字段、player 槽位表 / 身份标签、spawn 生成 / 移除 / 复活、profile 读 / 增量 / 精确 / 重置、vitals、skin）、`native/input`（pad_state、virtual_pad = `InputConsume` detour）、控制台 `elmp core|spawn|despawn|respawn|lily|profile|vitals|skin|pad|move|hold|press|stop|trace`。Dev2 实测（动画序列、MP 规则、镜像幂等、复活保留装备、G0）见 `docs/kb/core-facts.md`。产品决定见需求树 §7.13。
+- 下一步 P1b：设备 / 座位（XInput IAT、Raw Input、router、bindings、seat 生命周期、`elmp join/leave/seats`）。
 
 ## 与现仓库的关系
 

@@ -2,10 +2,16 @@
 
 #include "base/log.h"
 
+#include <Unreal/Core/Containers/Map.hpp>
+#include <Unreal/FAssetData.hpp>
 #include <Unreal/FString.hpp>
+#include <Unreal/UAssetRegistry.hpp>
+#include <Unreal/UAssetRegistryHelpers.hpp>
 
 #include <algorithm>
+#include <cwchar>
 #include <format>
+#include <memory>
 
 namespace elmp::reflect {
 
@@ -74,10 +80,57 @@ UObject* PropRef::object(const void* base) const {
     return ue::alive(o) ? o : nullptr;
 }
 
+bool same_name(std::wstring_view a, std::wstring_view b) noexcept {
+    return a.size() == b.size() && _wcsnicmp(a.data(), b.data(), a.size()) == 0;
+}
+
 UObject* find_object(std::wstring_view path) {
     ++g_lookups;
     const std::wstring p(path);
     return UObjectGlobals::StaticFindObject<UObject*>(nullptr, nullptr, p.c_str());
+}
+
+namespace {
+
+UObject* load_via_registry(std::wstring_view path) {
+    auto* registry = static_cast<UAssetRegistry*>(UAssetRegistryHelpers::GetAssetRegistry().ObjectPointer);
+    if (!registry) return nullptr;
+    g_calls += 2;
+    FAssetData data = registry->GetAssetByObjectPath(FName(std::wstring(path).c_str(), FNAME_Add));
+    if (!data.PackageName().GetComparisonIndex()) return nullptr;
+    return UAssetRegistryHelpers::GetAsset(data);
+}
+
+} // namespace
+
+UObject* load_object(std::wstring_view path) {
+    if (UObject* o = find_object(path); ue::alive(o)) return o;
+    if (path.ends_with(L"_C")) load_via_registry(path.substr(0, path.size() - 2));
+    load_via_registry(path);
+    UObject* o = find_object(path);
+    return ue::alive(o) ? o : nullptr;
+}
+
+std::int32_t element_size(const PropRef& p) {
+    if (!p.prop || p.kind != Kind::Array) return 0;
+    const FProperty* inner = static_cast<FArrayProperty*>(p.prop)->GetInner();
+    return inner ? inner->GetSize() : 0;
+}
+
+std::vector<Pair> map_pairs(const void* base, const PropRef& p) {
+    std::vector<Pair> out;
+    if (!p.prop || p.kind != Kind::Map) return out;
+    auto* mp = static_cast<FMapProperty*>(p.prop);
+    const FScriptMapLayout& layout = mp->GetMapLayout();
+    const auto* map = p.at<FScriptMap>(base);
+    const std::int32_t n = map->GetMaxIndex();
+    out.reserve(static_cast<std::size_t>(map->Num()));
+    for (std::int32_t i = 0; i < n; ++i) {
+        if (!map->IsValidIndex(i)) continue;
+        const auto* pair = static_cast<const std::uint8_t*>(map->GetData(i, layout));
+        out.push_back({pair, pair + layout.ValueOffset});
+    }
+    return out;
 }
 
 UClass* find_class(std::wstring_view path) { return static_cast<UClass*>(find_object(path)); }
@@ -87,7 +140,7 @@ FProperty* find_property(UStruct* type, std::wstring_view name) {
     ++g_lookups;
     const auto flags = static_cast<EFieldIterationFlags>(static_cast<uint8>(EFieldIterationFlags::IncludeSuper));
     for (FProperty* p : TFieldRange<FProperty>(type, flags)) {
-        if (p && p->GetName() == name) return p;
+        if (p && same_name(p->GetName(), name)) return p;
     }
     return nullptr;
 }
@@ -124,6 +177,7 @@ PropRef Resolver::prop(std::wstring_view name, Kind kind, std::int32_t size) {
     r.offset = p->GetOffset_Internal();
     r.size = p->GetSize();
     r.kind = k;
+    r.prop = p;
     if (k == Kind::Bool) {
         auto* bp = static_cast<FBoolProperty*>(p);
         r.byte_offset = bp->GetByteOffset();
@@ -140,7 +194,7 @@ FuncRef Resolver::func(std::wstring_view name, int nparms) {
     const auto flags = static_cast<EFieldIterationFlags>(static_cast<uint8>(EFieldIterationFlags::IncludeSuper) |
                                                          static_cast<uint8>(EFieldIterationFlags::IncludeInterfaces));
     for (UFunction* candidate : TFieldRange<UFunction>(type_, flags)) {
-        if (candidate && candidate->GetName() == name) {
+        if (candidate && same_name(candidate->GetName(), name)) {
             fn = candidate;
             break;
         }
@@ -208,6 +262,17 @@ void* Frame::slot(int i, std::size_t size) {
 
 Frame& Frame::arg_bool(int i, bool v) {
     if (void* p = slot(i, 1)) *static_cast<std::uint8_t*>(p) = v ? 1 : 0;
+    return *this;
+}
+
+Frame& Frame::arg_string(int i, std::wstring_view v) {
+    if (i < 0 || i >= f_.count || f_.parms[i].kind != Kind::Str) return *this;
+    if (void* p = slot(i, sizeof(FString))) {
+        // The parameter was initialised as an empty FString; the destructor frees what we put here
+        // with the engine allocator, which is the one RC::Unreal::FString uses.
+        std::destroy_at(static_cast<FString*>(p));
+        std::construct_at(static_cast<FString*>(p), std::wstring(v).c_str());
+    }
     return *this;
 }
 
