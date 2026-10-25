@@ -9,6 +9,20 @@
 - **不复制旧仓库的代码文件**（含 C++、Lua、测试、mock）；每个模块按 v2 架构重新实现。可以复用的只有：原版事实、数值、RVA 与前缀、`data/` 下由工具从游戏包生成的素材（图标 / 字体 / 文本表，由新仓库的工具重新生成）。
 - kb 的新实测写在新仓库 `docs/kb/`，带 ELMP v2 日期；需要引用旧 kb 结论时注明出处。
 
+## 资料与知识来源（只读；用途与可信度）
+| 路径 | 是什么 | 怎么用 |
+|---|---|---|
+| `D:\CodeT\ELMP` | v1 工程（C++ 机制层 + Lua 逻辑层）、`docs/REQUIREMENTS.md`、`docs/adr/`、`docs/kb/*.md`、`data/RVA.json` | 原版入口 / RVA 与前缀 / 实测结论 / 协议语义 / 踩坑记录的第一来源；**不复制代码** |
+| `D:\CodeT\EnderLilies` | 由 Shipping 反射重建的 UE 工程：`Source/Zenith/Public|Private`（551 个头 + 386 个 cpp，头里是 UPROPERTY/UFUNCTION 声明，cpp 只有构造函数默认值与空实现）、`Plugins/`（**SpinePlugin / SpineExtensionPlugin / EventPlugin / FMODStudio 等源码**）、`Config/` | 类成员、函数签名、枚举值、CDO 默认值；Spine 组件的 C++ 布局（`UTrackEntry::entry`、`USpineSkeletonAnimationComponent::state`、`USpineSkeletonComponent::skeleton`）；**不是实现**，行为要看 IDA / CUE4Parse |
+| `C:\Code2\UnrealEngine-4.26.2-release` | 引擎源码 | 引擎语义（`UpdateOverlapsImpl`、`FWeakObjectPtr`、`ULevelStreamingDynamic`、`ProcessEvent`、`FUObjectArray`）；语义不确定就 grep，不猜 |
+| `D:\CodeT\RE-UE4SS-32d8a381` | UE4SS 源码与 docs | C++ Mod API（`Hooks.hpp`、`CppUserModBase.hpp`、`UObjectGlobals.hpp`、`UObjectArray.hpp`、`LuaMod.cpp`）；行为以源码为准 |
+| `D:\CodeT\LilyInEM` | 同作者的纯 C++ UE4SS Mod（EL 作 Guest 嵌进 EM）：`native/rt/ue.h`（缓存化反射 + 按 FProperty 偏移布参数的 `Call`）、`native/core/{seqlock,spsc_ring,pose_ring,binary_manifest,protocol}.h`、`rt/{hook,d3d,input}`、`data/binary/EL.json`（运行时加载的 SHA-256 / RVA / 前缀 / 原始偏移清单） | v2 架构里反射层、双缓冲模型、二进制清单、D3D 覆盖层的**参考实现与接口形态**；其 `AGENTS.md` 里的崩溃教训（`ForEachProperty` 遍历未知对象、空结构体参数）同样适用。复用策略同 v1：拿设计与事实，按本仓库布局重写 |
+| `D:\Mod_Investigation\ELEM\EnderLilies.Randomizer` | 第三方随机化 Mod（C++，Detours，`xinput1_3.dll` 代理注入，SDK dump 头，`EnderLilies.Game/Randomizer.cpp` 钩 `BP_Interactable_Item_C::OnInteract` / `USummonerComponent::OnEquipSpirit`，按 `UClearableComponent` 做检查点，SharedMemory 对接追踪器） | 另一份“原版入口清单”的交叉验证来源（物品 / 清除点 / 存档 / 死亡 / 结局）；也是 SDK 用户的真实形态参考 |
+| `D:\CodeT\Lilac2LilyMod` | UE4SS C++ Mod 引用方式、`docs/RVA_RELOCATION.md` | submodule + CMake 链接方式；游戏更新后 RVA 重定位流程 |
+| `D:\Mod_Investigation\HKSS\HKMP`、`SSMP` | 空洞骑士联机 Mod | 可靠层 / 快照 / 传输接口（`IEncryptedTransport`）的设计出处 |
+
+证据等级（写 kb 时标注）：`[E-IDA]` > `[E-实测]` ≥ `[E-CUE]` > `[E-SDK]`（重建头 / 插件源码，只证明声明与默认值）> `[E-源码]`（引擎 / UE4SS 源码，证明语义）。
+
 ## Shipping 零 Lua
 - 发布包 `Mods/ELMP/` 只有 `dlls/main.dll` + `data/` + `elmp.json`；打包脚本断言 zip 内无 `.lua`。
 - Dev 构建可带义肢 Lua（经 UEBridge eval 加载）与自测脚本，但 ELMP 自身逻辑不依赖任何 Lua。

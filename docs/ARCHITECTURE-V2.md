@@ -151,7 +151,8 @@ template<class R, class... A> R call(UObject* o, FuncRef f, A... a);  // 栈上�
 - **FName 比较用 ComparisonIndex**，不转字符串；需要字符串时只在注册（1 次）时做。
 - **热字段直读**：`CurrHP/MaxHP/CurrMP/Faction/Paused/bHidden/bActorEnableCollision/RelativeLocation/RootComponent->ComponentToWorld` 等；`K2_GetActorLocation` 改为读 `RootComponent` 的变换（反射偏移）。
 - **函数调用**：仅用于原版必须执行的副作用入口（`AddItem/EquipSpirit/FullyRestore/SetAnimation/SetFacing/LaunchAbilityFromDescription/TryMarkAsCleared/…`），每次只是一次 `ProcessEvent`。
-- **Spine 姿态读取**（M24）：第一阶段用反射 `GetCurrent(i)` → `UTrackEntry` → `GetAnimationName/GetTrackTime/GetLoop`；**动画名经 `AnimTable` 内部化为 u16 id**（按 `(Skeleton 数据资产, 名字)` 建表，首次见到才做字符串比较）；第二阶段（可选）用 IDA 校验 `UTrackEntry` 内 `spine::TrackEntry*` 字段偏移后直读 `trackTime/loop/animation->name`，彻底消除 FString 分配。两阶段接口相同。
+- **Spine 姿态读取**（M24）：第一阶段用反射 `GetCurrent(i)` → `UTrackEntry` → `GetAnimationName/GetTrackTime/GetLoop`；**动画名经 `AnimTable` 内部化为 u16 id**（按 `(Skeleton 数据资产, 名字)` 建表，首次见到才做字符串比较）；第二阶段直读：`D:\CodeT\EnderLilies\Plugins\SpinePlugin` 带 spine-ue4 插件源码（`UTrackEntry::entry : spine::TrackEntry*`、`USpineSkeletonAnimationComponent::state : spine::AnimationState*`、`USpineSkeletonComponent::skeleton : spine::Skeleton*`，非 UPROPERTY），字段偏移按“相邻反射字段偏移 + 源码声明顺序”推出并用 IDA 对 `GetAnimationName` exec 体核对，写进二进制清单（§7.1）；之后 `state->getCurrent(i)->getTrackTime()/getLoop()/getAnimation()` 直读，`spine::Animation*` 指针身份即动画 id，彻底消除 FString 分配。两阶段接口相同。
+- 参考实现：`D:\CodeT\LilyInEM\native\rt\ue.h`（缓存化查找 + 按 FProperty 偏移布参数的 `Call`，同时驱动 UE4 / UE5）。
 
 ---
 
@@ -196,7 +197,7 @@ template<class R, class... A> R call(UObject* o, FuncRef f, A... a);  // 栈上�
 ## 7. 模块设计
 
 ### 7.1 `base`
-- `preflight`：不变（SHA-256 + 前缀）。`symbols`：由 `data/RVA.json` 构建期生成。
+- `preflight`：不变（SHA-256 + 前缀）。`binary_manifest`：`data/binary/EL.json` **运行时加载**（取代 v1 构建期生成的 `symbols.h`）：支持的 EXE 哈希、每个 RVA Hook 的地址 + 前缀 + 用途、以及少数无反射的原始结构偏移（Spine 指针字段、`ZenithCharacter+1464/1465` 等）；每项都带来源标签，启动时逐项校验（前缀逐字节、偏移处相邻反射字段一致），任一失败 → 该项依赖的能力 fail closed。设计参考 `D:\CodeT\LilyInEM\native\core\binary_manifest.h`。
 - `events`：不变（有界环 + 游标）；新增类型枚举 `{Damaged, Death, MapSwitchStart, MapReady, SeatJoin, SeatLeave, Rested, Recalled, Revived, PvpHit, NetPeer*, …}`；消费者：party / coop / modes / SDK / 义肢。
 - `settings`：`Saved/ELMP/ELMP/settings.json`（`RC::JSON`），schema 版本；`set/get`、变更回调；`muteInput` 等瞬态项不落盘。
 - `storage`：原子写（临时文件 + flush + `ReplaceFile`）+ `.bak`；通用 `load_json/save_json`。
@@ -306,7 +307,7 @@ FrameSnapshot {
 | `Saved/ELMP/ELMP/save_index.json` | saveId 世代、指纹 ≤64 | JSON |
 | `Saved/ELMP/ELMP/party_<saveId>.json` | 该档队伍 / 装备 / 皮肤 / 身份 / 加入名单 / 客人构筑（按 guestKey） | JSON |
 | `Saved/ELMP/<Mod>/…` | 第三方数据 | 由 SDK `storage` 提供 |
-| `data/RVA.json` | 不变 | |
+| `data/binary/EL.json` | EXE 哈希、RVA + 前缀、无反射的原始结构偏移（含来源标签），运行时加载校验（§7.1）；内容从 v1 `data/RVA.json` 与 kb 迁入 | JSON |
 | `data/gates.json` | 触发器类策略（类路径 → story/world）、默认开关 | JSON |
 | `data/catalog/{item_text,inputs,spirits,passives,skins}.json` | 由 `tools/icons`（扩展为 `tools/catalog`）从游戏包生成，取代 `catalog/*.lua` | JSON |
 | `data/icons/*.png`, `data/fonts/*` | 不变 | |

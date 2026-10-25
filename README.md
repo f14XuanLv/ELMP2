@@ -5,7 +5,7 @@
 | 文件 | 内容 |
 |---|---|
 | [`docs/REQUIREMENTS-TREE.md`](docs/REQUIREMENTS-TREE.md) | 自顶向下需求树（L0 玩家目标 → L1 可感知功能 → L2 系统能力 → L3 机制 → L4 原版入口 / 事实）、依赖图（Mermaid + 邻接表 + 关键路径）、原 [待定] / [调研] 项的全部定案（§7）、验收口径与性能门槛（§8）、节点索引（§9） |
-| [`AGENTS.md`](AGENTS.md) | 新仓库开发规则：拿走知识不照搬旧代码、Shipping 零 Lua、以真实实例验证为主不为测试而测试、可直接替换实例中旧仓库部署的 Mod |
+| [`AGENTS.md`](AGENTS.md) | 新仓库开发规则：拿走知识不照搬旧代码、Shipping 零 Lua、以真实实例验证为主不为测试而测试、可直接替换实例中旧仓库部署的 Mod；**资料与知识来源表**（v1 仓库、重建 UE 工程 + Spine/Event 插件源码、UE 4.26 源码、UE4SS 源码、LilyInEM 参考实现、Randomizer、Lilac2LilyMod、HKMP/SSMP）及证据等级 |
 | [`docs/ARCHITECTURE-V2.md`](docs/ARCHITECTURE-V2.md) | 现状性能诊断、Shipping 纯 C++ / Dev 带 Lua 的目标形态、分层与模块布局、线程模型与单帧泵、反射访问层、对象注册表、Hook 总表、各模块设计、类型化联机协议、多地图、持久化、Dev 构建、SDK（C ABI + Lua 注入）、测试、构建发布、迁移计划、性能设计、风险、ADR 更新清单 |
 
 ## 本次新增的取证（已写入需求树 §5 E4a–E4c、E6、E9）

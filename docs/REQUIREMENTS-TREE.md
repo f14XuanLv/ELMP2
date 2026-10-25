@@ -203,7 +203,7 @@
 
 | 编号 | 机制 | 要点 | 证据 |
 |---|---|---|---|
-| **M1 预检与符号** | SHA-256 + RVA 前缀逐字节比对；`data/RVA.json` → 生成 `symbols.h`；反射能取的函数指针优先 | `[E-实测]` |
+| **M1 预检与符号** | SHA-256 + RVA 前缀逐字节比对；二进制清单 `data/binary/EL.json` 运行时加载（v2，取代 v1 构建期 `symbols.h`）；反射能取的函数指针优先 | `[E-实测]` |
 | **M2 槽位租约** | 原生租约表按调用方身份校验范围；越界拒绝；状态重建时释放；重叠声明后加载者拒绝 | `[E-实测]` |
 | **M3 生成 / 找回 / 移除 / 复活** | 生成 PC 时临时替换 `PlayerCameraManagerClass`；Pawn `BP_p0000_Lily_C`、Yaw ±90；补 Spine 数据；Possess；PC 按 slot 池化并精确重置；移除 `UnequipAllSpirits → UnPossess → Destroy`；复活只换 Pawn + `ReequipSpirits` | core-facts `[E-实测]` |
 | **M4 档案（全部原版入口）** | `InventoryComponent:AddItem/RemoveItem`、子背包行遍历、`SpiritEquipComponent:Equip/Unequip/SwitchSummonSet`、`ItemSpiritInventory:SetSpiritLevel`、`PassiveEquipComponent:Equip/Unequip/SetSlotCount`、`SetLevel/AddExperiencePoints`、`SetHealCountLevel/SetHealPowerLevel`、`AddMaxHPBonusPercentage(0)` 重算；增量 / 精确 / 重置三种应用 | core-facts `[E-实测]` |
