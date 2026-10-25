@@ -117,7 +117,7 @@ struct Manager {
     Rules rules;
     Text<16> storage_id;
     Text<240> storage_message;
-    bool storage_blocked = false;
+    bool storage_blocked = false, storage_can_reuse = false;
     Text<128> message;
     double message_until = 0;
 };

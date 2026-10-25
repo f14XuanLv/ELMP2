@@ -404,6 +404,12 @@ ELMP 包零 Lua；对 Lua Mod 注入 C 函数；语法糖随 SDK 仓库。`elmp.
 2. **打开的 ELMP 窗口算活动**：管理器 / PX 菜单打开期间（会暂停世界并轮询设备）不计入 G0 空闲帧。
 3. 界面语言仍为英文（v1 决定 2026-10-07），`data/catalog/items.json` 已带 5 种语言。
 
+### 7.15 P1e 实施决定（2026-10-26）→ **[定，可复议]**
+1. **触发器初始分类**（`data/gates.json`，全部 15 个 `ATrigger` 蓝图类由 `tools/catalog --triggers` 列出）：`HideFakeWall` 两类 = world；对话 / 会话 / 事件 / 教程 / 基类 = story；**`BP_Trigger_Ability(_Stalactite)` 暂按 story**（会改动世界并带 ClearableComponent，未实测前按 fail closed），PX 不触发钟乳石等机关，P1 照常。
+2. **保存登记方式**：不读原版保存函数的参数 / 返回值；绑定后 1 Hz 读 `.sav` 修改时间，变化稳定后计算 SHA-256；只有“30 s 内有原版 `SaveGame` / `SaveGameAsync` 调用”的变化才登记（覆盖同步、异步与椅子异步保存），否则记为外部变化不登记（下次读档询问 New / Reuse）。新游戏判定直读 `GameInstanceZenithBase.LaunchGameIntent == NewGame`。
+3. **`save` 闸门**：PX 能接触到的唯一原版保存入口是椅子（`EVT_Rest`，已由 `rest` 闸门关闭），`save` 作为记录项，不对应碰撞目标。
+4. **存储未就绪时拒绝加入**：存档未识别或等待 New / Reuse 时 `join` 被拒（队伍必须有归属）。
+
 ---
 
 ## 8. 验收口径（继承并细化）

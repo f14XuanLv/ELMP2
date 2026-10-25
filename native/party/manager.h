@@ -7,7 +7,7 @@
 // world settled, P1 has a pawn, world not paused, no map transit, no PX menu, manager closed; with seats also
 // no vanilla navigable menu on screen (MenuOpenCache). Without seats a non-pausing vanilla menu (the bench
 // rest menu) is not detected and the button stays visible (needs ProcessEvent; G0, decision 2026-10-26).
-// PX storage (P1e) shows "arrives with P1e" until save_scope exists.
+// PX storage: party/storage view (saveId, blocked reason, New / Reuse with confirmation popups).
 
 #include <string>
 

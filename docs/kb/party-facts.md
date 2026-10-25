@@ -50,6 +50,31 @@
 ### 性能（P1 + P2 + P3 脚本座位，church_08 静止，15 s）
 - `frame.elmp_us` P50 9 / P95 30 / P99 124 µs（门槛 300）；`party.patrol` 每 250 ms P99 42 µs；`party.progress` 每秒 P99 156 µs。两人离开后回调注销，6 s 内 `g0.reflect_calls = 0`，`registry verify` consistent。`[E-实测]`
 
+## P1e 闸门策略 / 存档作用域 / 冷存储 / v1 迁移（v2 2026-10-26，Dev2）
+
+### 原版事实
+- 触发器类（CUE4Parse 遍历 `_Zenith` 蓝图父链到 `/Script/Zenith.Trigger`）共 15 个：`BP_Trigger_C`（基类）、`_Dialog` / `_Dialog_NonUnique`、`_Event_Unique` / `_Event_NonUnique`、`_Tutorial`（直接继承 Trigger）/ `_TutorialDialog`、`BP_TriggerConditioned_Conversation` + `_2D` / `_3D` / `_3D_Unique`、`_Ability` / `_Ability_Stalactite`、`_HideFakeWall` / `_HideFakeWall_NonUnique`。church_08 有 1 个 `BP_Trigger_Event_Unique_C`。`[E-CUE][E-实测]`
+- `USaveSubsystem` 有 `SaveSlotName`（FString，`GameSlot_0`）与 `SaveSlotIndex` 反射属性；`UGameInstanceZenithBase.LaunchGameIntent`（`ELaunchGameIntent`：Unknown / NewGame / Continue / NewGamePlus）是反射属性，可直读判定新游戏。`[E-SDK]`
+- `SaveSubsystem:SaveGame()`（经 UEBridge 调用）返回 true，`.sav` 内容变化，1 Hz 修改时间轮询在约 2 s 内登记新指纹（`a314…` → `40f5…`）。`[E-实测]`
+
+### 实现
+- `core/permission`：目标扩展到 Interactable（interact）、Collectable（pickup）、Trigger（按 `data/gates.json` 的类策略；最派生的登记类生效；未登记 = story，只记一次并在 `elmp gates` 列出）。同一对象在多个桶（椅子也是 Interactable）时任一闸门关即忽略。默认值也来自 `gates.json`。
+- `party/save_scope`：`save_index.json`（slot 名 → saveId + 最近 64 个指纹）；每个世界就位后绑定一次（这一段算“活动帧”，不计入 G0）；未知指纹 / 指纹不可读 → 阻止，等待 New / Reuse；删除 / 复制存档的原版函数 post → 剔除 `.sav` 已不存在的条目；首次运行把 v1 `save_index.profile.lua` 只读迁入（含 `hashes{}`）。
+- `party/storage`：`party_<saveId>.json`；加入 / 离开 / 换边 / 换皮肤 / 关 PX 菜单 / 椅子休息时记录；绑定后自动重入（装备经原版入口精确应用，按 P1 已拥有过滤，缺的保留原列表并标 unavailable）；v1 `party_<id>.profile.lua` 只读迁移；不可读 → 不导入、保留文件、提示原文、只允许显式 New PX data。
+- `base/lua_literal`：v1 `store.serialize` 子集的只读解析器 + CTest `test_lua_literal`（含真实 v1 索引样本与 9 种拒绝）。
+
+### 实测（Dev2，存档槽 0）
+- 首次运行：`GameSlot_0` 新世代 `87a4…`，已知指纹 1。加入 P2（设备）、P3（脚本敌方）→ 菜单给 P3 装 s2002 → 回标题重读：P2 / P3 自动重入，边与装备不变。
+- 原版 `SaveGame()` 一次 → 指纹登记（registered=1，known 2）。
+- 阻止：手动把 ELMP 自己的 `save_index.json` 删掉当前指纹后重启重读 → `blocked`（原因文案如上），无座位，`join` 被拒；`elmp storage reuse` → 绑定原世代、P2 / P3 重入、指纹登记；`elmp skin 3 4` 写进记录。
+- v1 迁移：放入 v1 格式 `save_index.profile.lua` + `party_<id>.profile.lua`（P2 皮肤 2 + s2072、P4 敌方皮肤 5 + s5020 + `i_passive_maxmpup`、P5 非活动）→ 读档后迁移、P2 / P4 按原样重入、P5 不加入；生成 `party_<id>.json`，两个 v1 文件保留不改。
+- v1 损坏：`party_<id>.profile.lua` 截断 → `Old ELMP profile for this save could not be read (3:1: unterminated table). Nothing was imported; the file was kept.`；`join` 被拒、`reuse` 被拒；`elmp storage new` → 新世代 `830c…`、空队伍，之后可正常加入。
+- 闸门：P2 在 church_08 忽略 5 个目标（3 门 + 椅子 + `BP_Trigger_Event_Unique_C`）；`g0.reflect_calls = 0`。
+- 未验（留 P1f 的 §7.2 矩阵）：story / world 触发器开关的原版副作用（弹窗 / 假墙）、pickup / interact 关闭时的拾取 / 交互、椅子异步保存路径的登记、删除 / 复制存档的剔除。
+
+### 测试辅助（P1e，登记）
+- 读档 ×6、回标题 ×1；原版 `SaveSubsystem:SaveGame()` ×1（写隔离测试存档）；手动编辑 / 放置 ELMP 自己的数据文件 3 次（删指纹、放 v1 文件、放损坏 v1 文件，临时脚本已删除）；测试结束删除了本次放置 / 生成的文件并把 `save_index.json` 还原为 `87a4…` 世代（P2 / P3 记录保留）。
+
 ## P1d 覆盖层：HUD / PX 装备菜单 / 管理器 / 规则页（v2 2026-10-26，Dev2）
 
 ### 数据与渲染

@@ -1,6 +1,7 @@
 #include "party/bench.h"
 
 #include "party/seat.h"
+#include "party/storage.h"
 #include "party/transit.h"
 
 #include "core/player.h"
@@ -67,6 +68,7 @@ std::string rest(std::int64_t slot) {
     if (last.pawn.get() == p && now - last.at < kCooldownUs) return "rest cooldown";
     if (auto err = core::vitals::restore(slot); !err.empty()) return "restore failed: " + err; // no cooldown recorded
     last = {ObjHandle::of(p), now};
+    storage::capture(slot, true); // C11: resting stores the PX record
     events::bus().push(events::Type::Rested, static_cast<std::int32_t>(slot));
     log::info("party: P{} rested", slot);
     return {};

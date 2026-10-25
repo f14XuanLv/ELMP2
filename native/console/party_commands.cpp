@@ -8,6 +8,7 @@
 #include "party/hud_feed.h"
 #include "party/manager.h"
 #include "party/menu_ctrl.h"
+#include "party/storage.h"
 #include "pvp/hitgate.h"
 #include "overlay/render.h"
 #include "party/devices.h"
@@ -243,6 +244,16 @@ void manager_cmd(Args a, std::string& out) {
 
 void hud_cmd(Args, std::string& out) { out += party::hud_feed::describe(); }
 
+// elmp storage [new|reuse]   (explicit choices; the manager asks for confirmation first)
+void storage_cmd(Args a, std::string& out) {
+    if (!a.empty()) {
+        if (a[0] != "new" && a[0] != "reuse") throw std::runtime_error("usage: elmp storage [new|reuse]");
+        must(party::storage::choose(a[0] == "new"));
+        line(out, a[0] == "new" ? "New PX data started for this save" : "previous PX data reused");
+    }
+    out += party::storage::describe();
+}
+
 void transit_cmd(Args, std::string& out) {
     out += party::transit::describe();
     out += party::respawn::describe();
@@ -354,6 +365,7 @@ void register_party_commands() {
     add("menu", "[<slot> [inputs…] | close]  PX equipment menu (inputs: up down left right confirm back context prev next)", menu_cmd);
     add("manager", "[open|close]  ELMP manager window", manager_cmd);
     add("hud", "HUD feed: per-seat values, skill cache, anchors", hud_cmd);
+    add("storage", "[new|reuse]  save scope + PX data of the loaded save (explicit New / Reuse when blocked)", storage_cmd);
 #ifdef ELMP_DEV
     add("kill", "<slot> [damage]  (Dev aid) vanilla DoDamage on a seat", kill_cmd);
     add("tp", "<slot> <dy> <dz>  (Dev aid) teleport relative to P1", tp_cmd);

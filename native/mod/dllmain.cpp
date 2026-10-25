@@ -24,6 +24,8 @@
 #include "party/manager.h"
 #include "party/menu_ctrl.h"
 #include "party/ui.h"
+#include "party/save_scope.h"
+#include "party/storage.h"
 #include "core/catalog.h"
 #include "core/hitrules.h"
 #include "overlay/render.h"
@@ -135,6 +137,7 @@ public:
                   pf.functions.size(), pf.ms);
         g_data_dir = mod_dir_ / "data";
         if (auto e = core::catalog::load(g_data_dir / "catalog" / "items.json"); !e.empty()) log::error("catalog: {}", e);
+        if (auto e = core::permission::load(g_data_dir / "gates.json"); !e.empty()) log::error("{}", e);
         registry::install();
         lifecycle::install();
         console::install();
@@ -155,10 +158,13 @@ public:
         party::hud_feed::install();
         party::menu_ctrl::install();
         party::manager::install();
+        party::save_scope::install();
+        party::storage::install();
         console::register_core_commands();
         console::register_party_commands();
         // An open ELMP window is activity too (it pauses the world and polls devices).
-        frame::set_activity([] { return core::active() > 0 || party::manager::is_open() || party::menu_ctrl::open_slot() != 0; }, nullptr);
+        frame::set_activity([] { return core::active() > 0 || party::manager::is_open() || party::menu_ctrl::open_slot() != 0 || party::save_scope::busy(); },
+                            nullptr);
         frame::add_phase("lifecycle", [](const frame::Tick& t) { lifecycle::step(t.now_us); });
         frame::add_phase("init", deferred_init, [] { return !g_settings_loaded; }, 250);
         frame::add_phase("registry.drain", [](const frame::Tick&) { registry::drain(); });

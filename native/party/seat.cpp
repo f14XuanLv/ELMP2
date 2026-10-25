@@ -4,6 +4,7 @@
 #include "party/camera_sync.h"
 #include "party/devices.h"
 #include "party/progress.h"
+#include "party/storage.h"
 #include "party/respawn.h"
 #include "party/transit.h"
 
@@ -75,6 +76,7 @@ std::optional<core::Vec3> behind_p1(int n) {
 std::string join(const JoinOptions& opt, std::int64_t* slot_out) {
     if (lifecycle::state() != lifecycle::State::Settled) return "world not settled";
     if (!world::p1_pawn()) return "the original player is not in the world";
+    if (auto e = storage::join_allowed(); !e.empty()) return e;
     std::int64_t slot = opt.slot;
     if (slot == 0) {
         for (std::int64_t s = slots::kInternalFirst; s <= slots::kInternalLast && !slot; ++s)
@@ -118,6 +120,7 @@ std::string join(const JoinOptions& opt, std::int64_t* slot_out) {
         if (auto e = devices::auto_assign(slot, opt.pad); !e.empty()) log::warn("seat {}: device assignment: {}", slot, e);
         sync_router();
     }
+    storage::capture(slot, true); // skipped while storage itself restores this seat
     log::info("party: seat {} joined ({}, {})", slot, source_name(opt.source), team_name(opt.team));
     if (slot_out) *slot_out = slot;
     return {};
@@ -125,6 +128,7 @@ std::string join(const JoinOptions& opt, std::int64_t* slot_out) {
 
 std::string leave(std::int64_t slot) {
     if (!g_seats.contains(slot)) return std::format("no seat {}", slot);
+    storage::capture(slot, false); // equipment kept for the next join
     progress::forget(slot);
     respawn::forget(slot);
     bench::forget(slot);
@@ -144,6 +148,7 @@ std::string set_team(std::int64_t slot, Team team) {
     if (it == g_seats.end()) return std::format("no seat {}", slot);
     if (auto e = core::hitrules::bind({"ELMP", slots::OwnerKind::Elmp}, slot, to_rules(team)); !e.empty()) return e;
     it->second.team = team;
+    storage::capture(slot, true);
     log::info("party: seat {} is now {}", slot, team_name(team));
     return {};
 }

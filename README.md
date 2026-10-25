@@ -29,7 +29,8 @@
 - **P1c-1 规则已完成（2026-10-25）**：`core/permission`（travel / rest 重叠忽略闸门 + GateCache）、`party/progress`（1 s 收益记 P1 + 镜像 + 读回）、`party/respawn`（复活 / 丢 Pawn 兜底 / 召回 / 摆位）、`party/bench`、`party/rules`（规则 1 授权、规则 2 出口盒 + P1 出口保持）、`party/transit`（过图跟随）；控制台 `elmp progress|gates|perm|rest|transit`（Dev：`kill`、`tp`）。实测见 `docs/kb/party-facts.md`「P1c-1」。
 - **P1c-2 镜头 / 队伍 / PvP 已完成（2026-10-26）**：`camera/framing`（`GameplayCameraUpdate` / `TargetBounds` 两个 detour）、`party/camera_sync`（原版 Ally 目标注册 + 放宽参数下发）、`core/hitrules`（slot → team + 配对规则）、`pvp/hitgate`（3 个 UFunction pre/post + `AbilityEffectQueue` detour，首个异队配对时才安装）；控制台 `elmp team|pvp|camera`。实测见 `docs/kb/party-facts.md`「P1c-2」。
 - **P1d 覆盖层已完成（2026-10-26）**：`tools/catalog`（重新生成 `data/catalog/items.json`、图标、字体）、`core/catalog`、`overlay`（DXGI Present 覆盖层、seqlock 模型、HUD / PX 菜单 / 管理器绘制）、`party/{ui,hud_feed,menu_ctrl,manager}`；控制台 `elmp menu|manager|hud`（Dev：`ui click|move`）。存储确认页面已就位，数据随 P1e 接入。实测见 `docs/kb/party-facts.md`「P1d」。
-- 下一步 P1e：`gates.json` 触发器策略、存档作用域、PX 冷存储与旧档迁移。
+- **P1e 闸门与存档作用域已完成（2026-10-26）**：`data/gates.json`（15 个触发器类）+ `core/permission` 扩展到触发器 / 拾取 / 交互；`party/save_scope`（saveId 世代 + 指纹，New / Reuse）、`party/storage`（`party_<saveId>.json`，自动重入）、`base/lua_literal`（v1 `*.profile.lua` 只读迁移，CTest）；控制台 `elmp storage [new|reuse]`。实测见 `docs/kb/party-facts.md`「P1e」。
+- 下一步 P1f：F1.1–F1.17 对等矩阵、§7.2 闸门矩阵、性能与 G0 总验收。
 
 ## 与现仓库的关系
 

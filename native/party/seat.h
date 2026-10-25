@@ -4,9 +4,8 @@
 // → baseline = shared progress mirrored from P1 + the seat's own equipment → full restore → only then the
 // seat enters the input router (devices) and gets a free pad if it has none.
 // Leave: unequip + remove the pawn (controller stays pooled), release the lease, drop from the router.
-// World teardown: seats are dropped with the world. Automatic re-join per save is tied to the save
-// identity (C12) and arrives with save_scope in P1e; until then nothing is carried into another world
-// (fail closed: a party never leaks from save A into save B).
+// World teardown: seats are dropped with the world; party/storage re-joins the active ones of the same save
+// when the next world binds (C12). Joining is refused while the save is not identified (no home for the PX).
 
 #include "core/player.h"
 

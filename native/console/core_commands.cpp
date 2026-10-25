@@ -13,6 +13,9 @@
 
 #include "input/virtual_pad.h"
 
+#include "party/seat.h"
+#include "party/storage.h"
+
 #include "engine/frame.h"
 #include "engine/reflect.h"
 
@@ -183,6 +186,7 @@ void skin_cmd(Args a, std::string& out) {
     if (a.size() > 1) {
         if (slot < 2 || !core::is_elmp_controller(core::controller(slot))) throw std::runtime_error("P1 is read-only");
         must(core::skin::apply(p, std::stoi(a[1])));
+        if (party::seat(slot)) party::storage::capture(slot, true); // a seat's look belongs to its PX record
     }
     line(out, std::format("slot {} skin {}", slot, core::skin::current(p)));
 }

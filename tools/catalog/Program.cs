@@ -26,11 +26,45 @@ var paks = options.GetValueOrDefault("paks") ?? throw new ArgumentException("--p
 var mappings = options.GetValueOrDefault("mappings") ?? throw new ArgumentException("--mappings is required");
 var repo = options.GetValueOrDefault("repo") ?? throw new ArgumentException("--repo is required");
 var size = int.Parse(options.GetValueOrDefault("size") ?? "128");
+var pathOf = new Dictionary<string, string>();
 
 var provider = new DefaultFileProvider(paks, SearchOption.TopDirectoryOnly, true, new VersionContainer(EGame.GAME_UE4_26));
 provider.MappingsContainer = new FileUsmapTypeMappingsProvider(mappings);
 provider.Initialize();
 provider.Mount();
+
+// --triggers: list every blueprint class deriving from /Script/Zenith.Trigger (input for data/gates.json) and exit.
+if (options.ContainsKey("triggers"))
+{
+    Console.OutputEncoding = System.Text.Encoding.UTF8;
+    var parents = new Dictionary<string, string>();
+    foreach (var path in provider.Files.Keys.Where(k => k.EndsWith(".uasset") && k.Contains("/_Zenith/")).ToList())
+    {
+        try
+        {
+            var pkg = provider.LoadPackage(path);
+            foreach (var export in pkg.GetExports())
+            {
+                if (export is not CUE4Parse.UE4.Objects.Engine.UBlueprintGeneratedClass cls) continue;
+                var super = cls.SuperStruct?.ResolvedObject;
+                parents[cls.Name] = super?.Name.Text ?? "";
+                if (super != null && super.Class?.Name.Text == "Class") parents.TryAdd(super.Name.Text, "<native:" + (super.Outer?.Name.Text ?? "") + ">");
+                if (parents.Count % 500 == 0) Console.Error.Write(".");
+                pathOf[cls.Name] = path;
+            }
+        }
+        catch { }
+    }
+    bool IsTrigger(string name, int depth = 0)
+    {
+        if (depth > 20 || !parents.TryGetValue(name, out var p)) return false;
+        if (p == "Trigger") return true;
+        return IsTrigger(p, depth + 1);
+    }
+    foreach (var name in parents.Keys.Where(n => n.EndsWith("_C") && IsTrigger(n)).OrderBy(n => n, StringComparer.Ordinal))
+        Console.WriteLine($"{name}\t{parents[name]}\t{pathOf.GetValueOrDefault(name)}");
+    return 0;
+}
 
 var iconDir = Path.Combine(repo, "data", "icons");
 var fontDir = Path.Combine(repo, "data", "fonts");

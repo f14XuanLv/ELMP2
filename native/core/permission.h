@@ -10,10 +10,14 @@
 // GateCache (§16.1): per slot {pawn, primitive components, target → ignored}. Invalidation: pawn change
 // (respawn), flag change, registry bucket version (new door / bench streamed in), teardown. Audit: the
 // 500 ms tick compares versions; `elmp gates` lists applied counts.
-// P1c covers travel (BP_WorldTravelVolume_C) and rest (BP_Interactable_RestingPoint_C); triggers and
-// collectables by data/gates.json arrive in P1e.
+// Targets (registry buckets): travel = BP_WorldTravelVolume_C, rest = BP_Interactable_RestingPoint_C,
+// interact = AInteractable, pickup = ACollectable, trigger.story / trigger.world = ATrigger by class
+// (data/gates.json; unlisted = story, reported once). An object in several buckets (a bench is also an
+// Interactable) is ignored when any of its gates is closed. `save`: PX have no vanilla save entry — the
+// only one reachable by a body is the bench (EVT_Rest, closed by `rest`); the flag is recorded, not a target.
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <string_view>
 
@@ -38,6 +42,7 @@ void forget(std::int64_t slot); // seat left (revokes nothing: the pawn is gone 
 void tick();                    // 500 ms: re-apply on version / pawn / flag changes
 std::string describe();
 
+std::string load(const std::filesystem::path& gates_json); // defaults + trigger class policy; empty = ok
 void install(); // teardown subscription
 
 } // namespace elmp::core::permission

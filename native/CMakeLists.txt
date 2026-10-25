@@ -11,6 +11,7 @@ add_library(elmp_base STATIC
     base/events.cpp
     base/slots.cpp
     base/settings.cpp
+    base/lua_literal.cpp
 )
 target_include_directories(elmp_base PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${ELMP_GENERATED_DIR})
 target_compile_definitions(elmp_base PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
@@ -57,6 +58,8 @@ set(ELMP_MOD_SOURCES
     party/hud_feed.cpp
     party/menu_ctrl.cpp
     party/manager.cpp
+    party/save_scope.cpp
+    party/storage.cpp
     overlay/model.cpp
     overlay/render.cpp
     overlay/hud_draw.cpp
@@ -109,7 +112,7 @@ set_target_properties(ElmpFrameProbe PROPERTIES
 )
 
 if(BUILD_TESTING)
-    foreach(t test_manifest test_storage test_bus_slots)
+    foreach(t test_manifest test_storage test_bus_slots test_lua_literal)
         add_executable(${t} tests/${t}.cpp)
         target_link_libraries(${t} PRIVATE elmp_base)
         target_compile_options(${t} PRIVATE /utf-8)

@@ -3,6 +3,7 @@
 #include "party/devices.h"
 #include "party/menu_ctrl.h"
 #include "party/seat.h"
+#include "party/storage.h"
 #include "party/transit.h"
 #include "party/ui.h"
 
@@ -115,9 +116,11 @@ void fill() {
     r.recall_distance = static_cast<int>(settings::get_number("recallDistance"));
     r.recall_delay_ms = static_cast<int>(settings::get_number("recallDelayMs"));
     r.recall_fall_depth = static_cast<int>(settings::get_number("recallFallDepth"));
-    g_m.storage_id.set("");
-    g_m.storage_message.set("PX storage per save (save scope, cold storage) arrives with P1e; seats are not kept across worlds yet.");
-    g_m.storage_blocked = false;
+    const auto sv = storage::view();
+    g_m.storage_id.set(sv.id);
+    g_m.storage_message.set(sv.message);
+    g_m.storage_blocked = sv.blocked;
+    g_m.storage_can_reuse = sv.can_reuse;
     g_dirty = true;
 }
 
@@ -181,6 +184,7 @@ void handle(const overlay::Request& r) {
         break;
     case Req::Skin:
         if (auto e = core::skin::apply(core::pawn(r.slot), static_cast<int>(r.value)); !e.empty()) message("Cannot change the skin: " + e);
+        else storage::capture(r.slot, true);
         fill();
         break;
     case Req::Team:
@@ -216,7 +220,11 @@ void handle(const overlay::Request& r) {
         break;
     case Req::Rule: rule(r.text.view(), r.value); break;
     case Req::StorageNew:
-    case Req::StorageReuse: message("PX storage arrives with P1e"); break;
+    case Req::StorageReuse:
+        if (auto e = storage::choose(r.kind == Req::StorageNew); !e.empty()) message("PX data: " + e);
+        else message(r.kind == Req::StorageNew ? "New PX data started for this save" : "Previous PX data reused");
+        fill();
+        break;
     }
 }
 

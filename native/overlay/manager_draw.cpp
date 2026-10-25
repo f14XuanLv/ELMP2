@@ -122,8 +122,10 @@ void draw_storage(const Manager& m) {
     if (!m.storage_message.empty()) ImGui::TextWrapped("%s", m.storage_message.c_str());
     if (m.storage_blocked) {
         if (ImGui::Button("New PX data")) ImGui::OpenPopup("New PX data?");
-        ImGui::SameLine();
-        if (ImGui::Button("Reuse previous PX data")) ImGui::OpenPopup("Reuse PX data?");
+        if (m.storage_can_reuse) {
+            ImGui::SameLine();
+            if (ImGui::Button("Reuse previous PX data")) ImGui::OpenPopup("Reuse PX data?");
+        }
     }
     struct Choice {
         const char *popup, *text;

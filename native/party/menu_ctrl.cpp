@@ -3,6 +3,7 @@
 #include "party/bench.h"
 #include "party/progress.h"
 #include "party/seat.h"
+#include "party/storage.h"
 #include "party/transit.h"
 #include "party/ui.h"
 
@@ -330,6 +331,7 @@ void close() {
     g_m = {};
     publish();
     ui::hold_pause(ui::Menu, false);
+    if (party::seat(slot)) storage::capture(slot, true, true); // the player's own equipment choice
     log::info("menu: P{} closed", slot);
 }
 

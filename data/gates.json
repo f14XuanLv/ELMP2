@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "_comment": "Permission gates for non-P1 seats (REQUIREMENTS-TREE C5 / §7.1 / §7.13.2). defaults = per-seat start values. triggers = ATrigger (/Script/Zenith.Trigger) blueprint classes → story | world; the most derived listed class wins; an unlisted class counts as story (fail closed) and is reported once by `elmp gates`. Class list: tools/catalog/extract.py --triggers (2026-10-26, 15 classes).",
+  "defaults": {
+    "travel": false,
+    "rest": false,
+    "trigger.story": false,
+    "trigger.world": true,
+    "pickup": true,
+    "interact": true,
+    "save": false
+  },
+  "unlisted": "story",
+  "triggers": {
+    "BP_Trigger_C": "story",
+    "BP_Trigger_Dialog_C": "story",
+    "BP_Trigger_Dialog_NonUnique_C": "story",
+    "BP_Trigger_Event_NonUnique_C": "story",
+    "BP_Trigger_Event_Unique_C": "story",
+    "BP_Trigger_Tutorial_C": "story",
+    "BP_Trigger_TutorialDialog_C": "story",
+    "BP_TriggerConditioned_Conversation_C": "story",
+    "BP_TriggerConditioned_Conversation_2D_C": "story",
+    "BP_TriggerConditioned_Conversation_3D_C": "story",
+    "BP_TriggerConditioned_Conversation_3D_Unique_C": "story",
+    "BP_Trigger_Ability_C": "story",
+    "BP_Trigger_Ability_Stalactite_C": "story",
+    "BP_Trigger_HideFakeWall_C": "world",
+    "BP_Trigger_HideFakeWall_NonUnique_C": "world"
+  }
+}
