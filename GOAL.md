@@ -5,7 +5,7 @@
 > 只有在全部完成、或某阶段门槛经充分尝试仍无法达成（写明尝试、证据、剩余选项）时才报告 goal 完成或 blocked。需要我决定的产品问题：先按需求树已有定案与 fail closed 默认继续其他工作，把问题集中列出，不要停下等。
 > **进度以 §7 的勾选表为准**：每完成一项就在该行打勾并补「日期 · 证据（kb 节 / 截图 / 命令输出）· commit」；下面「当前进行中」一行同步更新。goal 完成 = §7 全部打勾。
 
-**当前进行中**：§2 P2 实现 —— `native/net`（UDP + CNG 握手 / 加密、可靠层）（2026-10-26）
+**当前进行中**：§2 P2 实现 —— net + `coop/session`（`elmp lan host <code> [port] [max]` / `join <addr> <code> [port]` / `leave` / `status`，`coop::set_handlers(Role, Handlers)` 分发）已在 Host2/Client2 跑通（`b6ac40b`）；下一步 `coop/protocol`（typed 消息 + 快照位掩码增量 + NameTable）→ guard → host capture / remote seat → client takeover / apply → adapters（2026-10-26）
 **需要用户**：（无）
 
 ## 0. 恢复上下文（每轮先读）
@@ -79,8 +79,8 @@
 - [x] 敌人激活入口：IDA 定位结果写入 `EL.json` + engine-facts（或记录“两原语闸 + CanBePaused + 1 Hz 复检”为唯一方案并实测泄漏数） —— 2026-10-26 · 证据：engine-facts「敌人激活入口重新定位」（AI 单汇点 `0xCCD8F0`，4 个调用者；Pawn 侧 `0xCCDAA0`；Dev2 预检 18 函数 + 9 偏移通过；church_07 24/24 敌人 `IsActive`） · commit b43f6c8
 
 ### P2 同图联机 —— 实现
-- [ ] `net`：UDP + CNG 握手 / 加密（配对码参与派生）
-- [ ] `net`：可靠有序 + 不可靠最新双通道、ACK 位图、RTO、分片重组、`F_CLOSE`、多对端表、全部有界队列
+- [x] `net`：UDP + CNG 握手 / 加密（配对码参与派生） —— 2026-10-26 · 证据：net-facts「传输层」（Host2/Client2 错码 → `pairing code mismatch`，正确码 connected RTT 1.1 ms；`test_net_handshake`） · commit a3ebf0f / b6ac40b
+- [x] `net`：可靠有序 + 不可靠最新双通道、ACK 位图、RTO、分片重组、`F_CLOSE`、多对端表、全部有界队列 —— 2026-10-26 · 证据：net-facts「传输层」（`test_net_transport` 20% 丢包 / 重复 / 乱序；Host 同时两条链路；leave → Host 1 s 内 F_CLOSE） · commit a3ebf0f / b6ac40b
 - [ ] `coop`：typed 位掩码增量快照 + 名字表 + 预分配 `FrameSnapshot`
 - [ ] `coop`：session / world_model / host capture / client takeover · apply · presenter · vitals
 - [ ] `coop/entities`：enemy / enemy_dyn / lily / worldobj / story / pickup 六个 `IEntityAdapter`
