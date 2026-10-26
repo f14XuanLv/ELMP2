@@ -6,6 +6,7 @@
 
 #include "coop/host.h"
 
+#include "coop/ability.h"
 #include "coop/session.h"
 
 #include "party/seat.h"
@@ -171,6 +172,41 @@ void capture(std::int64_t now_us) {
     h_capture.add(static_cast<double>(clock::now_us() - t0));
 }
 
+// Action channel: launches captured by the ability detour (game thread) are sent reliably before the
+// snapshot of the same frame; names go out as NameDef first (same reliable stream → ordered).
+struct Pending {
+    ObjHandle owner;
+    ability::Launch l;
+};
+std::vector<Pending> g_pending;
+std::unordered_map<std::uint16_t, std::uint32_t> g_act_seq;
+std::uint64_t g_acts_sent = 0, g_acts_dropped = 0;
+
+void on_launch(const ability::Launch& l) {
+    if (g_peers.empty()) return;
+    if (g_pending.size() >= 64) return void(++g_acts_dropped);
+    g_pending.push_back({ObjHandle::of(l.owner), l});
+}
+
+void send_acts() {
+    for (auto& p : g_pending) {
+        auto* owner = p.owner.get();
+        auto* sp = owner && g_resolved ? g_spawn_point.object(owner) : nullptr;
+        if (!sp) continue; // only spawn-point enemies have a stable id (dynamic enemies: ed adapter)
+        auto act = p.l.act;
+        act.net_id = name(ue::utf8_name(sp));
+        act.ability = name(p.l.cls);
+        act.custom_spawn = p.l.custom_spawn == "None" ? 0 : name(p.l.custom_spawn);
+        act.custom_attach = p.l.custom_attach == "None" ? 0 : name(p.l.custom_attach);
+        act.seq = ++g_act_seq[act.net_id];
+        if (!act.ability) continue;
+        const auto n = proto::encode(act, g_buf);
+        for (auto& [id, peer] : g_peers)
+            if (peer.slot) send_rel(id, n), ++g_acts_sent;
+    }
+    g_pending.clear();
+}
+
 void send_snapshots() {
     for (auto& [id, p] : g_peers) {
         if (!p.slot) continue;
@@ -284,6 +320,8 @@ void tick(std::int64_t now_us) {
             p.stalled = true;
         }
     capture(now_us);
+    ability::host_enable(on_launch);
+    send_acts();
     send_snapshots();
 }
 
@@ -291,6 +329,9 @@ void stop() {
     for (auto& [id, p] : g_peers)
         if (p.slot) party::leave(p.slot);
     for (auto& [k, slot] : g_parked) party::leave(slot);
+    ability::host_disable();
+    g_pending.clear();
+    g_act_seq.clear();
     g_peers.clear();
     g_parked.clear();
     g_names.clear();
@@ -299,7 +340,8 @@ void stop() {
 } // namespace
 
 std::string describe() {
-    std::string out = std::format("host: peers={} parked={} names={} epoch={}\n", g_peers.size(), g_parked.size(), g_names.size(), g_epoch);
+    std::string out = std::format("host: peers={} parked={} names={} epoch={} actsSent={} actsDropped={}\n", g_peers.size(), g_parked.size(), g_names.size(), g_epoch,
+                                  g_acts_sent, g_acts_dropped) + ability::describe();
     for (const auto& [id, p] : g_peers)
         out += std::format("  peer {} -> P{} key={} seq={} acked={} input={} mapReady={}\n", id, p.slot, p.guest_key, p.seq, p.acked, p.stalled ? "stalled" : "live", p.map_ready);
     return out;

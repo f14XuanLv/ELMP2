@@ -6,6 +6,7 @@
 
 #include "coop/client.h"
 
+#include "coop/ability.h"
 #include "coop/session.h"
 
 #include "guard/guard.h"
@@ -72,7 +73,8 @@ std::unordered_map<std::string, ObjHandle> g_index; // spawn point name → enem
 reflect::PropRef g_spawn_point;
 reflect::FuncRef g_set_tick, g_set_collision, g_set_rotation;
 bool g_resolved = false;
-std::uint64_t g_unknown_names = 0, g_bad_snaps = 0, g_applied = 0, g_anim_sets = 0, g_anim_fail = 0, g_kills = 0;
+std::uint64_t g_unknown_names = 0, g_bad_snaps = 0, g_applied = 0, g_anim_sets = 0, g_anim_fail = 0, g_kills = 0, g_act_bad = 0, g_act_absent = 0;
+std::unordered_map<std::uint16_t, std::uint32_t> g_act_last;
 metrics::Histogram& h_apply = metrics::histogram("coop.client.apply_us");
 
 std::string guest_key() {
@@ -151,8 +153,14 @@ void freeze(ue::UObject* enemy) {
                     if (!ue::alive(items[i])) continue;
                     const auto cls = ue::class_name_of(items[i]);
                     if (cls == L"SpineSkeletonAnimationExComponent" || cls == L"SpineSkeletonRendererComponent" || cls == L"AbilityComponent" ||
-                        cls == L"SpineBoneFollowerComponent" || cls == L"SpineBoneComponent" || cls == L"ParticleSystemComponent" || cls == L"WidgetComponent")
+                        cls == L"SpineBoneFollowerComponent" || cls == L"SpineBoneComponent" || cls == L"ParticleSystemComponent" || cls == L"WidgetComponent") {
+                        // dormant enemies ship with the Spine animation / renderer ticks off → turn the
+                        // presentation set on explicitly (v1 net-facts: else the mesh stays at its first frame)
+                        reflect::Frame on(set_comp_tick);
+                        on.arg_bool(0, true);
+                        on.invoke(items[i]);
                         continue;
+                    }
                     reflect::Frame t(set_comp_tick);
                     t.arg_bool(0, false);
                     t.invoke(items[i]);
@@ -382,6 +390,26 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         g_follow_next_us = 0;
         break;
     }
+    case proto::Msg::Act: {
+        proto::Act a;
+        if (!proto::decode(msg, a) || a.dyn) return void(++g_act_bad);
+        auto& last = g_act_last[a.net_id];
+        if (a.seq <= last) return; // idempotent per enemy
+        last = a.seq;
+        const auto* name = g_names.text(a.net_id);
+        const auto* cls = g_names.text(a.ability);
+        const auto* cs = a.custom_spawn ? g_names.text(a.custom_spawn) : nullptr;
+        const auto* ca = a.custom_attach ? g_names.text(a.custom_attach) : nullptr;
+        if (!name || !cls) return void(++g_act_bad);
+        auto it = g_index.find(*name);
+        auto* enemy = it == g_index.end() ? nullptr : it->second.get();
+        if (!enemy) return void(++g_act_absent); // not streamed in locally
+        std::string why;
+        if (!ability::replay(enemy, a, *cls, cs ? *cs : "", ca ? *ca : "", &why)) {
+            if (++g_act_bad <= 5) log::warn("coop: act {} on {} rejected: {}", *cls, *name, why);
+        }
+        break;
+    }
     case proto::Msg::Control: {
         proto::Control c;
         if (proto::decode(msg, c)) log::warn("coop: host says: {}", c.text);
@@ -462,6 +490,7 @@ void stop() {
     g_seat = 0, g_epoch = 0, g_latest = 0;
     g_ring.reset();
     g_names.clear();
+    g_act_last.clear();
     g_index.clear();
     g_index_version = ~0ull;
     g_input = {};
@@ -472,8 +501,8 @@ void on_closed(std::uint32_t, const std::string&, net::Reject) {}
 } // namespace
 
 std::string describe() {
-    return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} copies={} reconciles={} kills={} presses(attack)={}\n{}", g_seat,
-                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_kills, g_input.presses[3],
+    return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} copies={} reconciles={} kills={} actBad={} actAbsent={} presses(attack)={}\n{}{}", g_seat,
+                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_input.presses[3], ability::describe(),
                        guard::describe());
 }
 

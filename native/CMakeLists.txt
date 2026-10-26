@@ -79,6 +79,7 @@ set(ELMP_MOD_SOURCES
     coop/session.cpp
     coop/host.cpp
     coop/client.cpp
+    coop/ability.cpp
     guard/guard.cpp
     dev/lua_bridge.cpp
     mod/dllmain.cpp

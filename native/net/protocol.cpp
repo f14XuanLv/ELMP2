@@ -69,8 +69,11 @@ std::size_t encode(const Act& m, std::span<std::uint8_t> out) {
     w.u32(m.seq);
     w.u16(m.ability);
     for (float f : m.xf) w.f32(f);
-    w.u16(m.spawn_bone);
-    w.u16(m.attach_bone);
+    for (float f : m.xf2) w.f32(f);
+    w.u8(m.spawn_bone);
+    w.u8(m.attach_bone);
+    w.u16(m.custom_spawn);
+    w.u16(m.custom_attach);
     w.u8(m.flags);
     return done(w);
 }
@@ -124,15 +127,21 @@ bool decode(std::span<const std::uint8_t> in, Act& m) {
     m.dyn = r.u8();
     m.seq = r.u32();
     m.ability = r.u16();
-    for (auto& f : m.xf) {
-        f = r.f32();
-        if (!std::isfinite(f) || std::fabs(f) > 1e6f) r.fail();
-    }
-    m.spawn_bone = r.u16();
-    m.attach_bone = r.u16();
+    for (auto* xf : {&m.xf, &m.xf2})
+        for (auto& f : *xf) {
+            f = r.f32();
+            if (!std::isfinite(f) || std::fabs(f) > 1e6f) r.fail();
+        }
+    m.spawn_bone = r.u8();
+    m.attach_bone = r.u8();
+    m.custom_spawn = r.u16();
+    m.custom_attach = r.u16();
     m.flags = r.u8();
-    const float q = m.xf[0] * m.xf[0] + m.xf[1] * m.xf[1] + m.xf[2] * m.xf[2] + m.xf[3] * m.xf[3];
-    return r.done() && m.ability != 0 && m.dyn <= 1 && q > 0.5f && q < 1.5f && !(m.flags & ~7u);
+    auto unit = [](const std::array<float, 10>& x) {
+        const float q = x[0] * x[0] + x[1] * x[1] + x[2] * x[2] + x[3] * x[3];
+        return q > 0.5f && q < 1.5f;
+    };
+    return r.done() && m.ability != 0 && m.dyn <= 1 && unit(m.xf) && unit(m.xf2) && !(m.flags & ~7u);
 }
 bool decode(std::span<const std::uint8_t> in, Json& m) {
     Reader r(in);

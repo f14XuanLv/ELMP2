@@ -51,8 +51,10 @@ struct Act {
     std::uint8_t dyn = 0;
     std::uint32_t seq = 0;
     std::uint16_t ability = 0; // class path name id
-    std::array<float, 10> xf{}; // offset: rotation quat (4), translation (3), scale (3)
-    std::uint16_t spawn_bone = 0, attach_bone = 0; // name ids (0 = none)
+    std::array<float, 10> xf{0, 0, 0, 1, 0, 0, 0, 1, 1, 1};  // FAbilityDescription.Offset: quat (4), translation (3), scale (3)
+    std::array<float, 10> xf2{0, 0, 0, 1, 0, 0, 0, 1, 1, 1}; // the call's Offset argument
+    std::uint8_t spawn_bone = 0, attach_bone = 0;             // ESpineBone values
+    std::uint16_t custom_spawn = 0, custom_attach = 0;        // name ids (0 = None)
     std::uint8_t flags = 0;     // bit0 follow spawn rot, bit1 follow attach rot, bit2 fire-and-forget
 };
 struct Json { std::string text; };
