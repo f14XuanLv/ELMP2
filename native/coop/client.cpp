@@ -90,6 +90,7 @@ std::uint64_t g_unknown_names = 0, g_bad_snaps = 0, g_applied = 0, g_anim_sets =
 std::unordered_map<std::uint16_t, std::uint32_t> g_act_last;
 metrics::Histogram& h_apply = metrics::histogram("coop.client.apply_us");
 metrics::Histogram& h_motion = metrics::histogram("coop.client.motion_us");
+metrics::Histogram& h_replay = metrics::histogram("coop.client.replay_us");
 metrics::Histogram& h_write = metrics::histogram("coop.client.motion_write_us");
 metrics::Histogram& h_input = metrics::histogram("coop.client.input_us");
 metrics::Histogram& h_slow = metrics::histogram("coop.client.slow_us"); // 1 Hz: equipment poll + recheck
@@ -511,7 +512,10 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         auto* enemy = it == g_index.end() ? nullptr : it->second.get();
         if (!enemy) return void(++g_act_absent); // not streamed in locally
         std::string why;
-        if (!ability::replay(enemy, a, *cls, cs ? *cs : "", ca ? *ca : "", &why)) {
+        const auto r0 = clock::now_us();
+        const bool ok = ability::replay(enemy, a, *cls, cs ? *cs : "", ca ? *ca : "", &why);
+        h_replay.add(static_cast<double>(clock::now_us() - r0));
+        if (!ok) {
             if (++g_act_bad <= 5) log::warn("coop: act {} on {} rejected: {}", *cls, *name, why);
         }
         break;
