@@ -65,7 +65,7 @@ std::unordered_map<std::string, ObjHandle> g_index; // spawn point name → enem
 reflect::PropRef g_spawn_point;
 reflect::FuncRef g_set_tick;
 bool g_resolved = false;
-std::uint64_t g_unknown_names = 0, g_bad_snaps = 0, g_applied = 0;
+std::uint64_t g_unknown_names = 0, g_bad_snaps = 0, g_applied = 0, g_anim_sets = 0, g_anim_fail = 0;
 metrics::Histogram& h_apply = metrics::histogram("coop.client.apply_us");
 
 std::string guest_key() {
@@ -169,7 +169,8 @@ void apply(const snap::Frame& f) {
             if (auto* spine = t.spine.get(); spine && anim) {
                 reflect::Frame f(s->sp_set_animation);
                 f.arg(0, 0).arg_string(1, log::wide(*anim)).arg_bool(2, row.loop != 0);
-                f.invoke(spine);
+                if (f.invoke(spine)) ++g_anim_sets;
+                else ++g_anim_fail;
                 t.anim = row.anim;
             }
         }
@@ -296,8 +297,9 @@ void on_closed(std::uint32_t, const std::string&, net::Reject) {}
 } // namespace
 
 std::string describe() {
-    return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} presses(attack)={}\n{}", g_seat, g_epoch, g_latest,
-                       g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_input.presses[3], guard::describe());
+    return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} presses(attack)={}\n{}", g_seat,
+                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_input.presses[3],
+                       guard::describe());
 }
 
 void install() { coop::set_handlers(Role::Client, {on_connected, on_closed, on_reliable, on_unreliable, tick, stop}); }
