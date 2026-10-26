@@ -215,9 +215,11 @@ std::uint64_t g_world_presented = 0;
 
 void present_world(const snap::Frame& f) {
     if (!f.w.n) return;
-    static reflect::FuncRef status, hide;
+    static reflect::FuncRef status, hide, trigger_status;
+    static ue::UClass* trigger = reflect::find_class(L"/Script/Zenith.Trigger");
     if (!status.ok()) {
         status = reflect::Resolver("Interactable", reflect::find_class(L"/Script/Zenith.Interactable")).func(L"OnClearedStatusChecked", 1);
+        trigger_status = reflect::Resolver("Trigger", reflect::find_class(L"/Script/Zenith.Trigger")).func(L"OnClearedStatusChecked", 1);
         hide = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).func(L"SetActorHiddenInGame", 1);
     }
     static ue::UClass* interactable = reflect::find_class(L"/Script/Zenith.Interactable");
@@ -227,7 +229,7 @@ void present_world(const snap::Frame& f) {
         auto& done = g_world_done[*name];
         if ((done & row.flags) == row.flags) continue;
         ue::UObject* a = nullptr;
-        for (auto kind : {registry::Kind::Interactable, registry::Kind::Breakable}) {
+        for (auto kind : {registry::Kind::Interactable, registry::Kind::Breakable, registry::Kind::Trigger}) {
             for (const auto& e : registry::bucket(kind))
                 if (auto* o = e.handle.get(); o && ue::utf8_name(o) == *name) a = o;
             if (a) break;
@@ -237,6 +239,13 @@ void present_world(const snap::Frame& f) {
             reflect::Frame fs(status);
             fs.arg_bool(0, true);
             fs.invoke(a);
+        }
+        // triggers (fake walls, conversations, events) the host has consumed: the vanilla "already cleared"
+        // entry (wall gone, conversation not offered) — the client never fires a trigger itself (P1 presentation)
+        if ((row.flags & 1) && !(done & 1) && trigger && a->GetClassPrivate()->IsChildOf(trigger) && trigger_status.ok()) {
+            reflect::Frame ft(trigger_status);
+            ft.arg_bool(0, true);
+            ft.invoke(a);
         }
         static ue::UClass* breakable = reflect::find_class(L"/Script/Zenith.Breakable");
         const bool is_breakable = breakable && a->GetClassPrivate()->IsChildOf(breakable);

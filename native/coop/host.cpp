@@ -163,7 +163,7 @@ void capture_world(std::int64_t now_us) {
         static ObjHandle clear_cls = ObjHandle::of(reflect::find_object(L"/Script/Zenith.ClearableComponent"));
         static reflect::FuncRef is_cleared = reflect::Resolver("ClearableComponent", reflect::find_class(L"/Script/Zenith.ClearableComponent")).func(L"IsCleared", 0);
         const auto* s = core::schema::script();
-        for (auto kind : {registry::Kind::Interactable, registry::Kind::Breakable})
+        for (auto kind : {registry::Kind::Interactable, registry::Kind::Breakable, registry::Kind::Trigger})
             for (const auto& e : registry::bucket(kind)) {
                 auto* a = e.handle.get();
                 if (!a) continue;
