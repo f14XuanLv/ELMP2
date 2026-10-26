@@ -52,7 +52,15 @@ constexpr std::size_t kRing = 32;
 constexpr float kReconcileUU = 150.0f; // local P1 vs host seat drift before a snap (decision P2: prediction + snap)
 std::uint64_t g_reconciles = 0;
 
+void note_host_time(std::uint32_t host_ms, std::int64_t now_us);
+
+struct Sample {
+    std::uint32_t t = 0; // host ms
+    float x = 0, y = 0, z = 0;
+};
 struct Taken {
+    std::array<Sample, 4> s{};
+    int head = 0, n = 0;
     ObjHandle enemy, controller, spine;
     std::uint16_t anim = 0;
     bool killed = false, hidden = false;
@@ -183,7 +191,10 @@ void take(const std::string& name, ue::UObject* enemy) {
     guard::mark(enemy);
     guard::mark(controller);
     freeze(enemy);
-    g_taken[name] = {ObjHandle::of(enemy), ObjHandle::of(controller)};
+    Taken t;
+    t.enemy = ObjHandle::of(enemy);
+    t.controller = ObjHandle::of(controller);
+    g_taken[name] = t;
 }
 
 void present_lilies(const snap::Frame& f, const core::schema::Script& s);
@@ -255,12 +266,14 @@ void apply(const snap::Frame& f) {
         auto* enemy = it == g_index.end() ? nullptr : it->second.get();
         if (!enemy) continue; // not streamed in locally (Client ⊆ Host)
         if (auto t = g_taken.find(*name); t == g_taken.end() || t->second.enemy.get() != enemy) take(*name, enemy);
-        if (auto at = core::location(enemy); at && (std::fabs(at->x - row.x) + std::fabs(at->y - row.y) + std::fabs(at->z - row.z)) > 1.0f) {
-            reflect::Frame tp(s->actor_teleport);
-            tp.arg(0, core::Vec3{row.x, row.y, row.z}).arg_bool(1, false).arg_bool(3, true);
-            tp.invoke(enemy);
-        }
         auto& t = g_taken[*name];
+        // position: buffered by host time, presented every frame with interpolation (present_motion)
+        if (!t.n || f.t_ms != t.s[(t.head + t.n - 1) % 4].t) {
+            const int at = (t.head + t.n) % 4;
+            t.s[at] = {f.t_ms, row.x, row.y, row.z};
+            if (t.n < 4) ++t.n;
+            else t.head = (t.head + 1) % 4;
+        }
         if (auto* hp = s->zc_hp.object(enemy)) {
             // property write (no SetCurrHP in vanilla). Death is presentation only: the host's death pose keeps
             // streaming while the row exists; when the host removes the actor the copy is hidden (below). The
@@ -504,6 +517,7 @@ void on_unreliable(std::uint32_t, std::uint8_t stream, std::span<const std::uint
     if (b == &slot) return void(++g_bad_snaps);
     if (!snap::decode(msg, b, slot)) return void(++g_bad_snaps);
     g_latest = seq;
+    note_host_time(slot.t_ms, clock::now_us());
     if (lifecycle::state() == lifecycle::State::Settled) apply(slot);
 }
 
@@ -590,8 +604,55 @@ void equip_poll(std::int64_t now_us) {
     if (const auto n = proto::encode(proto::Msg::EquipRequest, proto::Json{cur}, big)) coop::send_reliable(0, std::span(big.data(), n)), ++g_equip_requests;
 }
 
+// Enemy motion presentation (§16 interpolation): render host time = local clock mapped onto the host clock
+// (offset tracks the earliest arrival: max of host_t − local, slowly decaying) minus a 100 ms buffer; each
+// taken enemy is placed between the two samples that bracket it. Gaps > 500 ms jump straight to the new
+// sample (no slow slide after silence); past the newest sample it holds (no extrapolation).
+double g_offset_ms = 0;
+bool g_offset_known = false;
+std::uint64_t g_motion_writes = 0;
+
+void note_host_time(std::uint32_t host_ms, std::int64_t now_us) {
+    const double est = static_cast<double>(host_ms) - static_cast<double>(now_us) / 1000.0;
+    if (!g_offset_known || est > g_offset_ms) g_offset_ms = est, g_offset_known = true;
+    else g_offset_ms -= 0.02; // drift allowance
+}
+
+void present_motion(std::int64_t now_us) {
+    const auto* s = core::schema::script();
+    if (!s || !g_offset_known) return;
+    const double render = static_cast<double>(now_us) / 1000.0 + g_offset_ms - 100.0;
+    for (auto& [n, t] : g_taken) {
+        if (!t.n || t.hidden) continue;
+        auto* e = t.enemy.get();
+        if (!e) continue;
+        const Sample* a = &t.s[t.head];
+        const Sample* b = a;
+        for (int i = 1; i < t.n; ++i) {
+            const auto& c = t.s[(t.head + i) % 4];
+            if (c.t <= render) a = &c;
+            b = &c;
+            if (c.t > render) break;
+        }
+        core::Vec3 p{a->x, a->y, a->z};
+        if (b != a && b->t > a->t && b->t - a->t <= 500 && render > a->t) {
+            const float k = static_cast<float>(std::min(1.0, (render - a->t) / static_cast<double>(b->t - a->t)));
+            p = {a->x + (b->x - a->x) * k, a->y + (b->y - a->y) * k, a->z + (b->z - a->z) * k};
+        } else if (b != a && b->t - a->t > 500 && render >= a->t) {
+            p = {b->x, b->y, b->z};
+        }
+        if (auto at = core::location(e); at && (std::fabs(at->x - p.x) + std::fabs(at->y - p.y) + std::fabs(at->z - p.z)) > 0.2f) {
+            reflect::Frame tp(s->actor_teleport);
+            tp.arg(0, p).arg_bool(1, false).arg_bool(3, true);
+            tp.invoke(e);
+            ++g_motion_writes;
+        }
+    }
+}
+
 void tick(std::int64_t now_us) {
     if (!g_seat || lifecycle::state() != lifecycle::State::Settled) return;
+    present_motion(now_us);
     equip_poll(now_us);
     send_input();
     follow(now_us);
@@ -638,8 +699,8 @@ void on_closed(std::uint32_t, const std::string&, net::Reject) {}
 } // namespace
 
 std::string describe() {
-    return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} copies={} reconciles={} kills={} actBad={} actAbsent={} rechecks={} aiLeaks={} world={} equipRequests={} presses(attack)={}\n{}{}", g_seat,
-                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, g_world_presented, g_equip_requests, g_input.presses[3], ability::describe(),
+    return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} copies={} reconciles={} kills={} actBad={} actAbsent={} rechecks={} aiLeaks={} world={} equipRequests={} motionWrites={} presses(attack)={}\n{}{}", g_seat,
+                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, g_world_presented, g_equip_requests, g_motion_writes, g_input.presses[3], ability::describe(),
                        guard::describe());
 }
 
