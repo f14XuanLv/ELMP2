@@ -7,6 +7,7 @@
 
 #include <cstring>
 #include <format>
+#include <unordered_map>
 
 namespace elmp::coop::ability {
 
@@ -63,7 +64,12 @@ UObject* __fastcall d_launch(UObject* comp, const std::uint8_t* desc, const std:
         if (ue::alive(cls)) {
             Launch l;
             l.owner = comp ? comp->GetOuterPrivate() : nullptr;
-            l.cls = log::utf8(cls->GetPathName());
+            // path per class cached (GetPathName walks outers + builds strings); entry valid while the
+            // weak handle still resolves to the same class object
+            static std::unordered_map<UObject*, std::pair<ObjHandle, std::string>> paths;
+            auto& pe = paths[cls];
+            if (pe.first.get() != cls) pe = {ObjHandle::of(cls), log::utf8(cls->GetPathName())};
+            l.cls = pe.second;
             read_xf(g_l.offset.at<std::uint8_t>(desc), l.act.xf);
             read_xf(offset, l.act.xf2);
             l.act.spawn_bone = *g_l.spawn_bone.at<std::uint8_t>(desc);
@@ -100,7 +106,15 @@ bool replay(ue::UObject* enemy, const net::proto::Act& act, const std::string& c
     };
     if (!layout().ok) return fail("layout");
     static ue::UClass* ability_base = reflect::find_class(L"/Script/Zenith.Ability");
-    auto* cls = static_cast<ue::UClass*>(reflect::load_object(log::wide(cls_path)));
+    // class lookup by path costs milliseconds (StaticLoadObject string resolve) → cache per path, keyed by
+    // a weak handle (invalidated when the class is unloaded)
+    static std::unordered_map<std::string, ObjHandle> cache;
+    auto& slot = cache[cls_path];
+    auto* cls = static_cast<ue::UClass*>(slot.get());
+    if (!cls) {
+        cls = static_cast<ue::UClass*>(reflect::load_object(log::wide(cls_path)));
+        slot = ObjHandle::of(cls);
+    }
     if (!cls || !ability_base || !cls->IsChildOf(ability_base)) return fail("not an Ability class");
     static ObjHandle comp_cls = ObjHandle::of(reflect::find_object(L"/Script/Zenith.AbilityComponent"));
     static reflect::FuncRef by_class, launch;
