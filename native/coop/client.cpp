@@ -73,7 +73,7 @@ std::unordered_map<std::string, ObjHandle> g_index; // spawn point name → enem
 reflect::PropRef g_spawn_point;
 reflect::FuncRef g_set_tick, g_set_collision, g_set_rotation;
 bool g_resolved = false;
-std::uint64_t g_unknown_names = 0, g_bad_snaps = 0, g_applied = 0, g_anim_sets = 0, g_anim_fail = 0, g_kills = 0, g_act_bad = 0, g_act_absent = 0;
+std::uint64_t g_unknown_names = 0, g_bad_snaps = 0, g_applied = 0, g_anim_sets = 0, g_anim_fail = 0, g_kills = 0, g_act_bad = 0, g_act_absent = 0, g_rechecks = 0, g_leaks = 0, g_pawn_activated = 0;
 std::unordered_map<std::uint16_t, std::uint32_t> g_act_last;
 metrics::Histogram& h_apply = metrics::histogram("coop.client.apply_us");
 
@@ -470,10 +470,34 @@ void follow(std::int64_t now_us) {
     log::info("coop: following the host to {} (tag {})", *host_map, g_follow_tag);
 }
 
+// 1 Hz recheck (G1): every taken enemy's two activation flags (ZenithAIController.bActive,
+// ZenithCharacter.bActivated — EL.json offsets, reflection-checked) must stay false on the client.
+// A leak is counted and the actor re-frozen (tick off again; the AI activation itself is gated).
+void recheck(std::int64_t now_us) {
+    static clock::Cadence every(1000);
+    if (!every.due(now_us)) return;
+    static const auto ai_off = binary_checks::offset("ZenithAIController.bActive");
+    static const auto pawn_off = binary_checks::offset("ZenithCharacter.bActivated");
+    ++g_rechecks;
+    if (!ai_off || !pawn_off) return;
+    for (auto& [n, t] : g_taken) {
+        auto* e = t.enemy.get();
+        auto* c = t.controller.get();
+        const bool ai = c && *(reinterpret_cast<const std::uint8_t*>(c) + *ai_off) & 1;
+        const bool pawn = e && *(reinterpret_cast<const std::uint8_t*>(e) + *pawn_off) & 1;
+        if (ai) {
+            ++g_leaks;
+            freeze(e);
+        }
+        g_pawn_activated += pawn; // informative: vanilla sets bActivated on spawn (presentation only)
+    }
+}
+
 void tick(std::int64_t now_us) {
     if (!g_seat || lifecycle::state() != lifecycle::State::Settled) return;
     send_input();
     follow(now_us);
+    recheck(now_us);
 }
 
 void stop() {
@@ -501,8 +525,8 @@ void on_closed(std::uint32_t, const std::string&, net::Reject) {}
 } // namespace
 
 std::string describe() {
-    return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} copies={} reconciles={} kills={} actBad={} actAbsent={} presses(attack)={}\n{}{}", g_seat,
-                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_input.presses[3], ability::describe(),
+    return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} copies={} reconciles={} kills={} actBad={} actAbsent={} rechecks={} aiLeaks={} presses(attack)={}\n{}{}", g_seat,
+                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, g_input.presses[3], ability::describe(),
                        guard::describe());
 }
 
