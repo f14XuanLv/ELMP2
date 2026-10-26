@@ -52,6 +52,7 @@ std::uint64_t g_reconciles = 0;
 struct Taken {
     ObjHandle enemy, controller, spine;
     std::uint16_t anim = 0;
+    bool killed = false;
 };
 
 std::uint8_t g_seat = 0;
@@ -70,7 +71,7 @@ std::unordered_map<std::string, ObjHandle> g_index; // spawn point name → enem
 reflect::PropRef g_spawn_point;
 reflect::FuncRef g_set_tick;
 bool g_resolved = false;
-std::uint64_t g_unknown_names = 0, g_bad_snaps = 0, g_applied = 0, g_anim_sets = 0, g_anim_fail = 0;
+std::uint64_t g_unknown_names = 0, g_bad_snaps = 0, g_applied = 0, g_anim_sets = 0, g_anim_fail = 0, g_kills = 0;
 metrics::Histogram& h_apply = metrics::histogram("coop.client.apply_us");
 
 std::string guest_key() {
@@ -195,8 +196,24 @@ void apply(const snap::Frame& f) {
             tp.arg(0, core::Vec3{row.x, row.y, row.z}).arg_bool(1, false).arg_bool(3, true);
             tp.invoke(enemy);
         }
-        if (auto* hp = s->zc_hp.object(enemy)) *s->hp_curr.at<std::int32_t>(hp) = row.hp; // property write (no SetCurrHP in vanilla)
         auto& t = g_taken[*name];
+        if (auto* hp = s->zc_hp.object(enemy)) {
+            if ((row.flags & 4) && !t.killed) {
+                // host-confirmed death: replay it through the vanilla pipeline (death animation / drops of the
+                // presentation; the guard lets exactly this damage through, nothing else settles here)
+                *s->hp_curr.at<std::int32_t>(hp) = 1;
+                static reflect::FuncRef dmg;
+                if (!dmg.ok()) dmg = reflect::Resolver("HPComponent", reflect::find_class(L"/Script/Zenith.HPComponent")).func(L"DoDamage", 4);
+                guard::open_replay(enemy);
+                reflect::Frame(dmg).arg(0, static_cast<ue::UObject*>(nullptr)).arg(1, 1).arg_bool(2, false).arg_bool(3, false).invoke(hp);
+                guard::close_replay(enemy);
+                t.killed = true;
+                ++g_kills;
+            } else if (!t.killed) {
+                *s->hp_curr.at<std::int32_t>(hp) = row.hp; // property write (no SetCurrHP in vanilla)
+            }
+        }
+        if (t.killed) continue;
         if (row.anim && row.anim != t.anim) { // pose: switch track 0 only on an animation change (§16)
             const auto* anim = g_names.text(row.anim);
             if (!t.spine.get()) {
@@ -258,6 +275,10 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
                 reflect::Frame tp(s.actor_teleport);
                 tp.arg(0, core::Vec3{row.x, row.y, row.z}).arg_bool(1, false).arg_bool(3, true);
                 if (tp.invoke(p1)) ++g_reconciles;
+            }
+            if (auto* hp = p1 ? s.zc_hp.object(p1) : nullptr) { // own vitals are the host seat's (HUD shows them)
+                *s.hp_max.at<std::int32_t>(hp) = row.mhp;
+                *s.hp_curr.at<std::int32_t>(hp) = std::max<std::int32_t>(row.hp, row.alive ? 1 : 0);
             }
             continue;
         }
@@ -442,8 +463,8 @@ void on_closed(std::uint32_t, const std::string&, net::Reject) {}
 } // namespace
 
 std::string describe() {
-    return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} copies={} reconciles={} presses(attack)={}\n{}", g_seat,
-                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_input.presses[3],
+    return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} copies={} reconciles={} kills={} presses(attack)={}\n{}", g_seat,
+                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_kills, g_input.presses[3],
                        guard::describe());
 }
 
