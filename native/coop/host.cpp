@@ -141,6 +141,48 @@ void pose(ue::UObject* enemy, const ObjHandle& h, snap::EnemyRow& row, const cor
     }
     track0(c.second.get(), row, s);
 }
+// World objects (adapter worldobj, §7.5): interactables (doors / chests / switches / items) and breakables,
+// keyed by actor name (level-placed → identical on both sides). Cleared = UClearableComponent::IsCleared,
+// sampled at 2 Hz (ProcessEvent per object); destroyed objects of the current map stay as `gone` rows.
+struct WorldObj {
+    ObjHandle actor, clearable;
+    std::uint8_t flags = 0;
+};
+std::unordered_map<std::string, WorldObj> g_world;
+std::uint16_t g_world_map = 0;
+
+void capture_world(std::int64_t now_us) {
+    static clock::Cadence every(500);
+    if (g_world_map != g_frame->map) g_world.clear(), g_world_map = g_frame->map, every.reset();
+    if (every.due(now_us)) {
+        static ObjHandle clear_cls = ObjHandle::of(reflect::find_object(L"/Script/Zenith.ClearableComponent"));
+        static reflect::FuncRef is_cleared = reflect::Resolver("ClearableComponent", reflect::find_class(L"/Script/Zenith.ClearableComponent")).func(L"IsCleared", 0);
+        const auto* s = core::schema::script();
+        for (auto kind : {registry::Kind::Interactable, registry::Kind::Breakable})
+            for (const auto& e : registry::bucket(kind)) {
+                auto* a = e.handle.get();
+                if (!a) continue;
+                auto& w = g_world[ue::utf8_name(a)];
+                if (w.actor != e.handle) {
+                    w.actor = e.handle;
+                    reflect::Frame f(s->actor_component_by_class);
+                    f.arg(0, clear_cls.get());
+                    w.clearable = f.invoke(a) ? ObjHandle::of(f.ret<ue::UObject*>()) : ObjHandle{};
+                }
+                w.flags &= ~2;
+                if (auto* c = w.clearable.get(); c && is_cleared.ok()) {
+                    reflect::Frame f(is_cleared);
+                    if (f.invoke(c)) w.flags = f.ret_bool() ? (w.flags | 1) : (w.flags & ~1);
+                }
+            }
+        for (auto& [n, w] : g_world)
+            if (!w.actor.get()) w.flags |= 2; // destroyed on the host (breakable broken, item consumed)
+    }
+    for (const auto& [n, w] : g_world)
+        if (w.flags)
+            if (auto* row = g_frame->w.add(name(n))) row->flags = w.flags;
+}
+
 void capture(std::int64_t now_us) {
     const auto t0 = clock::now_us();
     const auto* s = core::schema::script();
@@ -169,6 +211,7 @@ void capture(std::int64_t now_us) {
             row->type = e.class_id;
             pose(enemy, e.handle, *row, *s);
         }
+    capture_world(now_us);
     h_capture.add(static_cast<double>(clock::now_us() - t0));
 }
 

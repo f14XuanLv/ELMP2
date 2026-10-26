@@ -184,6 +184,53 @@ void take(const std::string& name, ue::UObject* enemy) {
 
 void present_lilies(const snap::Frame& f, const core::schema::Script& s);
 
+// World objects (adapter worldobj): host cleared → interactables get the vanilla "already cleared" entry
+// (OnClearedStatusChecked(true) — the same call the map makes for objects cleared in the save: opened door /
+// chest, consumed item); host gone (breakable broken / item destroyed) → hidden + no collision. Presentation
+// only: nothing is marked cleared in the client's save (and saving is refused by the guard anyway).
+std::unordered_map<std::string, std::uint8_t> g_world_done; // name → flags already presented
+std::uint64_t g_world_presented = 0;
+
+void present_world(const snap::Frame& f) {
+    if (!f.w.n) return;
+    static reflect::FuncRef status, hide;
+    if (!status.ok()) {
+        status = reflect::Resolver("Interactable", reflect::find_class(L"/Script/Zenith.Interactable")).func(L"OnClearedStatusChecked", 1);
+        hide = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).func(L"SetActorHiddenInGame", 1);
+    }
+    static ue::UClass* interactable = reflect::find_class(L"/Script/Zenith.Interactable");
+    for (const auto& row : f.w.view()) {
+        const auto* name = g_names.text(row.key);
+        if (!name) continue;
+        auto& done = g_world_done[*name];
+        if ((done & row.flags) == row.flags) continue;
+        ue::UObject* a = nullptr;
+        for (auto kind : {registry::Kind::Interactable, registry::Kind::Breakable}) {
+            for (const auto& e : registry::bucket(kind))
+                if (auto* o = e.handle.get(); o && ue::utf8_name(o) == *name) a = o;
+            if (a) break;
+        }
+        if (!a) continue; // not streamed in locally yet
+        if ((row.flags & 1) && !(done & 1) && interactable && a->GetClassPrivate()->IsChildOf(interactable) && status.ok()) {
+            reflect::Frame fs(status);
+            fs.arg_bool(0, true);
+            fs.invoke(a);
+        }
+        if ((row.flags & 2) && !(done & 2) && hide.ok()) {
+            reflect::Frame h(hide);
+            h.arg_bool(0, true);
+            h.invoke(a);
+            if (g_set_collision.ok()) {
+                reflect::Frame fc(g_set_collision);
+                fc.arg_bool(0, false);
+                fc.invoke(a);
+            }
+        }
+        done |= row.flags;
+        ++g_world_presented;
+    }
+}
+
 void apply(const snap::Frame& f) {
     const auto t0 = clock::now_us();
     const auto* s = core::schema::script();
@@ -250,6 +297,7 @@ void apply(const snap::Frame& f) {
                 t.hidden = true;
             }
     present_lilies(f, *s);
+    present_world(f);
     ++g_applied;
     h_apply.add(static_cast<double>(clock::now_us() - t0));
 }
@@ -447,6 +495,7 @@ void follow(std::int64_t now_us) {
         coop::send_reliable(0, std::span(g_buf.data(), proto::encode(proto::MapReady{g_host_map}, g_buf)));
         g_follow_pending = false;
         g_taken.clear(); // the previous map's enemies are gone (unload ≠ death)
+        g_world_done.clear();
         return;
     }
     g_follow_next_us = now_us + 2'000'000; // ≥ 2 s between attempts
@@ -515,6 +564,7 @@ void stop() {
     g_ring.reset();
     g_names.clear();
     g_act_last.clear();
+    g_world_done.clear();
     g_index.clear();
     g_index_version = ~0ull;
     g_input = {};
@@ -525,8 +575,8 @@ void on_closed(std::uint32_t, const std::string&, net::Reject) {}
 } // namespace
 
 std::string describe() {
-    return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} copies={} reconciles={} kills={} actBad={} actAbsent={} rechecks={} aiLeaks={} presses(attack)={}\n{}{}", g_seat,
-                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, g_input.presses[3], ability::describe(),
+    return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} copies={} reconciles={} kills={} actBad={} actAbsent={} rechecks={} aiLeaks={} world={} presses(attack)={}\n{}{}", g_seat,
+                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, g_world_presented, g_input.presses[3], ability::describe(),
                        guard::describe());
 }
 
