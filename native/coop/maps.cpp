@@ -316,7 +316,12 @@ void reset() {
 }
 
 std::string describe() {
+    const auto* bosses = boss_maps();
+    std::string list;
+    if (bosses)
+        for (const auto& b : *bosses) list += (list.empty() ? "" : ",") + b;
     std::string out = std::format("maps: moves={} loads={} unloads={} bossRefused={} pending={} last='{}'\n", g_moves, g_loads, g_unloads, g_boss_refusals, g_pending.size(), g_last);
+    out += std::format("  boss maps ({}): {}\n", bosses ? bosses->size() : 0, bosses ? list : "unreadable (background moves refused)");
     for (int k = 1; k < kSlots; ++k)
         if (!g_slots[k].map.empty()) out += std::format("  slot {} {} Y{:+.0f} starts={} ready={}{}\n", k, g_slots[k].map, offset(k), g_slots[k].starts.size(), world::level_instance::ready(g_slots[k].map), g_slots[k].empty_since ? " (empty)" : "");
     return out;
