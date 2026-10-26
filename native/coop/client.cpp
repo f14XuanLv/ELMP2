@@ -63,6 +63,8 @@ std::uint8_t g_seat = 0;
 std::uint16_t g_epoch = 0, g_host_map = 0;
 std::uint32_t g_latest = 0;
 std::string g_follow_tag;
+std::string g_equip_sent, g_equip_result;
+std::uint64_t g_equip_requests = 0;
 bool g_follow_pending = false;
 std::int64_t g_follow_next_us = 0;
 std::unique_ptr<std::array<snap::Frame, kRing>> g_ring;
@@ -475,6 +477,11 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         }
         break;
     }
+    case proto::Msg::EquipResult: {
+        proto::Json j;
+        if (proto::decode(msg, j)) g_equip_result = j.text, log::info("coop: host applied our equipment: {}", j.text);
+        break;
+    }
     case proto::Msg::Control: {
         proto::Control c;
         if (proto::decode(msg, c)) log::warn("coop: host says: {}", c.text);
@@ -559,8 +566,33 @@ void recheck(std::int64_t now_us) {
     }
 }
 
+// Equipment route (F2.10): the guest edits its build with the vanilla menus on its local P1; at 1 Hz the
+// equipment fields are compared and a change goes to the host as EquipRequest (host applies, answers).
+std::string equipment_json() {
+    auto prof = core::profile::read(world::p1_controller(), nullptr);
+    if (!prof) return {};
+    core::profile::Profile b;
+    b.spirits = prof->spirits;
+    b.summon_set = prof->summon_set;
+    if (prof->passives && prof->passives->equipped) b.passives = core::profile::Passives{prof->passives->equipped, std::nullopt, std::nullopt};
+    return json::dump(core::profile::to_json(b), 0);
+}
+
+void equip_poll(std::int64_t now_us) {
+    static clock::Cadence every(1000);
+    if (!every.due(now_us)) return;
+    auto cur = equipment_json();
+    if (cur.empty()) return;
+    if (g_equip_sent.empty()) return void(g_equip_sent = cur); // the Build already carried this one
+    if (cur == g_equip_sent) return;
+    g_equip_sent = cur;
+    std::vector<std::uint8_t> big(proto::kMaxJson + 64);
+    if (const auto n = proto::encode(proto::Msg::EquipRequest, proto::Json{cur}, big)) coop::send_reliable(0, std::span(big.data(), n)), ++g_equip_requests;
+}
+
 void tick(std::int64_t now_us) {
     if (!g_seat || lifecycle::state() != lifecycle::State::Settled) return;
+    equip_poll(now_us);
     send_input();
     follow(now_us);
     recheck(now_us);
@@ -582,6 +614,7 @@ void stop() {
     g_names.clear();
     g_act_last.clear();
     g_world_done.clear();
+    g_equip_sent.clear();
     g_index.clear();
     g_index_version = ~0ull;
     g_input = {};
@@ -604,8 +637,8 @@ void on_closed(std::uint32_t, const std::string&, net::Reject) {}
 } // namespace
 
 std::string describe() {
-    return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} copies={} reconciles={} kills={} actBad={} actAbsent={} rechecks={} aiLeaks={} world={} presses(attack)={}\n{}{}", g_seat,
-                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, g_world_presented, g_input.presses[3], ability::describe(),
+    return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} copies={} reconciles={} kills={} actBad={} actAbsent={} rechecks={} aiLeaks={} world={} equipRequests={} presses(attack)={}\n{}{}", g_seat,
+                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, g_world_presented, g_equip_requests, g_input.presses[3], ability::describe(),
                        guard::describe());
 }
 

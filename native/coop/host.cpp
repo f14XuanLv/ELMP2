@@ -358,6 +358,19 @@ void on_reliable(std::uint32_t peer, std::span<const std::uint8_t> msg) {
         }
         break;
     }
+    case proto::Msg::EquipRequest: { // F2.10: the guest's equipment change, applied to its seat on the host
+        proto::Json j;
+        json::Value v;
+        core::profile::Profile prof;
+        std::string err, result;
+        if (!p.slot || !proto::decode(msg, j) || !json::parse(j.text, v) || !core::profile::from_json(v, prof, &err)) result = "refused: " + (err.empty() ? "bad request" : err);
+        else result = core::profile::apply(core::controller(p.slot), prof, false).text();
+        p.build_report = result;
+        std::vector<std::uint8_t> big(proto::kMaxJson + 64);
+        if (const auto n = proto::encode(proto::Msg::EquipResult, proto::Json{result.substr(0, 1000)}, big)) coop::send_reliable(peer, std::span(big.data(), n));
+        log::info("coop: P{} equipment request: {}", p.slot, result);
+        break;
+    }
     case proto::Msg::MapReady: {
         proto::MapReady m;
         if (proto::decode(msg, m)) p.map_ready = m.map;
