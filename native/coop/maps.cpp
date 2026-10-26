@@ -113,7 +113,7 @@ void take_starts(Slot& sl, int slot) {
         sl.starts.push_back({*core::location(ps), ue::utf8(*tag)});
         *tag = ue::FName();
     }
-    sl.starts_taken = true;
+    sl.starts_taken = !sl.starts.empty(); // none yet (actors still registering): try again next poll
 }
 
 // PlayerStart of `slot` whose tag == tag (any start of the slot when the tag is not found)
@@ -223,11 +223,14 @@ void tick(std::int64_t now_us) {
             ++it;
             continue;
         }
-        if (auto at = player_start(it->slot, it->tag)) {
-            place(it->seat, *at);
-            ++g_moves;
-            g_last = std::format("P{} arrived in {} (slot {})", it->seat, g_slots[it->slot].map, it->slot);
+        auto at = player_start(it->slot, it->tag);
+        if (!at) { // instance loaded but its PlayerStarts not registered yet
+            ++it;
+            continue;
         }
+        place(it->seat, *at);
+        ++g_moves;
+        g_last = std::format("P{} arrived in {} (slot {})", it->seat, g_slots[it->slot].map, it->slot);
         it = g_pending.erase(it);
     }
     // handoff: host P1 now stands in a map that is also loaded as a background instance (P1 went through a
@@ -289,7 +292,7 @@ void reset() {
 std::string describe() {
     std::string out = std::format("maps: moves={} loads={} unloads={} pending={} last='{}'\n", g_moves, g_loads, g_unloads, g_pending.size(), g_last);
     for (int k = 1; k < kSlots; ++k)
-        if (!g_slots[k].map.empty()) out += std::format("  slot {} {} Y{:+.0f}{}\n", k, g_slots[k].map, offset(k), g_slots[k].empty_since ? " (empty)" : "");
+        if (!g_slots[k].map.empty()) out += std::format("  slot {} {} Y{:+.0f} starts={} ready={}{}\n", k, g_slots[k].map, offset(k), g_slots[k].starts.size(), world::level_instance::ready(g_slots[k].map), g_slots[k].empty_since ? " (empty)" : "");
     return out;
 }
 
