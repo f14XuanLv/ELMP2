@@ -1,5 +1,7 @@
 #include "party/interact.h"
 
+#include "core/permission.h"
+
 #include "core/player.h"
 
 #include "engine/reflect.h"
@@ -30,6 +32,7 @@ PressFn g_press = nullptr;
 
 metrics::Counter& c_delivered = metrics::counter("interact.delivered");
 metrics::Counter& c_skipped_up = metrics::counter("interact.up_type");
+metrics::Counter& c_refused = metrics::counter("interact.gate_refused");
 std::string g_last;
 
 const Schema* schema() {
@@ -65,6 +68,15 @@ std::string press(std::int64_t slot) {
         if (!type.invoke(it)) continue;
         const auto kind = type.ret<std::uint8_t>();
         const auto name = ue::utf8(e.name);
+        // an activation made while the gate was open survives closing it (the interactable keeps its
+        // InteractingController): re-check the gates at press time (rest for benches, interact for the rest;
+        // §7.2 remote-seat test: rest off still ran the vanilla EVT_Rest + save)
+        bool bench = false;
+        for (const auto& b : registry::bucket(registry::Kind::RestingPoint)) bench |= b.handle == e.handle;
+        if (!core::permission::allows(slot, bench ? core::permission::Gate::Rest : core::permission::Gate::Interact)) {
+            ++c_refused;
+            return g_last = std::format("P{} {}: gate closed", slot, name);
+        }
         if (kind != 0) { // UP / DOWN: the seat's direction input drives the vanilla command
             ++c_skipped_up;
             return g_last = std::format("P{} {}: direction-type interactable (press Up/Down)", slot, name);
@@ -79,7 +91,7 @@ std::string press(std::int64_t slot) {
 
 std::string status() {
     return std::format("interact: {} delivered={} directionType={} last='{}'", g_failure.empty() ? "ok" : "unavailable: " + g_failure, c_delivered.load(),
-                       c_skipped_up.load(), g_last);
+                       c_skipped_up.load(), g_last) + std::format(" gateRefused={}", c_refused.load());
 }
 
 } // namespace elmp::party::interact
