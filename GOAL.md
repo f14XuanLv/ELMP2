@@ -81,21 +81,21 @@
 ### P2 同图联机 —— 实现
 - [x] `net`：UDP + CNG 握手 / 加密（配对码参与派生） —— 2026-10-26 · 证据：net-facts「传输层」（Host2/Client2 错码 → `pairing code mismatch`，正确码 connected RTT 1.1 ms；`test_net_handshake`） · commit a3ebf0f / b6ac40b
 - [x] `net`：可靠有序 + 不可靠最新双通道、ACK 位图、RTO、分片重组、`F_CLOSE`、多对端表、全部有界队列 —— 2026-10-26 · 证据：net-facts「传输层」（`test_net_transport` 20% 丢包 / 重复 / 乱序；Host 同时两条链路；leave → Host 1 s 内 F_CLOSE） · commit a3ebf0f / b6ac40b
-- [ ] `coop`：typed 位掩码增量快照 + 名字表 + 预分配 `FrameSnapshot`
+- [x] `coop`：typed 位掩码增量快照 + 名字表 + 预分配 `FrameSnapshot` —— 2026-10-26 · 证据：`test_net_codec`（全量 / 增量 / 删除 / 截断）+ net-facts「P2 首次联机切片」（Host seq 319 / acked 318、badSnaps 0） · commit 096b186 / 5304e2c
 - [ ] `coop`：session / world_model / host capture / client takeover · apply · presenter · vitals
 - [ ] `coop/entities`：enemy / enemy_dyn / lily / worldobj / story / pickup 六个 `IEntityAdapter`
 - [ ] `guard`：结算拦截（DoDamage / 技能伤害）、`IsPlayer` 跳板、`SaveGame/SaveGameAsync` 存档保护、碰撞 / tick 原语闸 + 激活闸、回放窗口
-- [ ] 动作通道：`AbilityLaunchFromDesc` pre 取参 → 可靠下发 → Client 同入口重放（幂等 + 值域校验）
+- [x] 动作通道：`AbilityLaunchFromDesc` pre 取参 → 可靠下发 → Client 同入口重放（幂等 + 值域校验） —— 2026-10-26 · 证据：net-facts「动作通道」（captured 38 / replayed 38 / rejected 0） · commit 1693017
 - [ ] 远程座位：kind=network 同构座位、500 ms 停滞松键、`map/mapReady` 跟图闸门、晚加入 / 断线重连保留座位
 - [ ] 客人进度与构筑归属（FR-NET-2c）+ Client 原版档只读
 - [ ] 客人装备通路（F2.10）
 - [ ] 管理器「联机」页（F2.1）+ FR-NET-8 版本一致 / 拒绝原因 / Full
 - [ ] Client 相机与伴随体规则（FR-NET-3c）、本地座位压制（FR-NET-3d）、Client 原版 HUD 显示 Host 数值
-- [ ] CTest：typed 编解码边界 / 传输状态机 / 握手（只此三类）
+- [x] CTest：typed 编解码边界 / 传输状态机 / 握手（只此三类） —— 2026-10-26 · 证据：`build.bat base test` 7/7 通过（test_net_codec / test_net_transport / test_net_handshake） · commit a3ebf0f / 096b186 / 5304e2c
 
 ### P2 同图联机 —— 门槛（Host2 / Client2）
 - [ ] G1 Client 无 AI 决策：三闸 + 1 Hz 复检计数可观测，泄漏 0
-- [ ] G2 客人输入经 Host 原版管线（动画序列取证）
+- [x] G2 客人输入经 Host 原版管线（动画序列取证） —— 2026-10-26 · 证据：net-facts「P2 首次联机切片」G2（idle → run → jump_down → idle；攻击 → summon_DEFAULT_A 击杀 3 敌） · commit f5dfef7 / bb5630f
 - [ ] G3 世界一致：敌人数量 / 位置 ≤5 UU / HP、门、宝箱、可破坏物（Client ⊆ Host）、剧情旗标、Boss 窗口
 - [ ] G4 60 / 144 / 波动三档帧时间 + 截图可见 Spine 动画与弹体
 - [ ] 晚加入
