@@ -45,6 +45,7 @@ struct Pending { // a seat waiting for its background map
 std::vector<Pending> g_pending;
 std::uint64_t g_moves = 0, g_loads = 0, g_unloads = 0;
 std::string g_last;
+std::unordered_map<std::int64_t, std::string> g_seat_tag;
 
 struct Door {
     ObjHandle handle;
@@ -131,6 +132,7 @@ void move_seat(std::int64_t seat, const Door& d) {
     for (auto& p : g_pending)
         if (p.seat == seat) return;
     g_pending.push_back({seat, k, d.tag});
+    g_seat_tag[seat] = d.tag;
     g_last = std::format("P{} -> {} (background slot {}, loading)", seat, d.dest, k);
 }
 
@@ -154,6 +156,11 @@ std::string map_id(int slot) {
 }
 
 float offset(int slot) { return slot > 0 ? slot * kSlotY : 0.0f; }
+
+std::string tag_of_seat(std::int64_t seat) {
+    auto it = g_seat_tag.find(seat);
+    return it == g_seat_tag.end() ? std::string{} : it->second;
+}
 
 void tick(std::int64_t now_us) {
     static clock::Cadence every(250);

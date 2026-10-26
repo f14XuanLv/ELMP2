@@ -21,7 +21,8 @@ constexpr float kBand = 150000.0f;
 int slot_of_y(float y);                         // 0 = foreground, k = background slot, -1 = outside every band
 int slot_of_seat(std::int64_t seat);            // slot the seat's pawn stands in (-1 none)
 std::string map_id(int slot);                   // "" for an unused slot
-float offset(int slot);                         // Y offset of the slot (0 for the foreground)
+float offset(int slot);
+std::string tag_of_seat(std::int64_t seat);      // PlayerStart tag of the seat's last move into a background map                         // Y offset of the slot (0 for the foreground)
 void tick(std::int64_t now_us);                 // host: door polling, readiness, grace unloads
 void before_foreground_switch(const std::string& target_map); // host P1 is about to load target_map
 void reset();

@@ -247,33 +247,56 @@ void send_acts() {
     g_pending.clear();
 }
 
+// Per-peer view (P3, coop/maps): a peer receives the rows of the map its seat stands in, in that map's local
+// coordinates (background slot k is captured at Y +300000·k). World rows are name keyed and kept whole.
+template <class Sec>
+void band(const Sec& in, Sec& out, int slot, float off) {
+    out.clear();
+    for (const auto& r : in.view())
+        if (maps::slot_of_y(r.y) == slot)
+            if (auto* o = out.add(r.key)) *o = r, o->y -= off;
+}
+
+std::unique_ptr<snap::Frame> g_view = std::make_unique<snap::Frame>();
+
 void send_snapshots() {
     for (auto& [id, p] : g_peers) {
         if (!p.slot) continue;
-        g_frame->seq = ++p.seq;
-        g_frame->me = static_cast<std::uint8_t>(p.slot);
+        const int slot = std::max(0, maps::slot_of_seat(p.slot));
+        const float off = maps::offset(slot);
+        auto& v = *g_view;
+        v.seq = ++p.seq;
+        v.t_ms = g_frame->t_ms;
+        v.epoch = g_frame->epoch;
+        v.me = static_cast<std::uint8_t>(p.slot);
+        v.map = slot == 0 ? g_frame->map : name(maps::map_id(slot));
+        band(g_frame->l, v.l, slot, off);
+        band(g_frame->e, v.e, slot, off);
+        band(g_frame->ed, v.ed, slot, off);
+        band(g_frame->pk, v.pk, slot, off);
+        v.w = g_frame->w;
         const snap::Frame* base = nullptr;
         if (p.acked) {
             const auto& b = (*p.ring)[p.acked % kRing];
             if (b.seq == p.acked) base = &b;
         }
-        const auto n = snap::encode(*g_frame, base, base ? p.acked : 0, g_buf);
-        (*p.ring)[p.seq % kRing] = *g_frame;
+        const auto n = snap::encode(v, base, base ? p.acked : 0, g_buf);
+        (*p.ring)[p.seq % kRing] = v;
         if (n) {
             coop::send_unreliable(id, proto::kSnapStream, std::span(g_buf.data(), n));
             ++c_snaps;
         }
-        if (p.map_sent != g_frame->map) { // follow the host map (client replies MapReady)
-            p.map_sent = g_frame->map;
-            std::string tag;
-            if (auto* wl = world::world_loader())
-                if (auto* prop = reflect::find_property(static_cast<ue::UStruct*>(wl->GetClassPrivate()), L"PlayerStartTag"))
-                    tag = ue::utf8(*reinterpret_cast<const ue::FName*>(reinterpret_cast<const std::uint8_t*>(wl) + prop->GetOffset_Internal()));
-            send_rel(id, proto::encode(proto::MapMsg{g_frame->map, tag}, g_buf));
+        if (p.map_sent != v.map) { // follow the seat's map (client replies MapReady)
+            p.map_sent = v.map;
+            std::string tag = slot == 0 ? std::string{} : maps::tag_of_seat(p.slot);
+            if (slot == 0)
+                if (auto* wl = world::world_loader())
+                    if (auto* prop = reflect::find_property(static_cast<ue::UStruct*>(wl->GetClassPrivate()), L"PlayerStartTag"))
+                        tag = ue::utf8(*reinterpret_cast<const ue::FName*>(reinterpret_cast<const std::uint8_t*>(wl) + prop->GetOffset_Internal()));
+            send_rel(id, proto::encode(proto::MapMsg{v.map, tag}, g_buf));
         }
     }
 }
-
 void on_connected(std::uint32_t peer) {
     auto& p = g_peers[peer];
     p.id = peer;
