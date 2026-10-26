@@ -15,6 +15,7 @@ add_library(elmp_base STATIC
     net/crypto.cpp
     net/transport.cpp
     net/endpoint.cpp
+    net/snapshot.cpp
 )
 target_include_directories(elmp_base PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${ELMP_GENERATED_DIR})
 target_compile_definitions(elmp_base PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
