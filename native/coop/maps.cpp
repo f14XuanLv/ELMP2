@@ -172,6 +172,28 @@ const std::vector<std::string>* boss_maps() {
 bool boss_in(int slot) {
     const auto* bosses = boss_maps();
     if (!bosses) return true;
+    // an uncleared boss spawn point (BP_EnemySpawnPoint_Boss_C): the boss itself only appears through the
+    // room's event, which background instances do not load (village_10, 2026-10-27)
+    static reflect::FuncRef is_cleared =
+        reflect::Resolver("ClearableComponent", reflect::find_class(L"/Script/Zenith.ClearableComponent")).func(L"IsCleared", 0);
+    static ObjHandle clear_cls = ObjHandle::of(reflect::find_object(L"/Script/Zenith.ClearableComponent"));
+    const auto* s = core::schema::script();
+    for (const auto& e : registry::bucket(registry::Kind::SpawnPoint)) {
+        auto* a = e.handle.get();
+        const auto at = a ? core::location(a) : std::nullopt;
+        if (!at || slot_of_y(at->y) != slot || registry::class_name(e.class_id).find("Boss") == std::string::npos) continue;
+        bool cleared = false;
+        if (s && is_cleared.ok()) {
+            reflect::Frame f(s->actor_component_by_class);
+            f.arg(0, clear_cls.get());
+            if (f.invoke(a))
+                if (auto* cc = f.ret<ue::UObject*>(); ue::alive(cc)) {
+                    reflect::Frame q(is_cleared);
+                    cleared = q.invoke(cc) && q.ret_bool();
+                }
+        }
+        if (!cleared) return true;
+    }
     for (const auto& e : registry::bucket(registry::Kind::Enemy)) {
         auto* a = e.handle.get();
         const auto at = a ? core::location(a) : std::nullopt;
@@ -352,3 +374,8 @@ std::string describe() {
 }
 
 } // namespace elmp::coop::maps
+
+namespace elmp::coop::maps {
+bool boss_room(float y) { return boss_in(slot_of_y(y)); }
+} // namespace elmp::coop::maps
+
