@@ -56,7 +56,8 @@ using LaunchFn = UObject*(__fastcall*)(UObject*, const std::uint8_t*, const std:
 LaunchFn o_launch{};
 void (*g_sink)(const Launch&) = nullptr;
 bool g_installed = false, g_failed = false;
-std::uint64_t g_captured = 0, g_replayed = 0, g_rejected = 0;
+std::uint64_t g_captured = 0, g_replayed = 0, g_rejected = 0, g_capped = 0;
+constexpr float kReplayLifeSpan = 2.0f; // s; P2 decision (host-side end events would be exact)
 
 UObject* __fastcall d_launch(UObject* comp, const std::uint8_t* desc, const std::uint8_t* offset) {
     if (g_sink && desc && offset && ue::on_game_thread() && layout().ok) {
@@ -142,12 +143,22 @@ bool replay(ue::UObject* enemy, const net::proto::Act& act, const std::string& c
     g_l.follow_attach.write_bool(desc, act.flags & 2);
     g_l.ffa.write_bool(desc, act.flags & 4);
     if (!f.invoke(comp)) return fail("invoke");
+    // The host ends an ability from the enemy's own timeline / AI, which does not run on the client: without
+    // a cap every replayed hitbox lived forever (586 alive after a few minutes vs 7 on the host; each enemy
+    // move then dragged them along — 1.3 ms per position write). Cap the replayed actor's lifetime.
+    static reflect::FuncRef life = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).func(L"SetLifeSpan", 1);
+    if (auto* spawned = f.ret<ue::UObject*>(); life.ok() && ue::alive(spawned)) {
+        reflect::Frame lf(life);
+        lf.arg(0, kReplayLifeSpan);
+        lf.invoke(spawned);
+        ++g_capped;
+    }
     ++g_replayed;
     return true;
 }
 
 std::string describe() {
-    return std::format("ability: hook={} captured={} replayed={} rejected={}\n", g_installed ? "armed" : (g_failed ? "failed" : "off"), g_captured, g_replayed, g_rejected);
+    return std::format("ability: hook={} captured={} replayed={} rejected={} lifeCapped={}\n", g_installed ? "armed" : (g_failed ? "failed" : "off"), g_captured, g_replayed, g_rejected, g_capped);
 }
 
 } // namespace elmp::coop::ability
