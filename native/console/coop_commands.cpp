@@ -38,7 +38,7 @@ void lan_cmd(Args a, std::string& out) {
         coop::leave("left by command");
         out += "left\n";
     } else if (sub == "trace" && a.size() > 1) {
-        out += coop::client::trace(a[1]) + "\n";
+        out += (coop::role() == coop::Role::Host ? coop::host::trace(a[1]) : coop::client::trace(a[1])) + "\n";
     } else if (sub == "status") {
         out += coop::describe();
         if (coop::role() == coop::Role::Host) out += coop::host::describe();

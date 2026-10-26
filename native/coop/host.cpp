@@ -69,6 +69,8 @@ proto::NameTable g_names;
 std::unique_ptr<snap::Frame> g_frame = std::make_unique<snap::Frame>();
 std::array<std::uint8_t, 64 * 1024> g_buf;
 std::uint16_t g_epoch = 1;
+std::string g_trace_name;
+std::vector<float> g_trace;
 reflect::PropRef g_spawn_point;
 bool g_resolved = false;
 metrics::Counter& c_snaps = metrics::counter("coop.host.snapshots");
@@ -208,9 +210,11 @@ void capture(std::int64_t now_us) {
             auto* enemy = e.handle.get();
             auto* sp = enemy ? g_spawn_point.object(enemy) : nullptr;
             if (!sp) continue; // dynamic enemies: section ed (adapter enemy_dyn)
-            auto* row = g_frame->e.add(name(ue::utf8_name(sp)));
+            const auto spn = ue::utf8_name(sp);
+            auto* row = g_frame->e.add(name(spn));
             if (!row) break;
             if (auto at = core::location(enemy)) row->x = at->x, row->y = at->y, row->z = at->z;
+            if (spn == g_trace_name && g_trace.size() < 240) g_trace.push_back(row->y); // Dev: raw host Y per frame
             if (auto* hp = s->zc_hp.object(enemy)) {
                 const auto cur = s->hp_curr.read<std::int32_t>(hp);
                 row->hp = static_cast<std::uint16_t>(std::max(0, cur));
@@ -427,6 +431,14 @@ void stop() {
 }
 
 } // namespace
+
+std::string trace(const std::string& name) {
+    std::string out;
+    for (float y : g_trace) out += std::format("{:.1f} ", y);
+    g_trace_name = name;
+    g_trace.clear();
+    return out.empty() ? "(tracing " + name + ")" : out;
+}
 
 std::string describe() {
     std::string out = std::format("host: peers={} parked={} names={} epoch={} actsSent={} actsDropped={}\n", g_peers.size(), g_parked.size(), g_names.size(), g_epoch,
