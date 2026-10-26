@@ -103,8 +103,8 @@
 - [x] Host P1 死亡重生 / 切图时 Client 不把卸载当死亡 —— 2026-10-26 · 证据：net-facts「Host P1 死亡重生不误判」 · commit 本提交
 - [x] 客人离开后 Host 本地 P1 数值还原 —— 2026-10-26 · 证据：net-facts「客人主动离开」 · commit 本提交
 - [x] 联机 PvP（命中门 + 倍率 + 击退） —— 2026-10-26 · 证据：net-facts「联机 PvP」 · commit 1f22913 / 本提交
-- [ ] §7.2 矩阵「Host 上远程座位」列
-- [ ] §7.2 矩阵「Client 副本」列
+- [x] §7.2 矩阵「Host 上远程座位」列 —— 2026-10-27 · 证据：net-facts「§7.2 远程座位列：interact」「trigger.world + Client 列」「pickup 远程座位」「travel / rest 远程座位」（story 以机制证据，Host2 存档无未消耗剧情触发器） · commit 本提交 / interact 复查闸门 / 规则 1 排除网络座位
+- [x] §7.2 矩阵「Client 副本」列 —— 2026-10-27 · 证据：net-facts「§7.2 Client 副本列」 · commit 本提交 / P1 呈现模式
 - [x] 性能：Host+1 客人 ELMP P99 < 1.0 ms；Client 呈现 P99 < 1.0 ms；无会话时 G0 仍成立（`g0.reflect_calls = 0`，对裸 UE4SS P99 差 < 0.2 ms） —— 2026-10-26 · 证据：net-facts「性能（Host + 1 客人）」（Host P99 426 µs、Client P99 147 µs、g0.reflect_calls 0） · commit 本提交
 - [ ] P2 阶段报告 + 需求树 §7 追加实施决定 + README「当前阶段」
 
