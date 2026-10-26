@@ -27,6 +27,7 @@
 #include "party/save_scope.h"
 #include "party/storage.h"
 #include "core/catalog.h"
+#include "coop/session.h"
 #include "core/hitrules.h"
 #include "overlay/render.h"
 #include "pvp/hitgate.h"
@@ -115,6 +116,7 @@ public:
     }
 
     ~ElmpMod() override {
+        coop::leave("shutdown");
         frame::uninstall();
         overlay::uninstall();
         console::uninstall();
@@ -162,9 +164,11 @@ public:
         party::storage::install();
         console::register_core_commands();
         console::register_party_commands();
+        console::register_coop_commands();
+        coop::install();
         // An open ELMP window is activity too (it pauses the world and polls devices).
         frame::set_activity([] { return core::active() > 0 || party::manager::is_open() || party::menu_ctrl::open_slot() != 0 || party::save_scope::busy(); },
-                            nullptr);
+                            [] { return coop::active(); });
         frame::add_phase("lifecycle", [](const frame::Tick& t) { lifecycle::step(t.now_us); });
         frame::add_phase("init", deferred_init, [] { return !g_settings_loaded; }, 250);
         frame::add_phase("registry.drain", [](const frame::Tick&) { registry::drain(); });

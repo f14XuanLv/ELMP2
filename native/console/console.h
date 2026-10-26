@@ -24,5 +24,6 @@ void uninstall();
 void register_p0_commands();   // commands.cpp
 void register_core_commands(); // core_commands.cpp
 void register_party_commands(); // party_commands.cpp
+void register_coop_commands();  // coop_commands.cpp
 
 } // namespace elmp::console

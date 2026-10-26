@@ -73,6 +73,8 @@ set(ELMP_MOD_SOURCES
     console/commands.cpp
     console/core_commands.cpp
     console/party_commands.cpp
+    console/coop_commands.cpp
+    coop/session.cpp
     dev/lua_bridge.cpp
     mod/dllmain.cpp
 )
