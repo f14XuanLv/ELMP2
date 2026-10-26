@@ -5,7 +5,7 @@
 > 只有在全部完成、或某阶段门槛经充分尝试仍无法达成（写明尝试、证据、剩余选项）时才报告 goal 完成或 blocked。需要我决定的产品问题：先按需求树已有定案与 fail closed 默认继续其他工作，把问题集中列出，不要停下等。
 > **进度以 §7 的勾选表为准**：每完成一项就在该行打勾并补「日期 · 证据（kb 节 / 截图 / 命令输出）· commit」；下面「当前进行中」一行同步更新。goal 完成 = §7 全部打勾。
 
-**当前进行中**：§2 P2（2026-10-26）。P2 已勾：net×2、快照、guard、动作通道、远程座位、构筑归属、CTest、G1、G2、晚加入、断线重连、P1 死亡不误判、客人离开还原、PvP、性能。未勾：session/world_model 行、entities 六 adapter（enemy/lily/worldobj 可破坏物已做；交互物待测；enemy_dyn / story / pickup 未做）、装备通路（下一步：Client 1 Hz 比对本地装备 → EquipRequest → Host apply → EquipResult）、联机页 + 版本拒绝原因 + Full、相机/HUD、G3（门/宝箱/剧情/Boss）、G4 帧时间三档 + 截图、§7.2 两列、P2 报告。代码：`native/net/*`、`native/coop/{session,host,client,ability}`、`native/guard/guard`。实例：Host2/Client2 运行中、church_08、会话已连（码 4821 / UDP 7777）；备份 `%TEMP%\elmp_bak_{host,client}_p2`；脚本 `%TEMP%\elmp_redeploy.ps1`、`elmp_p2setup.ps1`（church_07 + P2 近史莱姆）、`elmp_p2late.ps1`、`elmp_epos2.lua`；崩溃符号化 `%TEMP%\symaddr.py <main.dll> <off…>`。
+**当前进行中**：§2 P2（2026-10-26）。P2 已勾：net×2、快照、guard、动作通道、远程座位、构筑归属、CTest、G1、G2、晚加入、断线重连、P1 死亡不误判、客人离开还原、PvP、性能。未勾：session/world_model 行、entities 六 adapter（enemy/lily/worldobj 可破坏物已做；交互物待测；enemy_dyn / story / pickup 未做）、联机页 + 版本拒绝原因 + Full、相机/HUD、G3（门/宝箱/剧情/Boss）、G4 帧时间三档 + 截图、§7.2 两列、P2 报告。代码：`native/net/*`、`native/coop/{session,host,client,ability}`、`native/guard/guard`。实例：Host2/Client2 运行中、church_08、会话已连（码 4821 / UDP 7777）；备份 `%TEMP%\elmp_bak_{host,client}_p2`；脚本 `%TEMP%\elmp_redeploy.ps1`、`elmp_p2setup.ps1`（church_07 + P2 近史莱姆）、`elmp_p2late.ps1`、`elmp_epos2.lua`；崩溃符号化 `%TEMP%\symaddr.py <main.dll> <off…>`。
 **需要用户**：（无；P2 自行定案已记 net-facts：本地 P1 预测 + >150 UU 回拉；Client 离开会话回标题；可破坏物 Client 只隐藏不回放破坏）
 
 ## 0. 恢复上下文（每轮先读）
@@ -88,7 +88,7 @@
 - [x] 动作通道：`AbilityLaunchFromDesc` pre 取参 → 可靠下发 → Client 同入口重放（幂等 + 值域校验） —— 2026-10-26 · 证据：net-facts「动作通道」（captured 38 / replayed 38 / rejected 0） · commit 1693017
 - [x] 远程座位：kind=network 同构座位、500 ms 停滞松键、`map/mapReady` 跟图闸门、晚加入 / 断线重连保留座位 —— 2026-10-26 · 证据：net-facts「500 ms 停滞松键」「晚加入 + G1 复检」「非主动断线重连」 · commit c79f4ca / 9b58b34 / 1ec1742
 - [x] 客人进度与构筑归属（FR-NET-2c）+ Client 原版档只读 —— 2026-10-26 · 证据：net-facts「客人构筑归属」「guard 逐项」 · commit 本提交
-- [ ] 客人装备通路（F2.10）
+- [x] 客人装备通路（F2.10） —— 2026-10-26 · 证据：net-facts「客人装备通路」 · commit 本提交
 - [ ] 管理器「联机」页（F2.1）+ FR-NET-8 版本一致 / 拒绝原因 / Full
 - [ ] Client 相机与伴随体规则（FR-NET-3c）、本地座位压制（FR-NET-3d）、Client 原版 HUD 显示 Host 数值
 - [x] CTest：typed 编解码边界 / 传输状态机 / 握手（只此三类） —— 2026-10-26 · 证据：`build.bat base test` 7/7 通过（test_net_codec / test_net_transport / test_net_handshake） · commit a3ebf0f / 096b186 / 5304e2c
