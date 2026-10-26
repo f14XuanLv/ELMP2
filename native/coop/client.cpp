@@ -464,6 +464,9 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
     }
     case proto::Msg::Act: {
         proto::Act a;
+        // after leave (stop() ran in this same session tick, enemies released, OpenLevel queued) the inbox
+        // can still hold acts: never replay outside a seated session (AV 0x130 in LaunchAbilityFromDescription)
+        if (!g_seat) return;
         if (!proto::decode(msg, a) || a.dyn) return void(++g_act_bad);
         auto& last = g_act_last[a.net_id];
         if (a.seq <= last) return; // idempotent per enemy
@@ -480,6 +483,10 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         bool loading = true, ready = false;
         if (!enemy || lifecycle::state() != lifecycle::State::Settled || !world::loader_flags(loading, ready) || loading || !ready ||
             enemy->HasAnyFlags(RC::Unreal::RF_BeginDestroyed))
+            return void(++g_act_absent);
+        // only enemies we have taken over and still present (a hidden / host-dead copy, or one not taken yet,
+        // has no valid presentation state for an ability)
+        if (auto t = g_taken.find(*name); t == g_taken.end() || t->second.enemy.get() != enemy || t->second.hidden || t->second.killed)
             return void(++g_act_absent);
         std::string why;
         const auto r0 = clock::now_us();
