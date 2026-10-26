@@ -321,6 +321,30 @@ void draw_window(const Manager& m, double now) {
                 else ImGui::TextDisabled("P1 uses the game's own key settings. Select another player to edit their key bindings.");
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem("Online")) {
+                static char code[32] = "", addr[64] = "127.0.0.1";
+                static int port = 7777;
+                ImGui::TextUnformatted(m.net_status.c_str());
+                if (!m.net_error.view().empty()) ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.4f, 1), "Last: %s", m.net_error.c_str());
+                ImGui::Separator();
+                ImGui::BeginDisabled(m.net_role != 0);
+                ImGui::SetNextItemWidth(200 * s);
+                ImGui::InputText("Pairing code", code, sizeof(code));
+                ImGui::SetNextItemWidth(200 * s);
+                ImGui::InputInt("UDP port", &port);
+                port = std::clamp(port, 1, 65535);
+                if (ImGui::Button("Host")) send(Req::NetHost, 0, 0, std::format("{}|{}|", code, port).c_str());
+                ImGui::Separator();
+                ImGui::SetNextItemWidth(200 * s);
+                ImGui::InputText("Host address", addr, sizeof(addr));
+                if (ImGui::Button("Join")) send(Req::NetJoin, 0, 0, std::format("{}|{}|{}", code, port, addr).c_str());
+                ImGui::EndDisabled();
+                ImGui::BeginDisabled(m.net_role == 0);
+                if (ImGui::Button("Leave")) send(Req::NetLeave);
+                ImGui::EndDisabled();
+                ImGui::TextDisabled("Both players need the same game, ELMP build and data; the joiner sees the reason if not.");
+                ImGui::EndTabItem();
+            }
             if (ImGui::BeginTabItem("Rules")) {
                 draw_rules(m.rules, s);
                 ImGui::EndTabItem();

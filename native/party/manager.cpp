@@ -1,5 +1,7 @@
 #include "party/manager.h"
 
+#include "coop/session.h"
+
 #include "party/devices.h"
 #include "party/menu_ctrl.h"
 #include "party/seat.h"
@@ -119,6 +121,13 @@ void fill() {
     const auto sv = storage::view();
     g_m.storage_id.set(sv.id);
     g_m.storage_message.set(sv.message);
+    g_m.net_role = static_cast<int>(coop::role());
+    {
+        auto d = coop::describe();
+        if (const auto nl = d.find('\n'); nl != std::string::npos) d.resize(nl);
+        g_m.net_status.set(d);
+        g_m.net_error.set(coop::last_error());
+    }
     g_m.storage_blocked = sv.blocked;
     g_m.storage_can_reuse = sv.can_reuse;
     g_dirty = true;
@@ -225,6 +234,22 @@ void handle(const overlay::Request& r) {
         else message(r.kind == Req::StorageNew ? "New PX data started for this save" : "Previous PX data reused");
         fill();
         break;
+    case Req::NetHost:
+    case Req::NetJoin:
+    case Req::NetLeave: { // F2.1: same functions as `elmp lan`
+        const std::string t(r.text.view());
+        const auto a = t.find('|'), b = a == std::string::npos ? a : t.find('|', a + 1);
+        const std::string code = t.substr(0, a);
+        const auto port = static_cast<std::uint16_t>(a == std::string::npos ? 7777 : std::max(1, std::atoi(t.substr(a + 1, b - a - 1).c_str())));
+        const std::string addr = b == std::string::npos ? "" : t.substr(b + 1);
+        std::string e;
+        if (r.kind == Req::NetHost) e = coop::start_host(port, code, 3);
+        else if (r.kind == Req::NetJoin) e = coop::start_join(addr, port, code);
+        else coop::leave("left from the online page");
+        if (!e.empty()) message("Online: " + e);
+        fill();
+        break;
+    }
     }
 }
 

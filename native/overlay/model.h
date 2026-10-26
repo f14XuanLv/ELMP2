@@ -118,6 +118,8 @@ struct Manager {
     Text<16> storage_id;
     Text<240> storage_message;
     bool storage_blocked = false, storage_can_reuse = false;
+    int net_role = 0; // 0 none, 1 host, 2 client (F2.1 online page)
+    Text<240> net_status, net_error;
     Text<128> message;
     double message_until = 0;
 };
@@ -125,6 +127,7 @@ struct Manager {
 enum class Req : std::uint8_t {
     ManagerOpen, ManagerClose, AddPlayer, RemovePlayer, Skin, Team, Assign, Mute, Capture, CancelCapture, ResetBindings, Rule,
     StorageNew, StorageReuse,
+    NetHost, NetJoin, NetLeave, // text = "code|port|addr"
 };
 struct Request {
     Req kind{};
