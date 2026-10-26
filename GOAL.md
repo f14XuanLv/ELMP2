@@ -115,7 +115,7 @@
 - [x] `world/map_context`（`0xCAAFF0` + `0xC997B0` 上下文窗口） —— 2026-10-27 · 证据：net-facts「world/map_context」（ClearedActors 键 map_village_04、remapped 51） · commit 本提交前两提交
 - [x] `coop/host/maps` 生命周期（首入加载、末离 10 s 宽限卸载、P1 进入先卸载再原版切图） —— 2026-10-27 · 证据：net-facts「coop/maps 首测」「后台图战斗 / 记账 / 宽限卸载 / Client 跟图」「P1 进入后台图的移交」 · commit 本提交及前
 - [x] 坐标按「图 id + 局部坐标」传输 + 兴趣过滤；远程座位切图只切自己的实例 —— 2026-10-27 · 证据：net-facts「coop/maps 首测」「后台图战斗 / 记账 / 宽限卸载 / Client 跟图」 · commit 本提交及前
-- [ ] 后台图 Boss 房 fail closed（§7.1.3）；`OnOpenNewArea` 对 PX 的 PC 抑制
+- [x] 后台图 Boss 房 fail closed（§7.1.3）；`OnOpenNewArea` 对 PX 的 PC 抑制 —— 2026-10-27 · 证据：net-facts「后台图 Boss 房 fail closed + OnOpenNewArea」（OnOpenNewArea 实测原版不对 PX 的 PC 发出，0 次） · commit 本提交及前
 - [ ] §7.3 的 12 个 `CurrentGameMapID` 读者逐个 IDA 分类并写入 kb（`0xC98210 0xC98D80 0xC99770 0xC9A9F0 0xCA2820 0xCB6240 0xCCDD10 0xCCE900 0xCD5060 0xCD52D0 0xCDC950 0xCDD110`）
 
 ### P3 多客人 + 多地图 —— 门槛
