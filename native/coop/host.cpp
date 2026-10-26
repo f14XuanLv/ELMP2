@@ -12,6 +12,7 @@
 #include "party/seat.h"
 
 #include "core/player.h"
+#include "core/profile.h"
 #include "core/schema.h"
 #include "core/skin.h"
 
@@ -26,6 +27,7 @@
 #include "net/snapshot.h"
 
 #include "base/clock.h"
+#include "base/json.h"
 #include "base/log.h"
 #include "base/metrics.h"
 
@@ -58,6 +60,7 @@ struct Peer {
     bool stalled = true;
     std::uint16_t map_sent = 0;
     std::uint16_t map_ready = 0;
+    std::string build_report;
 };
 
 std::map<std::uint32_t, Peer> g_peers;
@@ -331,11 +334,27 @@ void on_reliable(std::uint32_t peer, std::span<const std::uint8_t> msg) {
     case proto::Msg::Build: {
         proto::Json j;
         if (!proto::decode(msg, j)) return;
-        const auto k = j.text.find("\"guestKey\":\"");
-        if (k != std::string::npos) p.guest_key = j.text.substr(k + 12, std::min<std::size_t>(64, j.text.find('"', k + 12) - k - 12));
+        json::Value root;
+        if (!json::parse(j.text, root) || !root.is_object()) return;
+        if (const auto* k = root.get("guestKey"); k && k->is_string() && k->str.size() <= 64) p.guest_key = k->str;
+        const bool fresh_seat = !p.slot && !g_parked.contains(p.guest_key);
         if (auto e = seat_for(p); !e.empty()) {
             coop::send_reliable(peer, std::span(g_buf.data(), proto::encode(proto::Control{1, "no seat: " + e}, g_buf)));
             coop::kick(peer, "no seat: " + e);
+            break;
+        }
+        // FR-NET-2c: the guest's own equipment on a fresh seat (a reclaimed seat keeps what it had); progress
+        // stays the host's shared progress. Items the host's progress does not own are reported, not granted.
+        if (const auto* b = root.get("build"); b && fresh_seat) {
+            core::profile::Profile prof;
+            std::string err;
+            if (core::profile::from_json(*b, prof, &err)) {
+                const auto r = core::profile::apply(core::controller(p.slot), prof, false);
+                p.build_report = r.text();
+                log::info("coop: P{} guest build applied: {}", p.slot, p.build_report);
+            } else {
+                p.build_report = "bad build: " + err;
+            }
         }
         break;
     }
@@ -396,7 +415,7 @@ std::string describe() {
     std::string out = std::format("host: peers={} parked={} names={} epoch={} actsSent={} actsDropped={}\n", g_peers.size(), g_parked.size(), g_names.size(), g_epoch,
                                   g_acts_sent, g_acts_dropped) + ability::describe();
     for (const auto& [id, p] : g_peers)
-        out += std::format("  peer {} -> P{} key={} seq={} acked={} input={} mapReady={}\n", id, p.slot, p.guest_key, p.seq, p.acked, p.stalled ? "stalled" : "live", p.map_ready);
+        out += std::format("  peer {} -> P{} key={} seq={} acked={} input={} mapReady={} build=[{}]\n", id, p.slot, p.guest_key, p.seq, p.acked, p.stalled ? "stalled" : "live", p.map_ready, p.build_report);
     return out;
 }
 

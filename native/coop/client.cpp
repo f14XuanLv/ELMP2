@@ -12,6 +12,7 @@
 #include "guard/guard.h"
 
 #include "core/player.h"
+#include "core/profile.h"
 #include "core/schema.h"
 #include "core/spawn.h"
 
@@ -27,6 +28,7 @@
 #include "net/snapshot.h"
 
 #include "base/clock.h"
+#include "base/json.h"
 #include "base/log.h"
 #include "base/metrics.h"
 
@@ -414,8 +416,19 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
 
 void on_connected(std::uint32_t) {
     g_ring = std::make_unique<std::array<snap::Frame, kRing>>();
-    const auto key = guest_key();
-    coop::send_reliable(0, std::span(g_buf.data(), proto::encode(proto::Msg::Build, proto::Json{std::format("{{\"guestKey\":\"{}\"}}", key)}, g_buf)));
+    // FR-NET-2c: the guest brings its own build (equipment from its own save); progress / unlocks are the
+    // host's shared progress. Only equipment fields travel.
+    json::Value root = json::Value::object();
+    root.set("guestKey", guest_key());
+    if (auto prof = core::profile::read(world::p1_controller(), nullptr)) {
+        core::profile::Profile b;
+        b.spirits = prof->spirits;
+        b.summon_set = prof->summon_set;
+        if (prof->passives && prof->passives->equipped) b.passives = core::profile::Passives{prof->passives->equipped, std::nullopt, std::nullopt};
+        root.set("build", core::profile::to_json(b));
+    }
+    std::vector<std::uint8_t> big(proto::kMaxJson + 64);
+    if (const auto n = proto::encode(proto::Msg::Build, proto::Json{json::dump(root, 0)}, big)) coop::send_reliable(0, std::span(big.data(), n));
 }
 
 void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
