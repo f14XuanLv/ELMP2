@@ -132,6 +132,34 @@ void take(const std::string& name, ue::UObject* enemy) {
         f.arg_bool(0, false);
         f.invoke(enemy);
     }
+    // Freeze every component except presentation (v1 net-facts「会话与呈现」whitelist); the Spine state
+    // machine (SpineAnimationComponent) would otherwise overwrite track 0 every frame.
+    static reflect::FuncRef set_comp_tick;
+    static ObjHandle comp_cls;
+    if (!set_comp_tick.ok()) {
+        reflect::Resolver r("ActorComponent", reflect::find_class(L"/Script/Engine.ActorComponent"));
+        set_comp_tick = r.func(L"SetComponentTickEnabled", 1);
+        comp_cls = ObjHandle::of(reflect::find_object(L"/Script/Engine.ActorComponent"));
+    }
+    const auto* s = core::schema::script();
+    if (s && set_comp_tick.ok()) {
+        reflect::Frame f(s->actor_components_by_class);
+        f.arg(0, comp_cls.get());
+        if (f.invoke(enemy))
+            if (const auto* arr = static_cast<const reflect::RawArray*>(f.raw(s->actor_components_by_class.ret)); arr && arr->num >= 0 && arr->num <= 128) {
+                const auto* items = reinterpret_cast<ue::UObject* const*>(arr->data);
+                for (int i = 0; i < arr->num; ++i) {
+                    if (!ue::alive(items[i])) continue;
+                    const auto cls = ue::class_name_of(items[i]);
+                    if (cls == L"SpineSkeletonAnimationExComponent" || cls == L"SpineSkeletonRendererComponent" || cls == L"AbilityComponent" ||
+                        cls == L"SpineBoneFollowerComponent" || cls == L"SpineBoneComponent" || cls == L"ParticleSystemComponent" || cls == L"WidgetComponent")
+                        continue;
+                    reflect::Frame t(set_comp_tick);
+                    t.arg_bool(0, false);
+                    t.invoke(items[i]);
+                }
+            }
+    }
     g_taken[name] = {ObjHandle::of(enemy), ObjHandle::of(controller)};
 }
 
