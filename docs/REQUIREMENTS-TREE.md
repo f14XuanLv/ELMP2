@@ -428,6 +428,13 @@ ELMP 包零 Lua；对 Lua Mod 注入 C 函数；语法糖随 SDK 仓库。`elmp.
 8. **客人构筑**：新座位按客人自带装备字段（spirits / summonSet / passives.equipped）apply；解锁 / 等级 / 持有用 Host 共享进度；重连收回座位不覆盖。装备变更 1 Hz 比对上行（EquipRequest / EquipResult）。
 9. **G3 门 / 宝箱 / Boss 窗口**：Host2 存档无可用对象，门 / 宝箱以同一 `AInteractable` 通路 + Tip 实测代证；Boss 战按 §7.1.3 fail closed。
 
+### 7.18 P3 实施决定（2026-10-27）→ **[定，可复议]**
+1. **后台图槽位**：前台 = 槽 0；后台槽 1–3 = Y +300000·k，Y 带 ±150000 判定归属；槽满 fail closed。
+2. **网络座位从不触发原版门**（会切整个 Host 世界）；maps 按门盒轮询有 travel 权限的网络座位，目标是前台图则摆到前台 PlayerStart，否则后台加载并摆到实例的 PlayerStart。
+3. **P1 进入后台图**：后台实例就绪即清空其 PlayerStart 原版标签（防原版落点选中后台副本）；原版切图完成后座位按局部坐标移交到前台副本，再卸载后台。
+4. **快照按对端座位所在图过滤并平移**；不同图的 Host P1 / 其他座位不出现在该 Client。
+5. 后台图只加载 GEO / DESIGN / GAMEPLAY（不加载 AUDIO / EVENT / Map / Common_LIGHT：剧情事件 fail closed）。
+
 ---
 
 ## 8. 验收口径（继承并细化）
