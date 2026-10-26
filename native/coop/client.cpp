@@ -45,7 +45,8 @@ namespace proto = net::proto;
 constexpr std::size_t kRing = 32;
 
 struct Taken {
-    ObjHandle enemy, controller;
+    ObjHandle enemy, controller, spine;
+    std::uint16_t anim = 0;
 };
 
 std::uint8_t g_seat = 0;
@@ -156,6 +157,22 @@ void apply(const snap::Frame& f) {
             tp.invoke(enemy);
         }
         if (auto* hp = s->zc_hp.object(enemy)) *s->hp_curr.at<std::int32_t>(hp) = row.hp; // property write (no SetCurrHP in vanilla)
+        auto& t = g_taken[*name];
+        if (row.anim && row.anim != t.anim) { // pose: switch track 0 only on an animation change (§16)
+            const auto* anim = g_names.text(row.anim);
+            if (!t.spine.get()) {
+                static ObjHandle cls = ObjHandle::of(reflect::find_object(L"/Script/SpineExtensionPlugin.SpineSkeletonAnimationExComponent"));
+                reflect::Frame f(s->actor_component_by_class);
+                f.arg(0, cls.get());
+                if (f.invoke(enemy)) t.spine = ObjHandle::of(f.ret<ue::UObject*>());
+            }
+            if (auto* spine = t.spine.get(); spine && anim) {
+                reflect::Frame f(s->sp_set_animation);
+                f.arg(0, 0).arg_string(1, log::wide(*anim)).arg_bool(2, row.loop != 0);
+                f.invoke(spine);
+                t.anim = row.anim;
+            }
+        }
     }
     ++g_applied;
     h_apply.add(static_cast<double>(clock::now_us() - t0));

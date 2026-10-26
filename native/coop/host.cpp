@@ -31,6 +31,7 @@
 #include <format>
 #include <map>
 #include <memory>
+#include <unordered_map>
 
 namespace elmp::coop::host {
 
@@ -102,6 +103,34 @@ void lily_row(std::uint16_t key, ue::UObject* pawn, const core::schema::Script& 
     }
 }
 
+// Spine track 0 (stage 1 of §4: GetCurrent + getAnimationName / GetTrackTime / GetLoop via ProcessEvent;
+// the spine component is cached per enemy handle — invalidated when the handle dies).
+std::unordered_map<std::int32_t, std::pair<ObjHandle, ObjHandle>> g_spine; // enemy index → (enemy, spine comp)
+std::unordered_map<std::string, std::uint16_t> g_anim_ids;
+
+void pose(ue::UObject* enemy, const ObjHandle& h, snap::EnemyRow& row, const core::schema::Script& s) {
+    auto& c = g_spine[h.index];
+    if (c.first != h) {
+        static ObjHandle cls = ObjHandle::of(reflect::find_object(L"/Script/SpineExtensionPlugin.SpineSkeletonAnimationExComponent"));
+        reflect::Frame f(s.actor_component_by_class);
+        f.arg(0, cls.get());
+        c = {h, f.invoke(enemy) ? ObjHandle::of(f.ret<ue::UObject*>()) : ObjHandle{}};
+    }
+    auto* spine = c.second.get();
+    if (!spine) return;
+    reflect::Frame cur(s.sp_get_current);
+    cur.arg(0, 0);
+    if (!cur.invoke(spine)) return;
+    auto* entry = cur.ret<ue::UObject*>();
+    if (!ue::alive(entry)) return;
+    reflect::Frame nm(s.te_animation_name);
+    if (nm.invoke(entry)) row.anim = name(log::utf8(nm.ret_string()));
+    reflect::Frame t(s.te_track_time);
+    if (t.invoke(entry)) row.t = t.ret<float>();
+    reflect::Frame lp(s.te_loop);
+    if (lp.invoke(entry)) row.loop = lp.ret_bool();
+}
+
 void capture(std::int64_t now_us) {
     const auto t0 = clock::now_us();
     const auto* s = core::schema::script();
@@ -128,6 +157,7 @@ void capture(std::int64_t now_us) {
                 if (cur <= 0) row->flags |= 4; // dead only when the last sample says so (unload ≠ death)
             }
             row->type = e.class_id;
+            pose(enemy, e.handle, *row, *s);
         }
     h_capture.add(static_cast<double>(clock::now_us() - t0));
 }
