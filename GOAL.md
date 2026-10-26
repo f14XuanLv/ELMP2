@@ -137,6 +137,6 @@
 ### P5 发布
 - [x] README（安装 / 使用 / 功能 / 控制台命令 / 已知限制 / 架构）+ INSTALL.txt —— 2026-10-27 · 证据：README.md 各节、INSTALL.txt（打包模板） · commit db531f1 / 36b1e66 前一提交
 - [x] `docs/adr/0005-cpp-rewrite.md` 定稿（采纳状态与实际偏差） —— 2026-10-27 · 证据：docs/adr/0005-cpp-rewrite.md · commit db531f1
-- [ ] `elmp.json` 版本 ≥ 0.3.0；`build.bat package` 产出 `-shipping.zip`（零 `.lua` / `.pdb` / 义肢）与 `-dev.zip`
+- [x] `elmp.json` 版本 ≥ 0.3.0；`build.bat package` 产出 `-shipping.zip`（零 `.lua` / `.pdb` / 义肢）与 `-dev.zip` —— 2026-10-27 · 证据：`dist\ELMP-0.3.0-shipping.zip` 79 项（0 个 .lua、0 个 .pdb；非 data 项只有 main.dll / elmp.json / sdk/elmp_sdk.h / INSTALL.txt）、`dist\ELMP-0.3.0-dev.zip` 84 项 · commit 本提交
 - [ ] Shipping 构建三实例冒烟（本地多人 + 同图联机 + 后台图），结果进 kb
 - [ ] 最终报告（全部阶段汇总、遗留清单、实例最终状态）
