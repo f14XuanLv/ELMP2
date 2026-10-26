@@ -510,7 +510,12 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         if (!name || !cls) return void(++g_act_bad);
         auto it = g_index.find(*name);
         auto* enemy = it == g_index.end() ? nullptr : it->second.get();
-        if (!enemy) return void(++g_act_absent); // not streamed in locally
+        // not streamed in locally, or the local world is loading / tearing down (an act replayed while the
+        // client went back to the title crashed inside LaunchAbilityFromDescription: AV 0x130)
+        bool loading = true, ready = false;
+        if (!enemy || lifecycle::state() != lifecycle::State::Settled || !world::loader_flags(loading, ready) || loading || !ready ||
+            enemy->HasAnyFlags(RC::Unreal::RF_BeginDestroyed))
+            return void(++g_act_absent);
         std::string why;
         const auto r0 = clock::now_us();
         const bool ok = ability::replay(enemy, a, *cls, cs ? *cs : "", ca ? *ca : "", &why);
