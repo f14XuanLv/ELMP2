@@ -76,6 +76,7 @@ set(ELMP_MOD_SOURCES
     console/core_commands.cpp
     console/party_commands.cpp
     console/coop_commands.cpp
+    world/level_instance.cpp
     coop/session.cpp
     coop/host.cpp
     coop/client.cpp

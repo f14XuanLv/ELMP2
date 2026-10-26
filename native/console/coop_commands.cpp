@@ -6,6 +6,7 @@
 #include "coop/client.h"
 #include "coop/host.h"
 #include "coop/session.h"
+#include "world/level_instance.h"
 
 #include <charconv>
 #include <format>
@@ -37,6 +38,15 @@ void lan_cmd(Args a, std::string& out) {
     } else if (sub == "leave") {
         coop::leave("left by command");
         out += "left\n";
+    } else if (sub == "bg" && a.size() > 2 && a[1] == "load") { // Dev / P3: background map instance
+        const float y = a.size() > 3 ? static_cast<float>(std::atof(a[3].c_str())) : 300000.0f;
+        auto e = world::level_instance::load(a[2], y);
+        out += e.empty() ? std::format("loading {} at Y {:+.0f}\n", a[2], y) : "error: " + e + "\n";
+    } else if (sub == "bg" && a.size() > 2 && a[1] == "unload") {
+        world::level_instance::unload(a[2]);
+        out += "unloading " + a[2] + "\n";
+    } else if (sub == "bg") {
+        out += world::level_instance::describe();
     } else if (sub == "trace" && a.size() > 1) {
         out += (coop::role() == coop::Role::Host ? coop::host::trace(a[1]) : coop::client::trace(a[1])) + "\n";
     } else if (sub == "status") {
