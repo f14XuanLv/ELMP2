@@ -36,7 +36,9 @@
 
 **P3 多客人 + 多地图已完成（2026-10-27）**：`native/world/level_instance`（后台图子关卡以 `ELMP_BG_<mapId>__<Part>` 在 Y +300000·k 原生加载、map_context 两个 detour 让清除按所属图记账）、`native/coop/maps`（网络座位进门 → 前台或后台实例、10 s 宽限卸载、P1 进入后台图移交、Boss 房 fail closed）、快照按对端座位图过滤平移；两客人同图、满员 Full、第三实例 `client2`；控制台 `elmp lan bg load|unload|boss`。实测见 `docs/kb/net-facts.md`「P3 实测」及之后各节；实施决定见需求树 §7.18。
 
-**P4 猎人模式 + SDK（进行中）**。
+**P4 猎人模式 + SDK 已完成（2026-10-27）**：`native/modes/hunter`（`elmp hunter start|stop`：速通 = Host P1，猎人 = 其他座位，宽限 / 计时 / 胜负 / 8 s 入口复活 / 指南针）、`native/sdk`（C ABI `elmp_sdk.h` + 导出 `ELMP_GetApi`，Lua Mod 注入 `ELMP_*` C 函数，示例 `sdk/examples/LilyFollower`、`LilyEnemy`）。实测见 `docs/kb/net-facts.md`「P4 实测」；实施决定见需求树 §7.19。
+
+**P5 发布（进行中）**。
 
 ## 与现仓库的关系
 

@@ -437,6 +437,12 @@ ELMP 包零 Lua；对 Lua Mod 注入 C 函数；语法糖随 SDK 仓库。`elmp.
 6. **Boss 房识别**：后台实例内未清除的 `BP_EnemySpawnPoint_Boss_C` 或 Boss id 类活敌人 → 拒绝到达；`DT_RecollectionBossData` 列的重温竞技场整图拒绝；表不可读 → 一律拒绝后台移动。
 7. **已知限制（接受）**：后台图对象收到的切图 / 就绪 / 加载中事件是前台语义（AbilityComponent 在前台切图时清理生成物）；OnOpenNewArea 原版不对 PX 的 PC 发出，不另加抑制。
 
+### 7.19 P4 实施决定（2026-10-27）→ **[定，可复议]**
+1. **猎人选项**：`elmp hunter start [kills N] [time S] [grace S] [respawn S] [target boss|<mapId>] [progress mirror|preset]`，默认 kills 1 / time 0 / grace 15 / respawn 8 / target boss / mirror；猎人 = 开局时的全部座位（≤4），rest 闸门关、travel 开。
+2. **Boss 目标**：开局（及每次前台换图）记下前台图未清除的 Boss 出生点，任一变为已清除 → 速通胜。
+3. **指南针**：同图 unner <方向> <距离>，异图 unner in <mapId>；客人经 Control code 10 横幅显示。
+4. **SDK 身份**：调用方 = Mod 目录名，须带 elmp.json（elmpApi 1 + slots）；最多 16 个 SDK Mod；Lua 事件用 `ELMP_PollEvents` 轮询（JSON），C++ 用 `subscribe` 回调（帧泵末尾派发）。
+
 ---
 
 ## 8. 验收口径（继承并细化）

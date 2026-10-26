@@ -106,3 +106,12 @@
 
 - **sdk**（2026-10-27，Dev2 槽 0 church_08）：`ELMP_GetApi` 由 main.dll 导出（dumpbin：ordinal 1 RVA 0x10EE10，Shipping 构建）；每个声明了 `Mods/<name>/elmp.json` 的 Mod 得到自己的 `ElmpApi_v1`（模板函数表绑定 Mod 下标，最多 16 个）。启动扫描：`LilyEnemy ok 2001-2001`、`LilyFollower ok 1001-1001`、`SdkOverlap refused (range 1001-1010 overlaps 'LilyFollower')`、`ElmpProbe refused (elmpApi must be 1)`；被拒的 Mod 不注入（SdkOverlap 打印 `ELMP_Acquire = nil`），合规的注入 17 个 C 函数（`sdk: C bindings injected into Lua mod 'LilyFollower' (17 functions)`），ELMP 不注入任何 Lua 源码。缺陷与修正：Lua 回调（`ExecuteInGameThread`）跑在 Mod 状态的 Lua 线程上，按 `lua_State*` 找不到调用方 → 改按状态的主线程（`LUA_RIDX_MAINTHREAD`）识别。示例跑通：世界未稳定时 `ELMP_Spawn` 返回错误 “world not settled”（示例自行重试），之后 `leases: 1001=LilyFollower 2001=LilyEnemy`；P1 传送 1200 UU 后 5 s 内跟随者 Y −639.5（P1 −643.5）；敌方 Lily `teams: P2001=enemy`，靠近 P1 后 `raw=ATTACK`、P1 HP 400 → 375 → 360（PvP 命中规则）；事件经 `ELMP_PollEvents`（每 Mod 一个 events::Bus 游标）。第三方对象联机：`state()` 在会话中报 `"online":"unsupported"`。`[E-实测]`
 
+
+## P4 阶段报告（2026-10-27）
+- **构建了什么**：`native/modes/hunter`（对局状态机、宽限冻结、单调计时、两类胜负、猎人敌方 + travel、模式接管死亡 8 s 入口复活、mirror-only / preset 进度、指南针：本地 HUD 提示 + 横幅 + Control code 10 给客人）；`party/respawn` override、`party/progress` mirror-only、`overlay` 横幅；`native/sdk`（`elmp_sdk.h` `ElmpApi_v1`、导出 `ELMP_GetApi`、elmp.json 登记与重叠拒绝、事件游标、Lua C 绑定 17 个）；示例 `sdk/examples/{LilyFollower,LilyEnemy}`；控制台 `elmp hunter …`、`elmp sdk`。
+- **门槛逐项**：猎人（1 网络客人 + 2 本地 PX）：宽限 / 释放、阵营、指南针、8 s 入口复活、猎人胜（速通死亡）与速通胜（到达目标图）；SDK：登记、重叠拒绝、注入、两个示例跑通（跟随 / 攻击 P1）。
+- **更正过的事实**：UE4SS Lua 回调在 Mod 状态的 Lua 线程上（按主线程识别调用方）；Lua `a and f()` 只保留一个返回值（示例坑）。
+- **测试辅助（登记）**：Dev2 `ue4ss\Mods\{LilyFollower,LilyEnemy,SdkOverlap}`（P5 收尾删除）；eval DoDamage P1。
+- **遗留**：猎人模式 Boss 目标只在前台图判定（Boss 战本就只在 P1 所在图）；SDK Lua 无回调式订阅（用 `ELMP_PollEvents` 轮询），C++ 有 `subscribe`。
+- **实例最终状态**：Dev2 运行（带三个示例 Mod）、Host2 / Client2 / Client3 运行；存档未改写。
+- **P5 产品问题**：无。
