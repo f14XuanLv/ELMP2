@@ -21,6 +21,11 @@
       "root": "{game}\\Binaries\\Win64_LAN_Client2",
       "userDir": "{game}\\Binaries\\ELMP_Test_Data\\client",
       "mcp": "ue4ss-ender-lilies-lan-client2"
+    },
+    "client2": {
+      "root": "{game}\\Binaries\\Win64_LAN_Client3",
+      "userDir": "{game}\\Binaries\\ELMP_Test_Data\\client2",
+      "mcp": ""
     }
   }
 }

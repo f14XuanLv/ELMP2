@@ -89,7 +89,7 @@
 - [x] 远程座位：kind=network 同构座位、500 ms 停滞松键、`map/mapReady` 跟图闸门、晚加入 / 断线重连保留座位 —— 2026-10-26 · 证据：net-facts「500 ms 停滞松键」「晚加入 + G1 复检」「非主动断线重连」 · commit c79f4ca / 9b58b34 / 1ec1742
 - [x] 客人进度与构筑归属（FR-NET-2c）+ Client 原版档只读 —— 2026-10-26 · 证据：net-facts「客人构筑归属」「guard 逐项」 · commit 本提交
 - [x] 客人装备通路（F2.10） —— 2026-10-26 · 证据：net-facts「客人装备通路」 · commit 本提交
-- [ ] 管理器「联机」页（F2.1）+ FR-NET-8 版本一致 / 拒绝原因 / Full
+- [x] 管理器「联机」页（F2.1）+ FR-NET-8 版本一致 / 拒绝原因 / Full —— 2026-10-27 · 证据：net-facts「管理器 Online 页」「第三实例 + Full 拒绝原因」、`test_net_handshake`（版本 / EXE / 数据摘要不一致拒绝） · commit b2f1639 / 本提交
 - [x] Client 相机与伴随体规则（FR-NET-3c）、本地座位压制（FR-NET-3d）、Client 原版 HUD 显示 Host 数值 —— 2026-10-26 · 证据：net-facts「Client 相机 / 本地座位压制 / HUD」 · commit 0253ca0 之前一提交
 - [x] CTest：typed 编解码边界 / 传输状态机 / 握手（只此三类） —— 2026-10-26 · 证据：`build.bat base test` 7/7 通过（test_net_codec / test_net_transport / test_net_handshake） · commit a3ebf0f / 096b186 / 5304e2c
 
@@ -109,7 +109,7 @@
 - [ ] P2 阶段报告 + 需求树 §7 追加实施决定 + README「当前阶段」
 
 ### P3 多客人 + 多地图 —— 实现
-- [ ] 第三个隔离实例 `client2`（`Win64_LAN_Client3` + `ELMP_Test_Data\client2`，devconfig 登记）
+- [x] 第三个隔离实例 `client2`（`Win64_LAN_Client3` + `ELMP_Test_Data\client2`，devconfig 登记） —— 2026-10-27 · 证据：net-facts「第三实例 + Full 拒绝原因」 · commit 本提交
 - [ ] 多对端：每对端独立会话 / 密钥 / 可靠层 / 基线 / epoch；快照公共部分 + 每对端 `me`；`l<seat>` 副本；满员 Full
 - [ ] `world/level_instance`（`LoadLevelInstance` 反射参数校验、`ELMP_BG_<Map>__<Part>` 大 Y 偏移）
 - [ ] `world/map_context`（`0xCAAFF0` + `0xC997B0` 上下文窗口）
