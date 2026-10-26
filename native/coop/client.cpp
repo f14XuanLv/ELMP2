@@ -220,7 +220,7 @@ void present_world(const snap::Frame& f) {
         const bool is_breakable = breakable && a->GetClassPrivate()->IsChildOf(breakable);
         // Broken on the host → hidden + no collision. Replaying the vanilla break (DoDamage in a replay window)
         // crashed the client (access violation 0x10000000b right after the break, net-facts「worldobj」).
-        if ((row.flags & 2 || (is_breakable && (row.flags & 1))) && !(done & 2) && hide.ok()) {
+        if ((row.flags & 2 || (is_breakable && (row.flags & 4))) && !(done & 2) && hide.ok()) {
             reflect::Frame h(hide);
             h.arg_bool(0, true);
             h.invoke(a);
@@ -230,7 +230,7 @@ void present_world(const snap::Frame& f) {
                 fc.invoke(a);
             }
         }
-        done |= row.flags | ((is_breakable && (row.flags & 1)) ? 2 : 0);
+        done |= row.flags | ((is_breakable && (row.flags & 4)) ? 2 : 0);
         ++g_world_presented;
     }
 }

@@ -51,7 +51,7 @@ struct EnemyRow { // key = net id (spawn point name id) or dyn id (section ed)
 
 struct WorldRow { // key = object name id; interactables / breakables / story conditions
     std::uint16_t key = 0;
-    std::uint8_t flags = 0; // bit0 cleared, bit1 gone (destroyed on the host)
+    std::uint8_t flags = 0; // bit0 cleared, bit1 gone (destroyed on the host), bit2 broken (breakable HP ≤ 0)
     std::int32_t value = 0; // story: condition result
     static constexpr auto fields() { return std::make_tuple(&WorldRow::flags, &WorldRow::value); }
 };
