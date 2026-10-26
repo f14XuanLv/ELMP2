@@ -218,8 +218,8 @@ void present_world(const snap::Frame& f) {
         }
         static ue::UClass* breakable = reflect::find_class(L"/Script/Zenith.Breakable");
         const bool is_breakable = breakable && a->GetClassPrivate()->IsChildOf(breakable);
-        // Broken on the host → hidden + no collision. Replaying the vanilla break (DoDamage in a replay window)
-        // crashed the client (access violation 0x10000000b right after the break, net-facts「worldobj」).
+        // Broken on the host → hidden + no collision (no vanilla break replay on the client: drops would be
+        // spawned locally; presentation decision P2, net-facts「worldobj」).
         if ((row.flags & 2 || (is_breakable && (row.flags & 4))) && !(done & 2) && hide.ok()) {
             reflect::Frame h(hide);
             h.arg_bool(0, true);

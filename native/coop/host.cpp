@@ -174,8 +174,12 @@ void capture_world(std::int64_t now_us) {
                     reflect::Frame f(is_cleared);
                     if (f.invoke(c)) w.flags = f.ret_bool() ? (w.flags | 1) : (w.flags & ~1);
                 }
-                if (kind == registry::Kind::Breakable)
-                    if (auto* hp = s->zc_hp.object(a); hp && s->hp_curr.read<std::int32_t>(hp) <= 0) w.flags |= 4; // broken (bit2; IsCleared alone does not mean broken)
+                static reflect::PropRef breakable_hp =
+                    reflect::Resolver("Breakable", reflect::find_class(L"/Script/Zenith.Breakable")).prop(L"HPComponent", reflect::Kind::Object);
+                // ABreakable has its own HPComponent property (zc_hp is the ZenithCharacter offset — reading it on
+                // a breakable crashed both processes: access violation 0x10000000b)
+                if (kind == registry::Kind::Breakable && breakable_hp.ok())
+                    if (auto* hp = breakable_hp.object(a); hp && s->hp_curr.read<std::int32_t>(hp) <= 0) w.flags |= 4; // broken (bit2; IsCleared alone does not mean broken)
             }
         for (auto& [n, w] : g_world)
             if (!w.actor.get()) w.flags |= 2; // destroyed on the host (breakable broken, item consumed)
