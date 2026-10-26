@@ -84,6 +84,7 @@ struct Rec {
 std::map<std::int64_t, Rec> g_recs; // slot 1 = P1 (rule-2 door hold only)
 Grant g_grant = nullptr;
 bool g_p1_hold = false;
+bool g_p1_presentation = false; // guest process: P1 is a presentation of the host seat (FR-NET-3d)
 std::int32_t g_p1_open = 0;
 metrics::Counter& c_ignore_calls = metrics::counter("gates.ignore_calls");
 
@@ -109,7 +110,7 @@ ue::UObject* autocollect_sphere(const schema::Script& s, ue::UObject* pawn) {
 }
 
 bool want_ignore(std::int64_t slot, Gate g, const registry::Entry& e) {
-    if (slot == 1) return g == Gate::Travel && g_p1_hold && e.handle.index != g_p1_open;
+    if (slot == 1) return g_p1_presentation || (g == Gate::Travel && g_p1_hold && e.handle.index != g_p1_open);
     if (g == Gate::TriggerStory) g = trigger_gate(e);
     return !allows(slot, g);
 }
@@ -126,12 +127,12 @@ void apply(std::int64_t slot, Rec& r) {
         r.pawn = ObjHandle::of(pawn);
         r.comps = primitives(*s, pawn);
         r.applied.clear();
-        r.sphere = ObjHandle::of(slot == 1 ? nullptr : autocollect_sphere(*s, pawn));
+        r.sphere = ObjHandle::of(slot == 1 && !g_p1_presentation ? nullptr : autocollect_sphere(*s, pawn));
         r.sphere_on = -1;
         r.dirty = true;
     }
-    if (slot != 1 && r.dirty) {
-        const std::int8_t on = allows(slot, Gate::Pickup) ? 1 : 0;
+    if ((slot != 1 || g_p1_presentation || r.sphere_on == 0) && r.dirty) {
+        const std::int8_t on = slot == 1 ? (g_p1_presentation ? 0 : 1) : (allows(slot, Gate::Pickup) ? 1 : 0);
         auto* sphere = r.sphere.get();
         if (sphere && on != r.sphere_on && !(r.sphere_on < 0 && on)) { // a fresh sphere already overlaps
             reflect::Frame f(s->prim_set_overlaps);
@@ -153,7 +154,7 @@ void apply(std::int64_t slot, Rec& r) {
     // the rule-2 door hold.
     std::unordered_map<std::int32_t, std::pair<ObjHandle, bool>> want;
     for (const auto& kg : kKinds) {
-        if (slot == 1 && kg.gate != Gate::Travel) continue;
+        if (slot == 1 && kg.gate != Gate::Travel && !g_p1_presentation) continue;
         for (const auto& e : registry::bucket(kg.kind)) {
             auto& w = want[e.handle.index];
             w.first = e.handle;
@@ -227,6 +228,16 @@ void hold_p1_doors(bool hold, std::int32_t open_door) {
     g_p1_open = open_door;
     auto& r = g_recs[1];
     r.managed = hold || !r.applied.empty();
+    r.dirty = true;
+    apply(1, r);
+}
+
+void p1_presentation(bool on) {
+    if (on == g_p1_presentation) return;
+    g_p1_presentation = on;
+    auto& r = g_recs[1];
+    r.managed = on || g_p1_hold || !r.applied.empty();
+    r.pawn.reset(); // re-resolve the sphere for the new mode
     r.dirty = true;
     apply(1, r);
 }

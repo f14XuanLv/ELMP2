@@ -40,6 +40,11 @@ void set_grant(Grant grant);
 // Map rule 2: P1 ignores every door except `open_door` (registry handle index; 0 = none open).
 void hold_p1_doors(bool hold, std::int32_t open_door_index = 0);
 
+// Guest process (FR-NET-3d): P1 is the presentation of its host seat — it ignores every gate target (doors,
+// benches, interactables, all triggers) and its collect sphere is off, so the local world never runs a
+// vanilla door / bench / trigger / pickup for it; the host does, and the client presents the result.
+void p1_presentation(bool on);
+
 void track(std::int64_t slot);  // a seat to manage (join / respawn)
 void forget(std::int64_t slot); // seat left (revokes nothing: the pawn is gone or leaving)
 void tick();                    // 500 ms: re-apply on version / pawn / flag changes

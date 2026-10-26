@@ -12,6 +12,7 @@
 #include "guard/guard.h"
 
 #include "core/player.h"
+#include "core/permission.h"
 #include "core/profile.h"
 #include "core/schema.h"
 #include "core/spawn.h"
@@ -480,6 +481,7 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         if (!proto::decode(msg, w)) return;
         g_seat = w.seat, g_epoch = w.epoch, g_host_map = w.map;
         if (!guard::arm()) coop::leave("guard unavailable (fail closed)");
+        core::permission::p1_presentation(true);
         log::info("coop: seated as P{} on the host (epoch {})", g_seat, g_epoch);
         break;
     }
@@ -729,6 +731,7 @@ void stop() {
         }
     g_taken.clear();
     guard::disarm();
+    core::permission::p1_presentation(false);
     g_seat = 0, g_epoch = 0, g_latest = 0;
     g_ring.reset();
     g_names.clear();
