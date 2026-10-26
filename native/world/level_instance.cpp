@@ -6,6 +6,7 @@
 #include "engine/reflect.h"
 #include "engine/world.h"
 
+#include "base/hook.h"
 #include "base/log.h"
 
 #include <cctype>
@@ -25,12 +26,58 @@ struct Loaded {
     float offset_y = 0;
 };
 std::map<std::string, Loaded, std::less<>> g_maps;
+} // namespace
+std::string map_of(const void* obj);
+namespace {
 
 std::string area_name(std::string key) {
     for (auto& c : key) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     if (key.empty()) return key;
     key[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(key[0])));
     return key;
+}
+
+// map_context (§7.3, M20; v1 net-facts IDA 2026-10-25): every UClearedObjectManagerComponent check / mark /
+// saved-transform read-write asks 0xCAAFF0 for "the current map id" with the target actor / component as
+// context. For an object of a background instance the answer is that map's id, so clears are booked under the
+// right map. 0xC997B0 (UClearableComponent::BeginPlay) only subscribes to OnGameMapReady while the foreground
+// loads; a background object that missed its check gets OnGameMapReady right after BeginPlay.
+using MapIdFn = ue::FName*(__fastcall*)(ue::FName*, ue::UObject*);
+using BeginPlayFn = void(__fastcall*)(ue::UObject*);
+MapIdFn o_map_id{};
+BeginPlayFn o_begin{};
+bool g_hooks = false, g_hooks_failed = false;
+std::uint64_t g_remapped = 0, g_late_checks = 0;
+
+ue::FName* __fastcall d_map_id(ue::FName* out, ue::UObject* context) {
+    if (!g_maps.empty() && context)
+        if (auto id = map_of(context); !id.empty()) {
+            *out = ue::FName(log::wide(id).c_str(), RC::Unreal::FNAME_Add);
+            ++g_remapped;
+            return out;
+        }
+    return o_map_id(out, context);
+}
+
+void __fastcall d_begin(ue::UObject* comp) {
+    o_begin(comp);
+    if (g_maps.empty() || map_of(comp).empty()) return;
+    static reflect::Resolver r("ClearableComponent", reflect::find_class(L"/Script/Zenith.ClearableComponent"));
+    static reflect::FuncRef checked = r.func(L"IsClearStatusChecked", 0);
+    static reflect::FuncRef ready = r.func(L"OnGameMapReady", 0);
+    reflect::Frame c(checked);
+    if (checked.ok() && ready.ok() && c.invoke(comp) && !c.ret_bool()) {
+        reflect::Frame(ready).invoke(comp);
+        ++g_late_checks;
+    }
+}
+
+bool ensure_hooks() {
+    if (g_hooks || g_hooks_failed) return g_hooks;
+    g_hooks = hook::install_manifest("ClearedQueryCurrentMapId", reinterpret_cast<void*>(&d_map_id), reinterpret_cast<void**>(&o_map_id)) &&
+              hook::install_manifest("ClearableBeginPlay", reinterpret_cast<void*>(&d_begin), reinterpret_cast<void**>(&o_begin));
+    g_hooks_failed = !g_hooks;
+    return g_hooks;
 }
 
 } // namespace
@@ -58,6 +105,7 @@ std::string load(std::string_view map_id, float offset_y) {
     static reflect::FuncRef fn = reflect::Resolver("LevelStreamingDynamic", reflect::find_class(L"/Script/Engine.LevelStreamingDynamic")).func(L"LoadLevelInstance", 6); // nparms excludes the return value
     auto* cdo = reflect::find_object(L"/Script/Engine.Default__LevelStreamingDynamic");
     if (!fn.ok() || !cdo) return "LoadLevelInstance unavailable";
+    if (!ensure_hooks()) return "map context hooks unavailable (fail closed: clears would be booked under the foreground map)";
     Loaded rec;
     rec.offset_y = offset_y;
     for (const auto& p : ps) {
@@ -127,7 +175,7 @@ std::string map_of(const void* obj) {
 }
 
 std::string describe() {
-    std::string out = std::format("background maps: {}\n", g_maps.size());
+    std::string out = std::format("background maps: {} (map context: {} remapped={} lateChecks={})\n", g_maps.size(), g_hooks ? "armed" : (g_hooks_failed ? "failed" : "off"), g_remapped, g_late_checks);
     for (const auto& [id, m] : g_maps) out += std::format("  {} Y{:+.0f} parts={} ready={}\n", id, m.offset_y, m.levels.size(), ready(id));
     return out;
 }
