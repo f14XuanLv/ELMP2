@@ -5,7 +5,7 @@
 > 只有在全部完成、或某阶段门槛经充分尝试仍无法达成（写明尝试、证据、剩余选项）时才报告 goal 完成或 blocked。需要我决定的产品问题：先按需求树已有定案与 fail closed 默认继续其他工作，把问题集中列出，不要停下等。
 > **进度以 §7 的勾选表为准**：每完成一项就在该行打勾并补「日期 · 证据（kb 节 / 截图 / 命令输出）· commit」；下面「当前进行中」一行同步更新。goal 完成 = §7 全部打勾。
 
-**当前进行中**：§2 P2 实现（2026-10-26）。已在 Host2/Client2 跑通并记 net-facts：net（握手/错码/F_CLOSE）、session（`elmp lan host|join|leave|status`）、host（Network 座位、输入→pad、每帧快照增量、跟图 Map+tag）、client（guestKey→Build→Welcome、输入上行、快照解码、原版 SwitchGameMap 跟图、敌人接管：guard 全拦 AI 激活 + 白名单冻组件 + 位置/HP/Spine 呈现、Host P1 副本 slot 50+座位、本地 P1 预测 + >150 UU 回拉）。代码：`native/net/{crypto,codec.h,transport,endpoint,snapshot,protocol}`、`native/coop/{session,host,client}`、`native/guard/guard`。未做：1 Hz 两标志复检、act 动作通道（`AbilityLaunchFromDesc`）、世界对象/剧情/掉落/动态敌人 adapter、伤害回放窗口（Host 命中 → Client 回放）、Host P1 死亡/过图不误判、客人离开 Host 恢复、late join 实测、断线重连实测、PvP、联机页 + 客人装备通路、帧时间、§7 P2 勾选。实例：Host2/Client2 运行中，两侧槽 0 church_08，会话已连（码 4821，UDP 7777）；存档备份在 `%TEMP%\elmp_bak_{host,client}_p2`。
+**当前进行中**：§2 P2（2026-10-26）。已打勾：net×2、快照、guard、动作通道、CTest、G1、G2、晚加入、断线重连、Host P1 死亡不误判、性能。已实现未勾：session/world_model/capture/takeover/presenter/vitals 行（缺 world_model 与世界对象），远程座位行（缺 FR-NET 映射核对）。下一步：worldobj / story / pickup / enemy_dyn adapter（G3 门 / 宝箱 / 可破坏物 / 剧情旗标）→ 客人进度构筑归属 + 装备通路 → 联机页 + 版本拒绝原因 → 相机 / HUD → 客人离开 Host 还原 → 联机 PvP → §7.2 两列 → G4 帧时间三档 + 截图 → P2 报告。实例：Host2/Client2 运行中、church_07、会话已连（码 4821 / UDP 7777）；备份 `%TEMP%\elmp_bak_{host,client}_p2`；脚本 `%TEMP%\elmp_redeploy.ps1`、`elmp_p2setup.ps1`、`elmp_p2late.ps1`、`elmp_epos2.lua`。
 **需要用户**：（无）
 
 ## 0. 恢复上下文（每轮先读）
@@ -105,7 +105,7 @@
 - [ ] 联机 PvP（命中门 + 倍率 + 击退）
 - [ ] §7.2 矩阵「Host 上远程座位」列
 - [ ] §7.2 矩阵「Client 副本」列
-- [ ] 性能：Host+1 客人 ELMP P99 < 1.0 ms；Client 呈现 P99 < 1.0 ms；无会话时 G0 仍成立（`g0.reflect_calls = 0`，对裸 UE4SS P99 差 < 0.2 ms）
+- [x] 性能：Host+1 客人 ELMP P99 < 1.0 ms；Client 呈现 P99 < 1.0 ms；无会话时 G0 仍成立（`g0.reflect_calls = 0`，对裸 UE4SS P99 差 < 0.2 ms） —— 2026-10-26 · 证据：net-facts「性能（Host + 1 客人）」（Host P99 426 µs、Client P99 147 µs、g0.reflect_calls 0） · commit 本提交
 - [ ] P2 阶段报告 + 需求树 §7 追加实施决定 + README「当前阶段」
 
 ### P3 多客人 + 多地图 —— 实现
