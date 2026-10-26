@@ -17,8 +17,10 @@
 #include "base/clock.h"
 #include "base/log.h"
 
+#include <Unreal/Engine/UDataTable.hpp>
 #include <Unreal/UObjectGlobals.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <format>
@@ -50,7 +52,7 @@ struct Pending { // a seat waiting for its background map
     std::string tag;
 };
 std::vector<Pending> g_pending;
-std::uint64_t g_moves = 0, g_loads = 0, g_unloads = 0;
+std::uint64_t g_moves = 0, g_loads = 0, g_unloads = 0, g_boss_refusals = 0;
 std::string g_last;
 std::unordered_map<std::int64_t, std::string> g_seat_tag;
 
@@ -145,6 +147,25 @@ bool place(std::int64_t seat, const core::Vec3& at) {
     return tp.invoke(pawn);
 }
 
+// Boss maps (§7.1.3): the rows of DT_RecollectionBossData (the vanilla boss-rematch list) name every boss
+// room's map (FRecollectionBossData::Map, an FDataTableRowHandle). Read once per session from the loaded
+// table; unreadable → every background move is refused (fail closed).
+const std::vector<std::string>* boss_maps() {
+    static std::vector<std::string> maps;
+    static bool done = false;
+    if (done) return maps.empty() ? nullptr : &maps;
+    auto* dt = static_cast<RC::Unreal::UDataTable*>(reflect::load_object(L"/Game/_Zenith/Gameplay/Data/DT_RecollectionBossData.DT_RecollectionBossData"));
+    if (!ue::alive(dt) || !dt->GetRowStruct()) return nullptr;
+    auto* prop = reflect::find_property(dt->GetRowStruct(), L"Map");
+    if (!prop) return nullptr;
+    const auto off = prop->GetOffset_Internal();
+    for (auto& row : dt->GetRowMap())
+        if (row.Value) maps.push_back(ue::utf8(*reinterpret_cast<const ue::FName*>(row.Value + off + 8)));
+    done = true;
+    log::info("coop: {} boss maps (DT_RecollectionBossData)", maps.size());
+    return maps.empty() ? nullptr : &maps;
+}
+
 int slot_for(const std::string& map) {
     for (int k = 1; k < kSlots; ++k)
         if (g_slots[k].map == map) return k;
@@ -158,6 +179,11 @@ void move_seat(std::int64_t seat, const Door& d) {
     if (d.dest == fg) {
         if (auto at = player_start(0, d.tag)) place(seat, *at), ++g_moves, g_last = std::format("P{} -> {} (foreground)", seat, d.dest);
         return;
+    }
+    const auto* bosses = boss_maps();
+    if (!bosses || std::find(bosses->begin(), bosses->end(), d.dest) != bosses->end()) {
+        ++g_boss_refusals;
+        return void(g_last = std::format("P{} -> {}: refused — boss fights only start in host P1's map (§7.1.3){}", seat, d.dest, bosses ? "" : " (boss list unreadable)"));
     }
     const int k = slot_for(d.dest);
     if (k < 0) return void(g_last = std::format("P{} -> {}: no free background slot (fail closed)", seat, d.dest));
@@ -290,7 +316,7 @@ void reset() {
 }
 
 std::string describe() {
-    std::string out = std::format("maps: moves={} loads={} unloads={} pending={} last='{}'\n", g_moves, g_loads, g_unloads, g_pending.size(), g_last);
+    std::string out = std::format("maps: moves={} loads={} unloads={} bossRefused={} pending={} last='{}'\n", g_moves, g_loads, g_unloads, g_boss_refusals, g_pending.size(), g_last);
     for (int k = 1; k < kSlots; ++k)
         if (!g_slots[k].map.empty()) out += std::format("  slot {} {} Y{:+.0f} starts={} ready={}{}\n", k, g_slots[k].map, offset(k), g_slots[k].starts.size(), world::level_instance::ready(g_slots[k].map), g_slots[k].empty_since ? " (empty)" : "");
     return out;
