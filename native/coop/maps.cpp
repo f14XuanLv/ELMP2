@@ -32,9 +32,15 @@ namespace {
 constexpr int kSlots = 4; // background slots 1..3
 constexpr std::int64_t kGraceUs = 10'000'000;
 
+struct Start {
+    core::Vec3 at{};
+    std::string tag;
+};
 struct Slot {
     std::string map;
     std::int64_t empty_since = 0;
+    bool starts_taken = false;
+    std::vector<Start> starts; // the instance's PlayerStarts (their vanilla tags are cleared, see below)
 };
 std::array<Slot, kSlots> g_slots;
 
@@ -82,23 +88,54 @@ const Door& door_of(const registry::Entry& e) {
     return d;
 }
 
-// PlayerStart of `slot` whose PlayerStartTag == tag (any start of the slot when the tag is not found)
-std::optional<core::Vec3> player_start(int slot, const std::string& tag) {
-    std::vector<RC::Unreal::UObject*> starts;
-    RC::Unreal::UObjectGlobals::FindAllOf(STR("PlayerStart"), starts);
-    static reflect::PropRef tag_prop =
+std::vector<RC::Unreal::UObject*> starts_in(int slot) {
+    std::vector<RC::Unreal::UObject*> all, out;
+    RC::Unreal::UObjectGlobals::FindAllOf(STR("PlayerStart"), all);
+    for (auto* ps : all)
+        if (ue::alive(ps))
+            if (auto at = core::location(ps); at && slot_of_y(at->y) == slot) out.push_back(ps);
+    return out;
+}
+
+reflect::PropRef& start_tag() {
+    static reflect::PropRef p =
         reflect::Resolver("PlayerStart", reflect::find_class(L"/Script/Engine.PlayerStart")).prop(L"PlayerStartTag", reflect::Kind::Name);
+    return p;
+}
+
+// A background instance's PlayerStarts carry the same tags as the vanilla ones: when host P1 later switches
+// into that map, the vanilla placement found the background copy first (P1 placed at Y +300000, fell when the
+// copy unloaded — 2026-10-27). So once the instance is ready ELMP records them and clears their tags.
+void take_starts(Slot& sl, int slot) {
+    if (sl.starts_taken || !start_tag().ok()) return;
+    for (auto* ps : starts_in(slot)) {
+        auto* tag = start_tag().at<ue::FName>(ps);
+        sl.starts.push_back({*core::location(ps), ue::utf8(*tag)});
+        *tag = ue::FName();
+    }
+    sl.starts_taken = true;
+}
+
+// PlayerStart of `slot` whose tag == tag (any start of the slot when the tag is not found)
+std::optional<core::Vec3> player_start(int slot, const std::string& tag) {
+    if (slot > 0) {
+        auto& sl = g_slots[slot];
+        take_starts(sl, slot);
+        std::optional<core::Vec3> any;
+        for (const auto& s : sl.starts) {
+            if (!any) any = s.at;
+            if (s.tag == tag) return s.at;
+        }
+        return any;
+    }
     std::optional<core::Vec3> any;
-    for (auto* ps : starts) {
-        if (!ue::alive(ps)) continue;
+    for (auto* ps : starts_in(0)) {
         const auto at = core::location(ps);
-        if (!at || slot_of_y(at->y) != slot) continue;
         if (!any) any = at;
-        if (tag_prop.ok() && ue::utf8(*tag_prop.at<ue::FName>(ps)) == tag) return at;
+        if (start_tag().ok() && ue::utf8(*start_tag().at<ue::FName>(ps)) == tag) return at;
     }
     return any;
 }
-
 bool place(std::int64_t seat, const core::Vec3& at) {
     const auto* s = core::schema::script();
     auto* pawn = core::pawn(seat);
