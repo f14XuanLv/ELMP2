@@ -89,6 +89,24 @@
       "source": "[E-IDA][E-实测] v2 2026-10-25 更正：v1 RVA.json（2026-10-14）记作 AZenithCharacter 激活本体；IDA 证实调用者 0xCCFCB0 = AZenithSpirit::Appear（exec 0x140DA1C70 在 ZenithSpirit 原生函数表，名 \"Appear\"），且 this+1216/+1264/+1304 与 Dev2 反射 ZenithSpirit.StateComponent/OnSpiritAppearDelegate/MovementComponent 吻合；对 AZenithCharacter 而言 +1464 是反射的 OnParryDelegate",
       "note": "+1465=active、虚表 +768、SetActorTickEnabled / SetActorEnableCollision、+1312 弱控制器 Possess/UnPossess。是精灵的出现/消失本体，不是敌人激活单汇点（见 docs/kb/engine-facts.md）"
     },
+    "GuardEnemyAIActivate": {
+      "rva": "0x00CCD8F0",
+      "prefix": "405557488BEC4883EC5880B958030000",
+      "signature": "void AZenithAIController::Activate(this)",
+      "owner": "guard",
+      "reflect": "/Script/Zenith.ZenithAIController:Activate",
+      "source": "[E-IDA] v2 2026-10-26：exec 0x140D9A520 → 本体；IsActive exec 0x140D9A950 读 +856（同一守卫字节）；调用者 = PawnActivationVolume 激活 0xCCF250（OnBeginOverlap exec 0x140D7C8E0 → 0xCE68A0）、体积 OnPawnEndPlay 0xCE8290、AZenithAIController::SetPawn 0xCF1330（bAutoActivate +832 时）、UFunction exec（EnemySpawnPoint::ActivateEnemy 0xCCEC60 经 Possess → SetPawn）",
+      "note": "敌人 AI 激活单汇点：守卫 +856 → 置 1 → UseBlackboard → RunBehaviorTree（虚表 +1984，树取自 +2072）→ 相机注册 0xCEDD20 → OnActivate 广播。Client 登记的敌人控制器在此整体跳过（无 AI 决策）"
+    },
+    "GuardEnemyCharacterActivate": {
+      "rva": "0x00CCDAA0",
+      "prefix": "40574883EC3080B90005000000488BF9",
+      "signature": "void AZenithCharacter::Activate(this)",
+      "owner": "guard",
+      "reflect": "/Script/Zenith.ZenithCharacter:Activate",
+      "source": "[E-IDA] v2 2026-10-26：唯一代码调用者是 exec 0x140D9A540（只经 UFunction / 蓝图）；IsActivated exec 0x140D59BE0 读 +1280",
+      "note": "Pawn 侧激活：守卫 +1280 → 置 1 → 虚表 +768(0) → SetActorEnableCollision(1) → SetActorTickEnabled(1) → 组件 tick → OnActivate 广播。登记对象跳过"
+    },
     "GuardActorSetCollision": {
       "rva": "0x022C78D0",
       "prefix": "4C8BDC564881EC00010000",
@@ -170,6 +188,18 @@
       "size": 1,
       "check": { "within": { "class": "/Script/Zenith.ZenithSpirit", "after": "MovementComponent", "before": "<end>" } },
       "source": "[E-IDA][E-实测] v2 2026-10-25：0xCEFAE0（AZenithSpirit::SetActive）写 +1465；同上更正"
+    },
+    "ZenithAIController.bActive": {
+      "value": 856,
+      "size": 1,
+      "check": { "within": { "class": "/Script/Zenith.ZenithAIController", "after": "BehaviourTree_NGPlus", "before": "<end>" } },
+      "source": "[E-IDA][E-实测] v2 2026-10-26：0xCCD8F0 守卫 / 写入、IsActive exec 读 +856；Dev2 反射 BehaviourTree_NGPlus@848"
+    },
+    "ZenithCharacter.bActivated": {
+      "value": 1280,
+      "size": 1,
+      "check": { "within": { "class": "/Script/Zenith.ZenithCharacter", "after": "SourceSpawnPoint", "before": "LastAttackerDirection" } },
+      "source": "[E-IDA][E-实测] v2 2026-10-26：0xCCDAA0 守卫 / 写入、IsActivated exec 读 +1280；Dev2 反射 SourceSpawnPoint@1272、LastAttackerDirection@1288"
     },
     "HealComponent.RemainingHealCount": {
       "value": 296,

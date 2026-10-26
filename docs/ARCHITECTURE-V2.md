@@ -178,7 +178,7 @@ template<class R, class... A> R call(UObject* o, FuncRef f, A... a);  // 栈上�
 | detour | `AbilityEffectQueue 0xCBB110` | PolyHook2 | pvp |
 | UFunction pre/post | `AbilityHitbox:OnActorOverlapBegin` / `ProcessActorEnter` / `Ability:ExecuteAbilityEffectsOnTarget` | `UFunction::RegisterPreHook/PostHook` | pvp |
 | detour | `DoDamage 0xCA0380`、`SkillDamage 0xCB07E0`、`IsPlayerThunk 0xCE3C90`、`SaveGame 0xD25410`、`SaveGameAsync 0xD25550` | PolyHook2 | guard |
-| detour | `SetActorEnableCollision 0x22C78D0`、`SetActorTickEnabled 0x22C8540`（`0xCEFAE0` 经 2026-10-25 核实为 `AZenithSpirit::SetActive`，EL.json 名 `SpiritSetActive`；敌人激活入口 P2 重新定位，见 `docs/kb/engine-facts.md`） | PolyHook2 | guard |
+| detour | `SetActorEnableCollision 0x22C78D0`、`SetActorTickEnabled 0x22C8540`、`AZenithAIController::Activate 0xCCD8F0`、`AZenithCharacter::Activate 0xCCDAA0`（2026-10-26 定位，见 `docs/kb/engine-facts.md`；`0xCEFAE0` 是 `AZenithSpirit::SetActive`，不用于敌人） | PolyHook2 | guard |
 | detour | `AbilityLaunchFromDesc 0xCAD0C0` | PolyHook2 | coop/host/events |
 | detour | `ClearedQueryCurrentMapId 0xCAAFF0`、`ClearableBeginPlay 0xC997B0` | PolyHook2 | world/map_context |
 | UFunction post | `PC_Base_C:OnSwitchGameMapStart / OnGameMapSwitch / OnGameMapReadyPostFade`、`WBP_FaderLoading_C:LaunchFadeIn` | UE4SS | party/transit |
