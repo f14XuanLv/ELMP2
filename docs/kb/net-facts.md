@@ -119,3 +119,10 @@
 ## P5 实测
 - **Shipping 构建三实例冒烟**（2026-10-27，`deploy.py <inst> --flavor shipping`，Host2 + Client2 + Client3，槽 0；Shipping 无 ELMP_Command，命令经 UE4SS 控制台 `bridge.py console`、观测经 UEBridge eval 与 UE4SS.log）：本地多人 —— Host `elmp join` 加入本地座位（Host 共 P2–P4 本地座位）；同图联机 —— `elmp lan host 4821`，两客人依次 join：Host 日志 `peer 1 seated at P5`、`peer 2 seated at P6`、构筑 apply ok，两客人 guard 各 hook armed、`presenting host P1…` 副本；Host P1 经 eval 传进 church_07 门 → 三实例都 `map_church_07 enemies=24`；后台图 —— `elmp perm 5 travel on` 后把五个座位传进 church_07 的 church_08 门：本地座位经原版门带 Host 前台切到 church_08、P6（travel 关）跟随 Host，P5 被 coop/maps 送进后台 church_07：Host `map_church_08 bgEnemies=24 bgLilies=1`，Client2（P5）独自 `map_church_07 enemies=24`，Client3（P6）`map_church_08`。`coop: 9 boss maps` 正常读取。`[E-实测]`
 
+
+## 最终报告（2026-10-27，ELMP 0.3.0）
+- **阶段**：P1 遗留（拾取闸门 / 精灵等级 / 激活入口）→ P2 同图联机（net / guard / coop / 六适配器 / 联机页 / G1–G4 / §7.2 两列）→ P3 多客人 + 多地图（第三实例、两客人同图、level_instance + map_context、coop/maps、Boss 房 fail closed、12 读者分类、后台战斗性能）→ P4 猎人模式 + SDK（modes/hunter、C ABI + Lua C 绑定、两个示例）→ P5 发布（0.3.0、README / INSTALL / ADR 0005、`dist\ELMP-0.3.0-shipping.zip` 零 .lua / .pdb + `-dev.zip`、Shipping 三实例冒烟）。各阶段报告见本文件「P2 / P3 / P4 阶段报告」。
+- **遗留清单**：G3 门 / 宝箱 / Boss 窗口专项无可用存档（同通路代证）；客人端技能结束事件未同步（2 s 寿命）；敌人 VisualPivot 竖直偏移；后台图无音效 / 剧情事件、前台切图事件影响后台技能；SDK Lua 无回调式订阅；最多 3 个后台槽 / 16 个 SDK Mod。
+- **需要用户**：如需补测 G3 门 / 宝箱 / Boss 窗口，请提供含未开门 / 宝箱 / 未打 Boss 的存档。
+- **实例最终状态**：Dev2 / Host2 / Client2 / Client3 全部已停止，均部署 Dev 构建 0.3.0；Dev2 的三个 SDK 示例 Mod 已删除；Host2 存档已从 `%TEMP%\elmp_bak_host_p2` 还原（GameSlot_0 哈希 2CA5…）；Client2 / Client3 存档未被写入（guard 存档保护）。
+

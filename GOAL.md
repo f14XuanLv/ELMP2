@@ -5,7 +5,7 @@
 > 只有在全部完成、或某阶段门槛经充分尝试仍无法达成（写明尝试、证据、剩余选项）时才报告 goal 完成或 blocked。需要我决定的产品问题：先按需求树已有定案与 fail closed 默认继续其他工作，把问题集中列出，不要停下等。
 > **进度以 §7 的勾选表为准**：每完成一项就在该行打勾并补「日期 · 证据（kb 节 / 截图 / 命令输出）· commit」；下面「当前进行中」一行同步更新。goal 完成 = §7 全部打勾。
 
-**当前进行中**：§2 P5（2026-10-27）。P1–P4 全部打勾。P5 已做：版本 0.3.0、INSTALL.txt、package.py、README、ADR 0005；待： → ADR 0005 定稿 → `build.bat package`（Shipping zip 零 .lua/.pdb）→ Shipping 三实例冒烟（本地多人 + 同图联机 + 后台图）→ 最终报告；收尾删除 Dev2 的 `ue4ss\Mods\{LilyFollower,LilyEnemy,SdkOverlap}`。
+**当前进行中**：无 —— §7 全部打勾（2026-10-27），发布包 `dist\ELMP-0.3.0-shipping.zip`（零 .lua）与 `-dev.zip` 已生成；最终报告见 docs/kb/net-facts.md「最终报告」。
 **需要用户**：①若要补测 G3 门 / 宝箱 / Boss 窗口专项，请提供一个入口图里有未开门 / 宝箱、可进入未打 Boss 的存档放到 Host2/Client2（当前按同通路代证 + Boss fail closed 继续）；（P2 自行定案已记 net-facts：本地 P1 预测 + >150 UU 回拉；Client 离开会话回标题；可破坏物 Client 只隐藏不回放破坏）
 
 ## 0. 恢复上下文（每轮先读）
@@ -139,4 +139,4 @@
 - [x] `docs/adr/0005-cpp-rewrite.md` 定稿（采纳状态与实际偏差） —— 2026-10-27 · 证据：docs/adr/0005-cpp-rewrite.md · commit db531f1
 - [x] `elmp.json` 版本 ≥ 0.3.0；`build.bat package` 产出 `-shipping.zip`（零 `.lua` / `.pdb` / 义肢）与 `-dev.zip` —— 2026-10-27 · 证据：`dist\ELMP-0.3.0-shipping.zip` 79 项（0 个 .lua、0 个 .pdb；非 data 项只有 main.dll / elmp.json / sdk/elmp_sdk.h / INSTALL.txt）、`dist\ELMP-0.3.0-dev.zip` 84 项 · commit 本提交
 - [x] Shipping 构建三实例冒烟（本地多人 + 同图联机 + 后台图），结果进 kb —— 2026-10-27 · 证据：net-facts「P5 实测 / Shipping 构建三实例冒烟」 · commit 本提交
-- [ ] 最终报告（全部阶段汇总、遗留清单、实例最终状态）
+- [x] 最终报告（全部阶段汇总、遗留清单、实例最终状态） —— 2026-10-27 · 证据：net-facts「最终报告」 · commit 本提交
