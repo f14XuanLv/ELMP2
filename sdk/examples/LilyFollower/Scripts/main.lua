@@ -25,7 +25,8 @@ local function step()
         ELMP_Log(0, 'follower spawned in slot ' .. SLOT)
     end
     local st = ELMP_State(SLOT)
-    local y, z = st and st:match('"pos":%[[-%d.]+,([-%d.]+),([-%d.]+)%]')
+    if not st then return end
+    local y, z = st:match('"pos":%[[-%d.]+,([-%d.]+),([-%d.]+)%]') -- (`st and st:match()` would keep one value)
     if not y then return end
     local dy, dz = p1.Y - tonumber(y), p1.Z - tonumber(z)
     local x = 0
