@@ -123,7 +123,7 @@
 - [x] 一客人在后台图被敌人攻击 / 击杀敌人，Host 存档清除记账落在正确的图 —— 2026-10-27 · 证据：net-facts「后台图战斗 / 记账 …」「world/map_context」 · commit 本提交及前
 - [x] P1 进入后台图的移交（先卸载再原版切图） —— 2026-10-27 · 证据：net-facts「P1 进入后台图的移交」（实施为清空后台 PlayerStart 标签 + 切图后移交再卸载，需求树 §7.18 记） · commit 本提交及前
 - [x] 满员第 N+1 个客人收到 Full —— 2026-10-27 · 证据：net-facts「第三实例 + Full 拒绝原因」（上限 1，第 2 个客人 `host is full`、Host `fullRejects=1`） · commit 4f5e8c9
-- [ ] 后台图有人战斗时 Host 帧时间 P99 与性能门槛
+- [x] 后台图有人战斗时 Host 帧时间 P99 与性能门槛 —— 2026-10-27 · 证据：net-facts「后台图有人战斗时的帧时间」（Host P99 449 µs） · commit 本提交
 - [ ] P3 阶段报告 + 需求树 §7 追加实施决定 + README「当前阶段」
 
 ### P4 猎人模式 + SDK
