@@ -13,11 +13,14 @@
 // UE4SS's own UFunction hook path compares GetFullName() strings on every script call, too expensive).
 // While a transit runs the patrol, recall and progress stay out (they skip on active()).
 
+#include <cstdint>
 #include <string>
 
 namespace elmp::party::transit {
 
 bool active();
+// coop: seats standing in another map (host background instance) when P1 switches are not carried
+void set_stay(bool (*stay)(std::int64_t slot));
 bool hooked(); // the three PC events are resolved and hooked
 void arm();    // seats exist: register the callback (idempotent) and resolve functions
 std::string describe();

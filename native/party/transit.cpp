@@ -23,6 +23,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <algorithm>
 #include <format>
 #include <map>
 
@@ -90,12 +91,17 @@ bool p1_moved() {
     return l && std::abs(l->y - g_run.origin.y) + std::abs(l->z - g_run.origin.z) > kMoved;
 }
 
+bool (*g_stay)(std::int64_t) = nullptr;
+std::vector<std::int64_t> g_staying; // seats in another (background) map at transit start: not carried
+bool stays(std::int64_t slot) { return std::find(g_staying.begin(), g_staying.end(), slot) != g_staying.end(); }
+
 void place(const char* reason) {
     if (!world::p1_pawn()) return;
     g_run.placed = true;
     g_run.placed_reason = reason;
     int n = 0;
     for (const auto& seat : party::seats()) {
+        if (stays(seat.slot)) continue;
         const auto at = behind_p1(++n);
         if (!at) continue;
         bool revived = false;
@@ -109,7 +115,8 @@ void release(const char* reason) {
     if (!g_run.placed) place(reason);
     g_run.released = true;
     g_run.released_reason = reason;
-    for (const auto& seat : party::seats()) respawn::release(seat.slot);
+    for (const auto& seat : party::seats())
+        if (!stays(seat.slot)) respawn::release(seat.slot);
 }
 
 void finish(const char* reason) {
@@ -134,7 +141,11 @@ void begin() {
         g_run.origin_pawn = ObjHandle::of(p);
         if (auto l = core::location(p)) g_run.origin = *l;
     }
-    for (const auto& seat : party::seats()) respawn::freeze(seat.slot);
+    g_staying.clear();
+    for (const auto& seat : party::seats())
+        if (g_stay && g_stay(seat.slot)) g_staying.push_back(seat.slot);
+    for (const auto& seat : party::seats())
+        if (!stays(seat.slot)) respawn::freeze(seat.slot);
     events::bus().push(events::Type::MapSwitchStart);
 }
 
@@ -158,7 +169,8 @@ void step(const frame::Tick& t) {
     if (take(FadeIn) && g_run.switched && !g_run.released) release("fade-in");
     if (t.now_us >= g_run.deadline) return finish("timeout");
     if (!g_run.released) {
-        for (const auto& seat : party::seats()) respawn::freeze(seat.slot); // vanilla turns lost-floor pawns into falling
+        for (const auto& seat : party::seats())
+            if (!stays(seat.slot)) respawn::freeze(seat.slot); // vanilla turns lost-floor pawns into falling
         if (!g_run.placed && g_run.switched && p1_moved()) place("switched");
     }
     bool loading = true, ready = false;
@@ -166,6 +178,8 @@ void step(const frame::Tick& t) {
 }
 
 } // namespace
+
+void set_stay(bool (*stay)(std::int64_t slot)) { g_stay = stay; }
 
 bool active() { return g_run.on; }
 

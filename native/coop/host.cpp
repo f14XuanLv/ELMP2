@@ -12,6 +12,7 @@
 #include "coop/session.h"
 
 #include "party/seat.h"
+#include "party/transit.h"
 
 #include "core/player.h"
 #include "core/profile.h"
@@ -413,6 +414,7 @@ void tick(std::int64_t now_us) {
         }
     capture(now_us);
     ability::host_enable(on_launch);
+    party::transit::set_stay([](std::int64_t seat) { return maps::slot_of_seat(seat) > 0; });
     maps::tick(now_us);
     send_acts();
     send_snapshots();
@@ -423,6 +425,7 @@ void stop() {
         if (p.slot) party::leave(p.slot);
     for (auto& [k, slot] : g_parked) party::leave(slot);
     ability::host_disable();
+    party::transit::set_stay(nullptr);
     maps::reset();
     g_pending.clear();
     g_act_seq.clear();

@@ -1,6 +1,7 @@
 #include "coop/maps.h"
 
 #include "party/seat.h"
+#include "party/transit.h"
 
 #include "core/permission.h"
 #include "core/player.h"
@@ -191,6 +192,25 @@ void tick(std::int64_t now_us) {
             g_last = std::format("P{} arrived in {} (slot {})", it->seat, g_slots[it->slot].map, it->slot);
         }
         it = g_pending.erase(it);
+    }
+    // handoff: host P1 now stands in a map that is also loaded as a background instance (P1 went through a
+    // door into it): seats there move to the same local position in the foreground copy, then the background
+    // copy goes (the vanilla load and ours use different instance names, so both exist until then)
+    if (!party::transit::active()) {
+        const auto fg = ue::utf8(world::current_map_id());
+        for (int k = 1; k < kSlots; ++k) {
+            if (g_slots[k].map.empty() || g_slots[k].map != fg) continue;
+            for (const auto& seat : party::seats())
+                if (slot_of_seat(seat.slot) == k)
+                    if (auto* p = core::pawn(seat.slot))
+                        if (auto at = core::location(p)) place(seat.slot, {at->x, at->y - offset(k), at->z}), ++g_moves;
+            std::erase_if(g_pending, [k](const Pending& p) { return p.slot == k; });
+            world::level_instance::unload(fg);
+            g_slots[k] = {};
+            ++g_unloads;
+            g_last = std::format("handoff: P1 entered {} — seats moved to the foreground copy, background unloaded", fg);
+            log::info("coop: {}", g_last);
+        }
     }
     // grace unloads
     for (int k = 1; k < kSlots; ++k) {
