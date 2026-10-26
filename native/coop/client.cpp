@@ -89,6 +89,9 @@ bool g_resolved = false;
 std::uint64_t g_unknown_names = 0, g_bad_snaps = 0, g_applied = 0, g_anim_sets = 0, g_anim_fail = 0, g_kills = 0, g_act_bad = 0, g_act_absent = 0, g_rechecks = 0, g_leaks = 0, g_pawn_activated = 0;
 std::unordered_map<std::uint16_t, std::uint32_t> g_act_last;
 metrics::Histogram& h_apply = metrics::histogram("coop.client.apply_us");
+metrics::Histogram& h_motion = metrics::histogram("coop.client.motion_us");
+metrics::Histogram& h_input = metrics::histogram("coop.client.input_us");
+metrics::Histogram& h_slow = metrics::histogram("coop.client.slow_us"); // 1 Hz: equipment poll + recheck
 
 std::string guest_key() {
     const auto dir = std::filesystem::path(world::saved_dir()) / L"ELMP" / L"ELMP";
@@ -677,11 +680,18 @@ void present_motion(std::int64_t now_us) {
 
 void tick(std::int64_t now_us) {
     if (!g_seat || lifecycle::state() != lifecycle::State::Settled) return;
+    auto t0 = clock::now_us();
     present_motion(now_us);
+    auto t1 = clock::now_us();
+    h_motion.add(static_cast<double>(t1 - t0));
     equip_poll(now_us);
+    auto t2 = clock::now_us();
     send_input();
     follow(now_us);
+    auto t3 = clock::now_us();
+    h_input.add(static_cast<double>(t3 - t2));
     recheck(now_us);
+    if (t2 - t1 + clock::now_us() - t3 > 50) h_slow.add(static_cast<double>(t2 - t1 + clock::now_us() - t3));
 }
 
 void stop() {
