@@ -286,6 +286,7 @@ extern "C" __declspec(dllexport) const void* ELMP_GetApi(std::uint32_t version, 
 
 // ---- Lua bindings (same per-mod tables; the calling mod is identified by its lua_State) ----
 #include <LuaMadeSimple/LuaMadeSimple.hpp>
+#include <lua.hpp>
 #include <unordered_map>
 
 namespace elmp::sdk {
@@ -295,8 +296,16 @@ namespace {
 using RC::LuaMadeSimple::Lua;
 std::unordered_map<const void*, std::size_t> g_lua_mod; // lua_State* → index in g_mods
 
+// callbacks (ExecuteInGameThread, hooks) run on Lua threads of the mod's states: key by the main thread
+const void* main_thread(lua_State* L) {
+    lua_rawgeti(L, LUA_REGISTRYINDEX, LUA_RIDX_MAINTHREAD);
+    const void* m = lua_tothread(L, -1);
+    lua_pop(L, 1);
+    return m;
+}
+
 Mod* lua_mod(const Lua& lua) {
-    auto it = g_lua_mod.find(lua.get_lua_state());
+    auto it = g_lua_mod.find(main_thread(lua.get_lua_state()));
     return it == g_lua_mod.end() ? nullptr : &g_mods[it->second];
 }
 std::int64_t int_arg(const Lua& lua) { return lua.is_number() ? static_cast<std::int64_t>(lua.get_number()) : 0; }
@@ -398,7 +407,7 @@ void on_lua_start(std::wstring_view mod_name, Lua& lua, Lua& main, Lua& async, L
     };
     for (Lua* state : {&lua, &main, &async, hook}) {
         if (!state) continue;
-        g_lua_mod[state->get_lua_state()] = idx;
+        g_lua_mod[main_thread(state->get_lua_state())] = idx;
         for (const auto& [n, f] : fns) state->register_function(n, f);
     }
     log::info("sdk: C bindings injected into Lua mod '{}' ({} functions)", name, std::size(fns));
