@@ -443,6 +443,8 @@ std::string trace(const std::string& name) {
 std::string describe() {
     std::string out = std::format("host: peers={} parked={} names={} epoch={} actsSent={} actsDropped={}\n", g_peers.size(), g_parked.size(), g_names.size(), g_epoch,
                                   g_acts_sent, g_acts_dropped) + ability::describe();
+    for (const auto& [n, w] : g_world)
+        if (w.flags) out += std::format("  world {} flags={}{}\n", n, w.flags, w.actor.get() ? "" : " (actor gone)");
     for (const auto& [id, p] : g_peers)
         out += std::format("  peer {} -> P{} key={} seq={} acked={} input={} mapReady={} build=[{}]\n", id, p.slot, p.guest_key, p.seq, p.acked, p.stalled ? "stalled" : "live", p.map_ready, p.build_report);
     return out;

@@ -56,4 +56,5 @@
   | 144 | 371 µs | 191 µs | 6.94 / 7.0 ms |
   | 波动 40/144/75/30/120/60 | 407 µs | 208 µs | 8.3 / 33.3 ms（随上限切换） |
 
-  截图 `g4a-client.png`（Spine 敌人 + Lily）、`g4b-client.png`（两只 Lily Spine）；`g4p3-client.png`（church_07 士兵挥砍：Host 捕获的技能经 Client 原版入口重放，刀光技能特效与士兵 / Lily / 护卫精灵 Spine 同屏可见；`replayed=59 lifeCapped=59`）。church_07 无远程弹体敌人，技能特效 Actor 即本图的“弹体”类呈现。`[E-实测]`
+  截图 `g4a-client.png`（Spine 敌人 + Lily）、`g4b-client.png`（两只 Lily Spine）；`g4p3-client.png`（church_07 士兵挥砍：Host 捕获的技能经 Client 原版入口重放，刀光技能特效与士兵 / Lily / 护卫精灵 Spine 同屏可见；`replayed=59 lifeCapped=59`）。church_07 无远程弹体敌人，技能特效 Actor 即本图的“弹体”类呈现。
+- **§7.2 远程座位列：interact**（同日，两侧槽 2 church_12）：Host `perm 2 interact off`，P2（网络座位）传到 `BP_Interactable_Item_Tip1` 上，Client 按 INTERACT → Host `interact: delivered=0`、无弹窗；`perm 2 interact on` 后（座位需移动一次让交互组件重新选择：先偏 150 UU 再回）Tip 激活给 P2 的 PC，Client 按 INTERACT → Host `delivered=1 last='P2 interact -> BP_Interactable_Item_Tip1'`、Host 原版取得弹窗出现（Client 不弹，弹窗属 Host P1 UI）。缺陷：Client worldobj 把仍存在、未清除的 Tip1 隐藏了（待查 Host 侧为何置 gone 位）。`[E-实测]``[E-实测]`
