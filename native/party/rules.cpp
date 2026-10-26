@@ -54,7 +54,9 @@ bool inside(const Box& b, const core::Vec3& p) {
 }
 
 bool grant(std::int64_t slot, core::permission::Gate g) {
-    return g == core::permission::Gate::Travel && config::map_rule() == 1 && slot >= 2 && slot <= 100 && party::seat(slot) != nullptr;
+    // rules 1 / 2 are for local seats only (§7.4); a remote (network) seat keeps its own travel gate (C18)
+    const auto* s = party::seat(slot);
+    return g == core::permission::Gate::Travel && config::map_rule() == 1 && slot >= 2 && slot <= 100 && s && s->source != party::Source::Network;
 }
 
 } // namespace
