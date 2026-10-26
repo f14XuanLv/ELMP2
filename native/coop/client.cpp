@@ -599,6 +599,7 @@ void tick(std::int64_t now_us) {
 }
 
 void stop() {
+    const bool was_seated = g_seat != 0;
     drop_copies();
     for (auto& [name, t] : g_taken)
         if (auto* e = t.enemy.get(); e && g_set_tick.ok()) {
@@ -620,7 +621,7 @@ void stop() {
     g_input = {};
     // The local world was a presentation of the host's (enemies frozen with AI gated, objects hidden):
     // fail closed by returning to the title instead of continuing single-player on it (P2 decision).
-    if (lifecycle::state() == lifecycle::State::Settled) {
+    if (was_seated && lifecycle::state() == lifecycle::State::Settled) { // a rejected / never-seated join changed nothing
         static reflect::FuncRef open = reflect::Resolver("GameplayStatics", reflect::find_class(L"/Script/Engine.GameplayStatics")).func(L"OpenLevel", 4);
         auto* cdo = reflect::find_object(L"/Script/Engine.Default__GameplayStatics");
         if (open.ok() && cdo) {
