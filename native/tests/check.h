@@ -17,9 +17,9 @@ inline int g_failures = 0;
         }                                                                                               \
     } while (0)
 
-#define TEST_MAIN(body)                                                                                 \
+#define TEST_MAIN(...)                                                                                  \
     int main() {                                                                                        \
-        body;                                                                                           \
+        __VA_ARGS__;                                                                                    \
         if (::elmp::test::g_failures) std::fprintf(stderr, "%d failure(s)\n", ::elmp::test::g_failures); \
         return ::elmp::test::g_failures;                                                                \
     }

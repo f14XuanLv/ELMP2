@@ -32,12 +32,12 @@ if defined ELMP_FETCH_CACHE set "CARGO_NET_OFFLINE=true"
 set "DO_CLEAN=0"
 set "DO_TEST=0"
 set "DO_PACKAGE=0"
-set "TARGETS=ELMP_Dev ELMP ElmpFrameProbe test_manifest test_storage test_bus_slots test_lua_literal"
+set "TARGETS=ELMP_Dev ELMP ElmpFrameProbe test_manifest test_storage test_bus_slots test_lua_literal test_net_codec test_net_transport test_net_handshake"
 for %%A in (%*) do (
     if /I "%%~A"=="clean" set "DO_CLEAN=1"
     if /I "%%~A"=="test" set "DO_TEST=1"
     if /I "%%~A"=="package" set "DO_PACKAGE=1"
-    if /I "%%~A"=="base" set "TARGETS=elmp_base test_manifest test_storage test_bus_slots test_lua_literal"
+    if /I "%%~A"=="base" set "TARGETS=elmp_base test_manifest test_storage test_bus_slots test_lua_literal test_net_codec test_net_transport test_net_handshake"
 )
 
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"

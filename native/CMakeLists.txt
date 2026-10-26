@@ -12,11 +12,14 @@ add_library(elmp_base STATIC
     base/slots.cpp
     base/settings.cpp
     base/lua_literal.cpp
+    net/crypto.cpp
+    net/transport.cpp
+    net/endpoint.cpp
 )
 target_include_directories(elmp_base PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${ELMP_GENERATED_DIR})
 target_compile_definitions(elmp_base PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
 target_compile_options(elmp_base PRIVATE /W4 /utf-8)
-target_link_libraries(elmp_base PUBLIC bcrypt)
+target_link_libraries(elmp_base PUBLIC bcrypt ws2_32)
 set_target_properties(elmp_base PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
 set(ELMP_MOD_SOURCES
@@ -113,7 +116,7 @@ set_target_properties(ElmpFrameProbe PROPERTIES
 )
 
 if(BUILD_TESTING)
-    foreach(t test_manifest test_storage test_bus_slots test_lua_literal)
+    foreach(t test_manifest test_storage test_bus_slots test_lua_literal test_net_codec test_net_transport test_net_handshake)
         add_executable(${t} tests/${t}.cpp)
         target_link_libraries(${t} PRIVATE elmp_base)
         target_compile_options(${t} PRIVATE /utf-8)
