@@ -5,7 +5,7 @@
 > 只有在全部完成、或某阶段门槛经充分尝试仍无法达成（写明尝试、证据、剩余选项）时才报告 goal 完成或 blocked。需要我决定的产品问题：先按需求树已有定案与 fail closed 默认继续其他工作，把问题集中列出，不要停下等。
 > **进度以 §7 的勾选表为准**：每完成一项就在该行打勾并补「日期 · 证据（kb 节 / 截图 / 命令输出）· commit」；下面「当前进行中」一行同步更新。goal 完成 = §7 全部打勾。
 
-**当前进行中**：§2 P4（2026-10-27）。P1–P3 全部打勾。**modes/hunter 已编译（commit HEAD，未测；测法：redeploy 两实例连入 church_07，Host `elmp join` 加本地 PX，`elmp hunter start grace 5 kills 1`，看 `elmp hunter`、冻结 / 释放、`elmp kill 1` 让 P1 死 → hunters win、猎人死后 8 s 复活）**，设计：`native/modes/hunter.{h,cpp}` 状态机 Idle → Grace（headStartSec 15，猎人 respawn::freeze）→ Running → Ended(winner, reason)；开局 `elmp hunter start [kills N] [time S] [grace S] [target boss|map <id>] [progress mirror|preset]`：全部座位 team enemy + pvp、猎人 travel on；胜负：P1 死亡次数（vitals alive 下降沿）≥ hunterTargetKills → 猎人胜，timeLimitSec 到 → 猎人胜，速通到目标图 / 前台图 Boss 出生点由未清除变已清除 → 速通胜；猎人死亡由 hunter 接管（respawn 加 override 谓词跳过默认 1.5 s 复活 / 召回），8 s 后在所在图 PlayerStart 满状态复活（maps 暴露 player_start）；progress 加 mirror-only 谓词（猎人收益不写回 P1）；preset = profile full；指南针：Host 本地 PX HUD 行 + 新增 proto HunterMsg（state/kills/need/remaining/runnerMap/runner 相对方向）给远程猎人 Client 覆盖层显示。实例：Host2 / Client2 / Client3 运行中（`%TEMP%\elmp_redeploy.ps1` / `elmp_redeploy3.ps1`）。
+**当前进行中**：§2 P4（2026-10-27）。P1–P3 全部打勾。**hunter 两行已勾；下一步 sdk**（C ABI `elmp_sdk.h` + `ELMP_GetApi`）；hunter 设计备查：`native/modes/hunter.{h,cpp}` 状态机 Idle → Grace（headStartSec 15，猎人 respawn::freeze）→ Running → Ended(winner, reason)；开局 `elmp hunter start [kills N] [time S] [grace S] [target boss|map <id>] [progress mirror|preset]`：全部座位 team enemy + pvp、猎人 travel on；胜负：P1 死亡次数（vitals alive 下降沿）≥ hunterTargetKills → 猎人胜，timeLimitSec 到 → 猎人胜，速通到目标图 / 前台图 Boss 出生点由未清除变已清除 → 速通胜；猎人死亡由 hunter 接管（respawn 加 override 谓词跳过默认 1.5 s 复活 / 召回），8 s 后在所在图 PlayerStart 满状态复活（maps 暴露 player_start）；progress 加 mirror-only 谓词（猎人收益不写回 P1）；preset = profile full；指南针：Host 本地 PX HUD 行 + 新增 proto HunterMsg（state/kills/need/remaining/runnerMap/runner 相对方向）给远程猎人 Client 覆盖层显示。实例：Host2 / Client2 / Client3 运行中（`%TEMP%\elmp_redeploy.ps1` / `elmp_redeploy3.ps1`）。
 **需要用户**：①若要补测 G3 门 / 宝箱 / Boss 窗口专项，请提供一个入口图里有未开门 / 宝箱、可进入未打 Boss 的存档放到 Host2/Client2（当前按同通路代证 + Boss fail closed 继续）；（P2 自行定案已记 net-facts：本地 P1 预测 + >150 UU 回拉；Client 离开会话回标题；可破坏物 Client 只隐藏不回放破坏）
 
 ## 0. 恢复上下文（每轮先读）
@@ -127,8 +127,8 @@
 - [x] P3 阶段报告 + 需求树 §7 追加实施决定 + README「当前阶段」 —— 2026-10-27 · 证据：net-facts「P3 阶段报告」、需求树 §7.18、README「P3 … 已完成」 · commit 本提交
 
 ### P4 猎人模式 + SDK
-- [ ] `modes/hunter` 实现（阵营、15 s 宽限冻结、胜负与单调计时、进度源 mirror / preset、8 s PlayerStart 复活、独立 travel、椅子只回满自己、指南针 HUD、`elmp hunter …`）
-- [ ] 猎人规则在 Host + 2 客人（或本地 PX 混合）上验收
+- [x] `modes/hunter` 实现（阵营、15 s 宽限冻结、胜负与单调计时、进度源 mirror / preset、8 s PlayerStart 复活、独立 travel、椅子只回满自己、指南针 HUD、`elmp hunter …`） —— 2026-10-27 · 证据：net-facts「P4 实测 / modes/hunter」 · commit 本提交及前
+- [x] 猎人规则在 Host + 2 客人（或本地 PX 混合）上验收 —— 2026-10-27 · 证据：net-facts「P4 实测 / modes/hunter」（1 网络客人 + 2 本地 PX 混合：宽限、PvP 阵营、指南针、8 s 入口复活、两种胜负） · commit 本提交
 - [ ] `sdk`：C ABI `elmp_sdk.h` + `ELMP_GetApi` 版本化函数表；`elmp.json` 依赖与 slot 范围、重叠拒绝；事件订阅每 Mod 一个游标；第三方对象联机报未支持
 - [ ] 向第三方 Lua Mod 注入 C 绑定（不注入 Lua 源码）
 - [ ] 示例 LilyFollower（1001）/ LilyEnemy（2001）跑通

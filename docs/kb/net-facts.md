@@ -100,3 +100,7 @@
 - **遗留 / 已知限制**：后台图里的 AbilityComponent 会响应前台切图事件（前台切图时清掉后台正在放的技能）；后台图不加载 AUDIO / EVENT / Map / Common_LIGHT（无音效、剧情事件 fail closed）；后台槽 3 个（满则拒绝）；Client 进入后台图只看到同图的座位。
 - **实例最终状态**：Host2 / Client2 / Client3 运行中，Host 存档未被 P3 写入（未休息 / 保存）；Host 槽 3 已从备份还原。
 - **下一阶段（P4）产品问题**：无新增，按需求树猎人模式 / SDK 定案实施。
+
+## P4 实测
+- **modes/hunter**（2026-10-27，Host2 槽 0 church_08 + Client2 网络座位 P2 + 本地 PX P3 / P4，混合编制）：`elmp hunter start grace 5 kills 1 respawn 8` → 三名猎人 team enemy（`elmp pvp`：`P1=friendly P2=enemy P3=enemy P4=enemy`，PvP 窗口 armed），宽限期 `head start 5s→3s` 倒数、猎人冻结（MOVE_None），5 s 后 `running` 并释放；指南针：同图 `runner > 210` / `runner < 523` / `runner <v 3996`（方向 + 距离），异图显示 `runner in <mapId>`；Host 顶部横幅 + 每个网络猎人收到自己的横幅（`Control` code 10；Client 截图 `client\Saved\ELMP\pilot\shots\hunt1-client.png` 顶部 “HUNT hunters win (runner killed 1 time(s))”）。猎人死亡由模式接管：`elmp kill 4 9999` → `deaths=1`，原版 death 动画 8 s 内不复活（party/respawn 的 1.5 s 复活被 override 跳过），8 s 后在所在图入口 PlayerStart（Y 2030）满状态复活 `respawns=1 hp 400/400`。速通选手死亡（eval DoDamage P1）→ `ended  hunters win (runner killed 1 time(s))`。第二局 `target map_church_07 time 300`：P1 走进 church_07 门 → `runner win (reached map_church_07)`。进度：猎人 mirror-only（`progress.set_mirror_only`，收益不写回 P1，P1 仍镜像给猎人）；`progress preset` 时 FULL 档案。猎人 travel 闸门开（远程猎人进门只切自己的后台实例，见 P3「coop/maps」）、rest 闸门关（椅子只回满自己，party/bench）。`[E-实测]`
+
