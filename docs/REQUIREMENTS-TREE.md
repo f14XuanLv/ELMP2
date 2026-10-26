@@ -434,6 +434,8 @@ ELMP 包零 Lua；对 Lua Mod 注入 C 函数；语法糖随 SDK 仓库。`elmp.
 3. **P1 进入后台图**：后台实例就绪即清空其 PlayerStart 原版标签（防原版落点选中后台副本）；原版切图完成后座位按局部坐标移交到前台副本，再卸载后台。
 4. **快照按对端座位所在图过滤并平移**；不同图的 Host P1 / 其他座位不出现在该 Client。
 5. 后台图只加载 GEO / DESIGN / GAMEPLAY（不加载 AUDIO / EVENT / Map / Common_LIGHT：剧情事件 fail closed）。
+6. **Boss 房识别**：后台实例内未清除的 `BP_EnemySpawnPoint_Boss_C` 或 Boss id 类活敌人 → 拒绝到达；`DT_RecollectionBossData` 列的重温竞技场整图拒绝；表不可读 → 一律拒绝后台移动。
+7. **已知限制（接受）**：后台图对象收到的切图 / 就绪 / 加载中事件是前台语义（AbilityComponent 在前台切图时清理生成物）；OnOpenNewArea 原版不对 PX 的 PC 发出，不另加抑制。
 
 ---
 

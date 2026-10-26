@@ -91,3 +91,12 @@
   - **缓存子系统指针**：`0xC99770`（组件 BeginPlay 把 WorldLoaderSubsystem 存到 `+184`、另一子系统 `0xD0A7A0` 存到 `+176`）、`0xC9A9F0`（组件 BeginPlay 注册全局委托 `qword_1441962B0`，再缓存同两个子系统）。
   - **对多地图的含义**：这些全是“全局切图 / 就绪 / 加载中”语义，以前台图（P1）为准；后台实例里的对象收到的 OnGameMapSwitch / Ready 是前台事件（AbilityComponent 在前台切图时清理生成物 —— 后台图里正在放的技能会被清；已知限制，记入 P3 报告）。按图记账的读者只有已 Hook 的 `0xCAAFF0` / `0xC997B0`（map_context）与重生相关的 `0xCF1A20` / `0xCE61E0` / `0xCDC1C0`（只对 P1 的 PC 生效；网络座位复活走 ELMP party/respawn，不经它们）、`0xD0B8A0`（按当前区域查表，区域标题 / BGM，前台语义）。
 - **后台图有人战斗时的帧时间**（2026-10-27，Host2 槽 0 前台 church_08 + 后台 church_07 槽 1，P2 在后台图与 Soldier 交战：P2 HP 400 → 312、Host 发出 13 个动作事件，Client 连按 25 次攻击，17 s）：Host `frame.elmp_us` mean 228 / P50 213 / P95 322 / **P99 449** / max 970 µs，帧间隔 P50 16.667 ms / P99 16.81 ms（max 70 ms 一次，后台加载流式期间）；Client mean 103 / P99 625 µs（max 4.4 ms 与帧间隔 551 ms 来自 Client 自身切图加载那一刻）。门槛 Host+guest P99 < 1 ms 达标。`[E-实测]`
+
+## P3 阶段报告（2026-10-27）
+- **构建了什么**：`native/world/level_instance`（后台图子关卡原生加载 / 卸载 / 就绪 / 对象归属 + map_context 两个 detour）、`native/coop/maps`（槽位 / Y 带、网络座位门轮询、后台到达、10 s 宽限卸载、P1 进入后台图移交、Boss 房 fail closed）、Host 按对端座位图过滤平移快照 + 按座位图发 Map、`party/transit` 不带走后台图座位、permission 网络座位原版门恒忽略；第三实例 `client2`；Dev `elmp lan bg load|unload|boss|status`。
+- **门槛逐项**：多对端 / 两客人同图 G1–G4（Host P99 427 µs）；满员 Full；level_instance（village_04 28 敌）；map_context（ClearedActors 键 map_village_04）；host/maps 生命周期（church_07 后台到达 Y 308530、宽限卸载、P1 移交）；坐标 / 兴趣过滤（Client 独自在 church_07，24 敌减偏移全等）；后台战斗 / 记账（Slime14 IsCleared、remapped）；Boss 房（槽 2 village_10 true / 槽 0 false）；12 读者 IDA 分类；后台战斗帧时间 Host P99 449 µs。
+- **更正过的事实**：原版子关卡包路径是 `/Game/_Zenith/Maps/AreaMaps/<Area>/<Area>_NN/<Area>_NN_<Part>`（v1 的 `Map_<Area>_NN` 不对）；`Resolver::func` 参数数不含返回值；`DT_RecollectionBossData` 只列重温竞技场，剧情 Boss 房靠 `BP_EnemySpawnPoint_Boss_C`；后台实例的 PlayerStart 与原版同标签会抢走 P1 落点；12 个 `0xD0A850` 调用方无一读 CurrentGameMapID；OnOpenNewArea 是 BlueprintEvent 且不对 PX 的 PC 发出。
+- **测试辅助（登记）**：`%TEMP%\elmp_redeploy3.ps1`（三实例部署 + 两客人连入 church_07）、`elmp_findchest.ps1`、eval `RegisterHook(OnOpenNewArea)` 计数（写 `_G`）、`elmp lan bg …`、IDA 会话 `idb_open`（`run_auto_analysis=false`）。
+- **遗留 / 已知限制**：后台图里的 AbilityComponent 会响应前台切图事件（前台切图时清掉后台正在放的技能）；后台图不加载 AUDIO / EVENT / Map / Common_LIGHT（无音效、剧情事件 fail closed）；后台槽 3 个（满则拒绝）；Client 进入后台图只看到同图的座位。
+- **实例最终状态**：Host2 / Client2 / Client3 运行中，Host 存档未被 P3 写入（未休息 / 保存）；Host 槽 3 已从备份还原。
+- **下一阶段（P4）产品问题**：无新增，按需求树猎人模式 / SDK 定案实施。

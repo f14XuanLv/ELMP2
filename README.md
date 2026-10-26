@@ -34,7 +34,9 @@
 
 **P2 同图联机已完成（2026-10-27）**：`native/net`（CNG ECDH P-256 + 配对码 HKDF / HMAC + AES-256-GCM、UDP 可靠有序 / 不可靠最新双通道、ACK 位图 / RTO / 分片 / F_CLOSE / 多对端表、全部有界队列；typed 位掩码增量快照 + 名字表；3 类 CTest）、`native/guard`（结算拦截、`IsPlayer` 跳板、存档保护、碰撞 / tick 原语闸、AI / 角色激活闸、回放窗口）、`native/coop`（session、Host 远程座位 / 输入 / 快照 / 跟图 / 构筑与装备通路、Client 接管冻结 + 1 Hz 复检 / 插值呈现 / 本地 P1 预测与回拉 / P1 呈现模式、动作通道 `LaunchAbilityFromDescription` 原生 pre 取参 → Client 同入口重放、六个 `IEntityAdapter`：lily / enemy / enemy_dyn / worldobj / story / pickup）、管理器「Online」页；控制台 `elmp lan host|join|leave|status|trace`。Host2 / Client2 实测（G1–G4、晚加入、断线重连、P1 死亡不误判、PvP、§7.2 远程 / Client 两列、性能 Host P99 0.49 ms / Client 0.30 ms）见 `docs/kb/net-facts.md`；实施决定见需求树 §7.17。
 
-**P3 多客人 + 多地图（进行中）**：第三隔离实例 `client2` 与满员 Full 已就位。
+**P3 多客人 + 多地图已完成（2026-10-27）**：`native/world/level_instance`（后台图子关卡以 `ELMP_BG_<mapId>__<Part>` 在 Y +300000·k 原生加载、map_context 两个 detour 让清除按所属图记账）、`native/coop/maps`（网络座位进门 → 前台或后台实例、10 s 宽限卸载、P1 进入后台图移交、Boss 房 fail closed）、快照按对端座位图过滤平移；两客人同图、满员 Full、第三实例 `client2`；控制台 `elmp lan bg load|unload|boss`。实测见 `docs/kb/net-facts.md`「P3 实测」及之后各节；实施决定见需求树 §7.18。
+
+**P4 猎人模式 + SDK（进行中）**。
 
 ## 与现仓库的关系
 
