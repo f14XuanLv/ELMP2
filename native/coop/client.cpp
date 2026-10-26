@@ -128,17 +128,9 @@ void send_input() {
     if (const auto n = proto::encode(g_input, g_buf)) coop::send_unreliable(0, proto::kInputStream, std::span(g_buf.data(), n));
 }
 
-void take(const std::string& name, ue::UObject* enemy) {
-    auto* controller = core::schema::script() ? core::schema::script()->pawn_controller.object(enemy) : nullptr;
-    guard::mark(enemy);
-    guard::mark(controller);
-    if (g_set_tick.ok()) {
-        reflect::Frame f(g_set_tick);
-        f.arg_bool(0, false);
-        f.invoke(enemy);
-    }
-    // Freeze every component except presentation (v1 net-facts「会话与呈现」whitelist); the Spine state
-    // machine (SpineAnimationComponent) would otherwise overwrite track 0 every frame.
+// Freeze every component except presentation (v1 net-facts「会话与呈现」whitelist); the Spine state
+// machines (enemy SpineAnimationComponent / Lily animation logic) would otherwise overwrite track 0.
+void freeze(ue::UObject* enemy) {
     static reflect::FuncRef set_comp_tick;
     static ObjHandle comp_cls;
     if (!set_comp_tick.ok()) {
@@ -165,6 +157,18 @@ void take(const std::string& name, ue::UObject* enemy) {
                 }
             }
     }
+    if (g_set_tick.ok()) {
+        reflect::Frame f(g_set_tick);
+        f.arg_bool(0, false);
+        f.invoke(enemy);
+    }
+}
+
+void take(const std::string& name, ue::UObject* enemy) {
+    auto* controller = core::schema::script() ? core::schema::script()->pawn_controller.object(enemy) : nullptr;
+    guard::mark(enemy);
+    guard::mark(controller);
+    freeze(enemy);
     g_taken[name] = {ObjHandle::of(enemy), ObjHandle::of(controller)};
 }
 
@@ -277,6 +281,8 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
                 fc.arg_bool(0, false);
                 fc.invoke(p);
             }
+            resolve();
+            freeze(p);
             guard::mark(p);
             guard::mark_not_player(p, true);
             c.anim = 0, c.facing = 0;
@@ -288,6 +294,14 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
             reflect::Frame tp(s.actor_teleport);
             tp.arg(0, core::Vec3{row.x, row.y, row.z}).arg_bool(1, false).arg_bool(3, true);
             tp.invoke(p);
+        }
+        if (auto* hp = s.zc_hp.object(p)) { // presented vitals (host values; the copy never settles)
+            *s.hp_max.at<std::int32_t>(hp) = row.mhp;
+            *s.hp_curr.at<std::int32_t>(hp) = row.hp;
+        }
+        if (auto* mp = s.zc_mp.object(p)) {
+            *s.mp_max.at<std::int32_t>(mp) = row.mmp;
+            *s.mp_curr.at<std::int32_t>(mp) = row.mp;
         }
         if (row.facing && row.facing != c.facing && g_set_rotation.ok()) {
             reflect::Frame fr(g_set_rotation);
