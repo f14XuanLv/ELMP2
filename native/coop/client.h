@@ -9,5 +9,6 @@ namespace elmp::coop::client {
 
 void install(); // registers the Client handlers with coop/session
 std::string describe();
+std::string trace(const std::string& spawn_point); // Dev: returns the previous trace, starts a new one (240 frames of presented Y)
 
 } // namespace elmp::coop::client

@@ -619,6 +619,8 @@ void equip_poll(std::int64_t now_us) {
 // (offset tracks the earliest arrival: max of host_t − local, slowly decaying) minus a 100 ms buffer; each
 // taken enemy is placed between the two samples that bracket it. Gaps > 500 ms jump straight to the new
 // sample (no slow slide after silence); past the newest sample it holds (no extrapolation).
+std::string g_trace_name;
+std::vector<float> g_trace;
 double g_offset_ms = 0;
 bool g_offset_known = false;
 std::uint64_t g_motion_writes = 0;
@@ -652,6 +654,7 @@ void present_motion(std::int64_t now_us) {
         } else if (b != a && b->t - a->t > 500 && render >= a->t) {
             p = {b->x, b->y, b->z};
         }
+        if (n == g_trace_name && g_trace.size() < 240) g_trace.push_back(p.y); // Dev: per-frame presented Y
         if (auto at = core::location(e); at && (std::fabs(at->x - p.x) + std::fabs(at->y - p.y) + std::fabs(at->z - p.z)) > 0.2f) {
             reflect::Frame tp(s->actor_teleport);
             tp.arg(0, p).arg_bool(1, false).arg_bool(3, true);
@@ -708,6 +711,14 @@ void stop() {
 void on_closed(std::uint32_t, const std::string&, net::Reject) {}
 
 } // namespace
+
+std::string trace(const std::string& name) {
+    std::string out;
+    for (float y : g_trace) out += std::format("{:.1f} ", y);
+    g_trace_name = name;
+    g_trace.clear();
+    return out.empty() ? "(tracing " + name + ")" : out;
+}
 
 std::string describe() {
     return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} copies={} reconciles={} kills={} actBad={} actAbsent={} rechecks={} aiLeaks={} world={} equipRequests={} motionWrites={} presses(attack)={}\n{}{}", g_seat,
