@@ -240,7 +240,11 @@ void on_launch(const ability::Launch& l) {
 void send_acts() {
     for (auto& p : g_pending) {
         auto* owner = p.owner.get();
-        auto* sp = owner && g_resolved ? g_spawn_point.object(owner) : nullptr;
+        // SourceSpawnPoint is a ZenithCharacter property: spirits / projectiles / other owners must not be
+        // read with it (access violation 0x40000000d when a lily's spirit launched an ability)
+        static ue::UClass* zc = reflect::find_class(L"/Script/Zenith.ZenithCharacter");
+        if (!owner || !zc || !owner->GetClassPrivate()->IsChildOf(zc)) continue;
+        auto* sp = g_resolved ? g_spawn_point.object(owner) : nullptr;
         if (!sp) continue; // only spawn-point enemies have a stable id (dynamic enemies: ed adapter)
         auto act = p.l.act;
         act.net_id = name(ue::utf8_name(sp));
