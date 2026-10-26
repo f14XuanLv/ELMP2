@@ -90,6 +90,7 @@ std::uint64_t g_unknown_names = 0, g_bad_snaps = 0, g_applied = 0, g_anim_sets =
 std::unordered_map<std::uint16_t, std::uint32_t> g_act_last;
 metrics::Histogram& h_apply = metrics::histogram("coop.client.apply_us");
 metrics::Histogram& h_motion = metrics::histogram("coop.client.motion_us");
+metrics::Histogram& h_write = metrics::histogram("coop.client.motion_write_us");
 metrics::Histogram& h_input = metrics::histogram("coop.client.input_us");
 metrics::Histogram& h_slow = metrics::histogram("coop.client.slow_us"); // 1 Hz: equipment poll + recheck
 
@@ -672,7 +673,9 @@ void present_motion(std::int64_t now_us) {
         if (auto at = core::location(e); at && (std::fabs(at->x - p.x) + std::fabs(at->y - p.y) + std::fabs(at->z - p.z)) > 0.2f) {
             reflect::Frame tp(s->actor_teleport);
             tp.arg(0, p).arg_bool(1, false).arg_bool(3, true);
+            const auto w0 = clock::now_us();
             tp.invoke(e);
+            h_write.add(static_cast<double>(clock::now_us() - w0));
             ++g_motion_writes;
         }
     }
