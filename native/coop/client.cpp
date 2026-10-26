@@ -52,7 +52,8 @@ std::uint64_t g_reconciles = 0;
 struct Taken {
     ObjHandle enemy, controller, spine;
     std::uint16_t anim = 0;
-    bool killed = false;
+    bool killed = false, hidden = false;
+    std::uint32_t frame = 0; // last snapshot that carried the row
 };
 
 std::uint8_t g_seat = 0;
@@ -69,7 +70,7 @@ std::unordered_map<std::string, Taken> g_taken; // spawn point name → local en
 std::uint64_t g_index_version = ~0ull;
 std::unordered_map<std::string, ObjHandle> g_index; // spawn point name → enemy (rebuilt on registry change)
 reflect::PropRef g_spawn_point;
-reflect::FuncRef g_set_tick;
+reflect::FuncRef g_set_tick, g_set_collision, g_set_rotation;
 bool g_resolved = false;
 std::uint64_t g_unknown_names = 0, g_bad_snaps = 0, g_applied = 0, g_anim_sets = 0, g_anim_fail = 0, g_kills = 0;
 metrics::Histogram& h_apply = metrics::histogram("coop.client.apply_us");
@@ -198,22 +199,14 @@ void apply(const snap::Frame& f) {
         }
         auto& t = g_taken[*name];
         if (auto* hp = s->zc_hp.object(enemy)) {
-            if ((row.flags & 4) && !t.killed) {
-                // host-confirmed death: replay it through the vanilla pipeline (death animation / drops of the
-                // presentation; the guard lets exactly this damage through, nothing else settles here)
-                *s->hp_curr.at<std::int32_t>(hp) = 1;
-                static reflect::FuncRef dmg;
-                if (!dmg.ok()) dmg = reflect::Resolver("HPComponent", reflect::find_class(L"/Script/Zenith.HPComponent")).func(L"DoDamage", 4);
-                guard::open_replay(enemy);
-                reflect::Frame(dmg).arg(0, static_cast<ue::UObject*>(nullptr)).arg(1, 1).arg_bool(2, false).arg_bool(3, false).invoke(hp);
-                guard::close_replay(enemy);
-                t.killed = true;
-                ++g_kills;
-            } else if (!t.killed) {
-                *s->hp_curr.at<std::int32_t>(hp) = row.hp; // property write (no SetCurrHP in vanilla)
-            }
+            // property write (no SetCurrHP in vanilla). Death is presentation only: the host's death pose keeps
+            // streaming while the row exists; when the host removes the actor the copy is hidden (below). The
+            // vanilla death pipeline is never run here (it would clear the client's spawn point — v1 net-facts
+            // 「重构后联机验收」defect 1).
+            *s->hp_curr.at<std::int32_t>(hp) = row.hp;
+            if ((row.flags & 4) && !t.killed) t.killed = true, ++g_kills;
         }
-        if (t.killed) continue;
+        t.frame = g_latest;
         if (row.anim && row.anim != t.anim) { // pose: switch track 0 only on an animation change (§16)
             const auto* anim = g_names.text(row.anim);
             if (!t.spine.get()) {
@@ -231,6 +224,23 @@ void apply(const snap::Frame& f) {
             }
         }
     }
+    // host-dead enemies whose row is gone: the host destroyed them → hide + no collision (residency: a row
+    // absent without a death is an unload / interest change and stays as it was)
+    static reflect::FuncRef hide;
+    if (!hide.ok()) hide = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).func(L"SetActorHiddenInGame", 1);
+    for (auto& [n, t] : g_taken)
+        if (t.killed && !t.hidden && t.frame != g_latest)
+            if (auto* e = t.enemy.get(); e && hide.ok()) {
+                reflect::Frame h(hide);
+                h.arg_bool(0, true);
+                h.invoke(e);
+                if (g_set_collision.ok()) {
+                    reflect::Frame fc(g_set_collision);
+                    fc.arg_bool(0, false);
+                    fc.invoke(e);
+                }
+                t.hidden = true;
+            }
     present_lilies(f, *s);
     ++g_applied;
     h_apply.add(static_cast<double>(clock::now_us() - t0));
@@ -245,7 +255,6 @@ struct Copy {
     bool seen = false;
 };
 std::map<std::uint16_t, Copy> g_copies;
-reflect::FuncRef g_set_collision, g_set_rotation;
 
 void drop_copy(std::uint16_t key) {
     auto it = g_copies.find(key);
