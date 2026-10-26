@@ -5,7 +5,7 @@
 > 只有在全部完成、或某阶段门槛经充分尝试仍无法达成（写明尝试、证据、剩余选项）时才报告 goal 完成或 blocked。需要我决定的产品问题：先按需求树已有定案与 fail closed 默认继续其他工作，把问题集中列出，不要停下等。
 > **进度以 §7 的勾选表为准**：每完成一项就在该行打勾并补「日期 · 证据（kb 节 / 截图 / 命令输出）· commit」；下面「当前进行中」一行同步更新。goal 完成 = §7 全部打勾。
 
-**当前进行中**：§2 P2（2026-10-27）。P2 未勾只剩：③联机页行（只差 Full，需 P3 第三实例）④G3（门/宝箱/剧情/Boss 窗口）⑤P2 报告。**②已完成，下一步 G3（门 / 宝箱 / Boss 窗口）然后 P2 报告**；church_07 战斗后 `elmp_slot.ps1` 回标题时 Client 两次崩在 `ability::replay → LaunchAbilityFromDescription`（AV 0x130），已加三道守卫（落座 / 世界稳定加载器空闲 / 仅已接管未隐藏敌人），复现方法：`elmp_p2setup.ps1` 后跑 `elmp_slot.ps1 -Slot 2`；G3 门测：槽 2 `BP_Interactable_AlchemistLock_3m_2`（@−4700,90，Host 未清除）；②旧计划：新建 `native/coop/entity.h`（`IEntityAdapter{name, write_host(Frame&,now), apply_client(const Frame&), tick_client(now), reset(), describe()}` + `adapters()` 注册表），worldobj 迁到 `coop/entities/worldobj.cpp`、触发器拆成 `entities/story.cpp`、新增 `entities/pickup.cpp`（Host pk 行：Collectable 桶，key=Host 分配 dyn id，cls=类路径名 id；Client 用 `GameplayStatics:BeginDeferredActorSpawnFromClass + FinishSpawningActor` 生成呈现副本，关碰撞、行消失即销毁）与 `entities/enemy_dyn.cpp`（无出生点敌人：ed 行 key=dyn id、type=类路径；Client 先收养同类 ≤300 UU 本地对象，否则同法生成并按 enemy 接管冻结）；enemy / lily 包成适配器类留在 host.cpp / client.cpp（与 g_taken 等共用状态）。实例：Host2/Client2 运行中、槽 0 church_08、会话已连；脚本 `%TEMP%\elmp_redeploy.ps1`、`elmp_slot.ps1 -Slot N`（两侧回标题读槽 + 连会话）、`elmp_tpto.ps1 [-Inst client] [-Slot 1] -Actor <名> [-Dy] [-Dz]`、`elmp_p2setup.ps1`、`elmp_g4.ps1`（三档帧时间）、`elmp_pick.lua`（P2 脚下打碎白花）；Dev 命令 `elmp lan trace <出生点>`；崩溃符号化 `%TEMP%\symaddr.py <main.dll> <off…>`。**Host 槽 0 存档已被 rest 测试改写，P2 收尾时用 `%TEMP%\elmp_bak_host_p2` 还原**。
+**当前进行中**：§2 P3（2026-10-27）。P2 全部打勾。P3 已勾：第三实例 client2、满员 Full。下一步：多对端独立基线 / epoch / `me` 与两客人同图 G1–G4（Host + client + client2），然后 world/level_instance（后台图加载）、map_context、host/maps 生命周期、图 id + 局部坐标、§7.3 读者 IDA 分类。实例：Host2 已停（存档已还原），Client2 / Client3(client2) 运行中；脚本见 P2 报告（net-facts 末尾）。
 **需要用户**：①若要补测 G3 门 / 宝箱 / Boss 窗口专项，请提供一个入口图里有未开门 / 宝箱、可进入未打 Boss 的存档放到 Host2/Client2（当前按同通路代证 + Boss fail closed 继续）；（P2 自行定案已记 net-facts：本地 P1 预测 + >150 UU 回拉；Client 离开会话回标题；可破坏物 Client 只隐藏不回放破坏）
 
 ## 0. 恢复上下文（每轮先读）
@@ -106,7 +106,7 @@
 - [x] §7.2 矩阵「Host 上远程座位」列 —— 2026-10-27 · 证据：net-facts「§7.2 远程座位列：interact」「trigger.world + Client 列」「pickup 远程座位」「travel / rest 远程座位」（story 以机制证据，Host2 存档无未消耗剧情触发器） · commit 本提交 / interact 复查闸门 / 规则 1 排除网络座位
 - [x] §7.2 矩阵「Client 副本」列 —— 2026-10-27 · 证据：net-facts「§7.2 Client 副本列」 · commit 本提交 / P1 呈现模式
 - [x] 性能：Host+1 客人 ELMP P99 < 1.0 ms；Client 呈现 P99 < 1.0 ms；无会话时 G0 仍成立（`g0.reflect_calls = 0`，对裸 UE4SS P99 差 < 0.2 ms） —— 2026-10-26 · 证据：net-facts「性能（Host + 1 客人）」（Host P99 426 µs、Client P99 147 µs、g0.reflect_calls 0） · commit 本提交
-- [ ] P2 阶段报告 + 需求树 §7 追加实施决定 + README「当前阶段」
+- [x] P2 阶段报告 + 需求树 §7 追加实施决定 + README「当前阶段」 —— 2026-10-27 · 证据：net-facts「P2 阶段报告」、需求树 §7.17、README「P2 同图联机已完成」 · commit 本提交
 
 ### P3 多客人 + 多地图 —— 实现
 - [x] 第三个隔离实例 `client2`（`Win64_LAN_Client3` + `ELMP_Test_Data\client2`，devconfig 登记） —— 2026-10-27 · 证据：net-facts「第三实例 + Full 拒绝原因」 · commit 本提交

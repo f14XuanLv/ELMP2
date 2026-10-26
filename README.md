@@ -31,7 +31,10 @@
 - **P1d 覆盖层已完成（2026-10-26）**：`tools/catalog`（重新生成 `data/catalog/items.json`、图标、字体）、`core/catalog`、`overlay`（DXGI Present 覆盖层、seqlock 模型、HUD / PX 菜单 / 管理器绘制）、`party/{ui,hud_feed,menu_ctrl,manager}`；控制台 `elmp menu|manager|hud`（Dev：`ui click|move`）。存储确认页面已就位，数据随 P1e 接入。实测见 `docs/kb/party-facts.md`「P1d」。
 - **P1e 闸门与存档作用域已完成（2026-10-26）**：`data/gates.json`（15 个触发器类）+ `core/permission` 扩展到触发器 / 拾取 / 交互；`party/save_scope`（saveId 世代 + 指纹，New / Reuse）、`party/storage`（`party_<saveId>.json`，自动重入）、`base/lua_literal`（v1 `*.profile.lua` 只读迁移，CTest）；控制台 `elmp storage [new|reuse]`。实测见 `docs/kb/party-facts.md`「P1e」。
 - **P1f 本地多人总验收已完成（2026-10-26）**：§7.2 闸门矩阵本地列（travel / rest / trigger.world / trigger.story / interact 以原版副作用实测；pickup 未能验证）、F1.5 / F1.7 / F1.13–F1.16 补测、存档复制 / 删除、椅子异步保存登记、60 / 144 / 切换帧率与 G0（对裸 UE4SS P99 差 −0.003 ms）。新增 `party/interact`（PX 交互交给原版交互物 Pressed 入口，需求树 §7.16.1）；Dev `elmp native`、`tools/catalog/extract.py --dump`。实测见 `docs/kb/party-facts.md`「P1f」。
-- 下一步 P2：同图远程合作（类型化协议、Host 权威），并补 §7.2 远程座位 / Client 副本两列。
+
+**P2 同图联机已完成（2026-10-27）**：`native/net`（CNG ECDH P-256 + 配对码 HKDF / HMAC + AES-256-GCM、UDP 可靠有序 / 不可靠最新双通道、ACK 位图 / RTO / 分片 / F_CLOSE / 多对端表、全部有界队列；typed 位掩码增量快照 + 名字表；3 类 CTest）、`native/guard`（结算拦截、`IsPlayer` 跳板、存档保护、碰撞 / tick 原语闸、AI / 角色激活闸、回放窗口）、`native/coop`（session、Host 远程座位 / 输入 / 快照 / 跟图 / 构筑与装备通路、Client 接管冻结 + 1 Hz 复检 / 插值呈现 / 本地 P1 预测与回拉 / P1 呈现模式、动作通道 `LaunchAbilityFromDescription` 原生 pre 取参 → Client 同入口重放、六个 `IEntityAdapter`：lily / enemy / enemy_dyn / worldobj / story / pickup）、管理器「Online」页；控制台 `elmp lan host|join|leave|status|trace`。Host2 / Client2 实测（G1–G4、晚加入、断线重连、P1 死亡不误判、PvP、§7.2 远程 / Client 两列、性能 Host P99 0.49 ms / Client 0.30 ms）见 `docs/kb/net-facts.md`；实施决定见需求树 §7.17。
+
+**P3 多客人 + 多地图（进行中）**：第三隔离实例 `client2` 与满员 Full 已就位。
 
 ## 与现仓库的关系
 

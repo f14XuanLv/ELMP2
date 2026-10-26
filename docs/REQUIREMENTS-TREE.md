@@ -415,7 +415,18 @@ ELMP 包零 Lua；对 Lua Mod 注入 C 函数；语法糖随 SDK 仓库。`elmp.
 2. **`rest` 闸门打开的含义**：PX 走原版 `EVT_Rest` = P1 被摆去休息、P1 的休息菜单打开、原版保存与敌人重生（事件以 Controller0 为主体）。默认关闭不变。
 3. **复制存档**：复制件按槽名是新槽 → 新世代、空队伍；源槽的 PX 不跟随（PX 数据只属于一个槽；要带过去需在新槽重新加入）。
 4. **pickup 闸门**：测试图中经验光球在生成时已发放（`IsDropGranted`），闸门只影响光球表现；物品类掉落未找到，保持“未验证”，P2 远程列一并复核。**更正（2026-10-26 P1 遗留）**：白花掉落实测证明“碰撞忽略 Collectable”泄漏（掉落物在座位身上生成即重叠，掉落物自身的重叠更新不看座位的 MoveIgnoreActors）；改为关闭座位自己的 `UAutoCollectComponent.SphereComponent` 重叠事件（`SetGenerateOverlapEvents(false)`），未被捡的掉落物由原版兜底飞向 P1 并归 P1。实测见 party-facts「P1 遗留」。
-5. **§7.2 远程座位 / Client 副本两列**随 P2 联机实现后补做；P1 签收只含本地 PX 列。
+5. **§7.2 远程座位 / Client 副本两列**随 P2 联机实现后补做；P1 签收只含本地 PX 列。（P2 已补，见 net-facts「§7.2 …」各节。）
+
+### 7.17 P2 实施决定（2026-10-27）→ **[定，可复议]**
+1. **Client 本地 P1 = 预测体 + 回拉**：本地 P1 跑原版移动（手感零延迟），与 Host 座位偏差 > 150 UU 时传回 Host 位置；HP / MP / 治疗次数取 Host 值（属性直写，原版 HUD 显示）。
+2. **客人进程 P1 呈现模式**：P1 忽略全部闸门目标（门 / 椅子 / 交互物 / 触发器）并关拾取球；世界变化只来自 Host（worldobj / story / pickup / enemy_dyn 适配器）。
+3. **Client 离开会话回标题**（fail closed：本地世界是呈现态，不在其上继续单机）；从未落座的被拒绝 join 不回标题。
+4. **可破坏物 Client 只隐藏**，不回放原版破坏（会本地生成掉落）。
+5. **重放技能 Actor 寿命上限 2 s**（Client 无原版结束路径；Host 发结束事件可更精确，留待需要时）。
+6. **敌人呈现**：按 Host 时间 100 ms 缓冲插值、>500 ms 直跳、不外推；离本地 Lily > 3000 UU 的敌人位置写入降为 ~10 Hz；换动画时 `SetTrackTime` 对齐。
+7. **切图规则 1 / 2 只对本地座位**；网络座位保留自己的 travel 闸门（C18）。交互按下时复查闸门（激活残留不能绕过后来关闭的闸门）。
+8. **客人构筑**：新座位按客人自带装备字段（spirits / summonSet / passives.equipped）apply；解锁 / 等级 / 持有用 Host 共享进度；重连收回座位不覆盖。装备变更 1 Hz 比对上行（EquipRequest / EquipResult）。
+9. **G3 门 / 宝箱 / Boss 窗口**：Host2 存档无可用对象，门 / 宝箱以同一 `AInteractable` 通路 + Tip 实测代证；Boss 战按 §7.1.3 fail closed。
 
 ---
 
