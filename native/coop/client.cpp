@@ -216,6 +216,22 @@ void present_world(const snap::Frame& f) {
             fs.arg_bool(0, true);
             fs.invoke(a);
         }
+        static ue::UClass* breakable = reflect::find_class(L"/Script/Zenith.Breakable");
+        const bool is_breakable = breakable && a->GetClassPrivate()->IsChildOf(breakable);
+        if (is_breakable && (row.flags & 3) && !(done & 3)) {
+            // broken on the host → replay the break through the vanilla HP pipeline inside a replay window
+            // (break animation / debris; drops are presentation, pickup settlement stays host-side)
+            static reflect::FuncRef dmg = reflect::Resolver("HPComponent", reflect::find_class(L"/Script/Zenith.HPComponent")).func(L"DoDamage", 4);
+            const auto* s = core::schema::script();
+            if (auto* hp = s ? s->zc_hp.object(a) : nullptr; hp && dmg.ok()) {
+                guard::open_replay(a);
+                reflect::Frame(dmg).arg(0, static_cast<ue::UObject*>(nullptr)).arg(1, 99999).arg_bool(2, false).arg_bool(3, false).invoke(hp);
+                guard::close_replay(a);
+            }
+            done |= 3;
+            ++g_world_presented;
+            continue;
+        }
         if ((row.flags & 2) && !(done & 2) && hide.ok()) {
             reflect::Frame h(hide);
             h.arg_bool(0, true);

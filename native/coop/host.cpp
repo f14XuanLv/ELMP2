@@ -174,6 +174,8 @@ void capture_world(std::int64_t now_us) {
                     reflect::Frame f(is_cleared);
                     if (f.invoke(c)) w.flags = f.ret_bool() ? (w.flags | 1) : (w.flags & ~1);
                 }
+                if (kind == registry::Kind::Breakable)
+                    if (auto* hp = s->zc_hp.object(a); hp && s->hp_curr.read<std::int32_t>(hp) <= 0) w.flags |= 1; // broken
             }
         for (auto& [n, w] : g_world)
             if (!w.actor.get()) w.flags |= 2; // destroyed on the host (breakable broken, item consumed)
