@@ -80,6 +80,12 @@ set(ELMP_MOD_SOURCES
     coop/host.cpp
     coop/client.cpp
     coop/ability.cpp
+    coop/entities/clearable.cpp
+    coop/entities/worldobj.cpp
+    coop/entities/story.cpp
+    coop/entities/pickup.cpp
+    coop/entities/enemy_dyn.cpp
+    coop/entities/spawn.cpp
     guard/guard.cpp
     dev/lua_bridge.cpp
     mod/dllmain.cpp

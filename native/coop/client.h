@@ -5,10 +5,15 @@
 
 #include <string>
 
+namespace elmp::coop { struct ClientCtx; }
+
 namespace elmp::coop::client {
 
 void install(); // registers the Client handlers with coop/session
 std::string describe();
-std::string trace(const std::string& spawn_point); // Dev: returns the previous trace, starts a new one (240 frames of presented Y)
+std::string trace(const std::string& spawn_point);
+// adapter enemy_dyn (client half): adopt / spawn, takeover, present the ed rows; removal of vanished rows
+void present_dynamic(const ClientCtx& c);
+std::string describe_dynamic(); // Dev: returns the previous trace, starts a new one (240 frames of presented Y)
 
 } // namespace elmp::coop::client

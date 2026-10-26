@@ -7,6 +7,7 @@
 #include "coop/host.h"
 
 #include "coop/ability.h"
+#include "coop/entity.h"
 #include "coop/session.h"
 
 #include "party/seat.h"
@@ -69,6 +70,7 @@ proto::NameTable g_names;
 std::unique_ptr<snap::Frame> g_frame = std::make_unique<snap::Frame>();
 std::array<std::uint8_t, 64 * 1024> g_buf;
 std::uint16_t g_epoch = 1;
+std::uint16_t g_adapter_map = 0;
 std::string g_trace_name;
 std::vector<float> g_trace;
 reflect::PropRef g_spawn_point;
@@ -146,54 +148,6 @@ void pose(ue::UObject* enemy, const ObjHandle& h, snap::EnemyRow& row, const cor
     }
     track0(c.second.get(), row, s);
 }
-// World objects (adapter worldobj, §7.5): interactables (doors / chests / switches / items) and breakables,
-// keyed by actor name (level-placed → identical on both sides). Cleared = UClearableComponent::IsCleared,
-// sampled at 2 Hz (ProcessEvent per object); destroyed objects of the current map stay as `gone` rows.
-struct WorldObj {
-    ObjHandle actor, clearable;
-    std::uint8_t flags = 0;
-};
-std::unordered_map<std::string, WorldObj> g_world;
-std::uint16_t g_world_map = 0;
-
-void capture_world(std::int64_t now_us) {
-    static clock::Cadence every(500);
-    if (g_world_map != g_frame->map) g_world.clear(), g_world_map = g_frame->map, every.reset();
-    if (every.due(now_us)) {
-        static ObjHandle clear_cls = ObjHandle::of(reflect::find_object(L"/Script/Zenith.ClearableComponent"));
-        static reflect::FuncRef is_cleared = reflect::Resolver("ClearableComponent", reflect::find_class(L"/Script/Zenith.ClearableComponent")).func(L"IsCleared", 0);
-        const auto* s = core::schema::script();
-        for (auto kind : {registry::Kind::Interactable, registry::Kind::Breakable, registry::Kind::Trigger})
-            for (const auto& e : registry::bucket(kind)) {
-                auto* a = e.handle.get();
-                if (!a) continue;
-                auto& w = g_world[ue::utf8_name(a)];
-                if (w.actor != e.handle) {
-                    w.actor = e.handle;
-                    reflect::Frame f(s->actor_component_by_class);
-                    f.arg(0, clear_cls.get());
-                    w.clearable = f.invoke(a) ? ObjHandle::of(f.ret<ue::UObject*>()) : ObjHandle{};
-                }
-                w.flags &= ~2;
-                if (auto* c = w.clearable.get(); c && is_cleared.ok()) {
-                    reflect::Frame f(is_cleared);
-                    if (f.invoke(c)) w.flags = f.ret_bool() ? (w.flags | 1) : (w.flags & ~1);
-                }
-                static reflect::PropRef breakable_hp =
-                    reflect::Resolver("Breakable", reflect::find_class(L"/Script/Zenith.Breakable")).prop(L"HPComponent", reflect::Kind::Object);
-                // ABreakable has its own HPComponent property (zc_hp is the ZenithCharacter offset — reading it on
-                // a breakable crashed both processes: access violation 0x10000000b)
-                if (kind == registry::Kind::Breakable && breakable_hp.ok())
-                    if (auto* hp = breakable_hp.object(a); hp && s->hp_curr.read<std::int32_t>(hp) <= 0) w.flags |= 4; // broken (bit2; IsCleared alone does not mean broken)
-            }
-        for (auto& [n, w] : g_world)
-            if (!w.actor.get()) w.flags |= 2; // destroyed on the host (breakable broken, item consumed)
-    }
-    for (const auto& [n, w] : g_world)
-        if (w.flags)
-            if (auto* row = g_frame->w.add(name(n))) row->flags = w.flags;
-}
-
 void capture(std::int64_t now_us) {
     const auto t0 = clock::now_us();
     const auto* s = core::schema::script();
@@ -228,7 +182,13 @@ void capture(std::int64_t now_us) {
             }
             pose(enemy, e.handle, *row, *s);
         }
-    capture_world(now_us);
+    // adapters (worldobj / story / pickup / enemy_dyn); per-map bookkeeping resets on a map change
+    if (g_adapter_map != g_frame->map) {
+        for (auto* a : adapters()) a->reset();
+        g_adapter_map = g_frame->map;
+    }
+    HostCtx ctx{*g_frame, now_us, [](std::string_view n) { return name(n); }};
+    for (auto* a : adapters()) a->write_host(ctx);
     h_capture.add(static_cast<double>(clock::now_us() - t0));
 }
 
@@ -443,8 +403,7 @@ std::string trace(const std::string& name) {
 std::string describe() {
     std::string out = std::format("host: peers={} parked={} names={} epoch={} actsSent={} actsDropped={}\n", g_peers.size(), g_parked.size(), g_names.size(), g_epoch,
                                   g_acts_sent, g_acts_dropped) + ability::describe();
-    for (const auto& [n, w] : g_world)
-        if (w.flags) out += std::format("  world {} flags={}{}\n", n, w.flags, w.actor.get() ? "" : " (actor gone)");
+    for (auto* a : adapters()) out += a->describe();
     for (const auto& [id, p] : g_peers)
         out += std::format("  peer {} -> P{} key={} seq={} acked={} input={} mapReady={} build=[{}]\n", id, p.slot, p.guest_key, p.seq, p.acked, p.stalled ? "stalled" : "live", p.map_ready, p.build_report);
     return out;

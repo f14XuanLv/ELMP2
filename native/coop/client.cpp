@@ -7,6 +7,9 @@
 #include "coop/client.h"
 
 #include "coop/ability.h"
+#include "coop/entities/clearable.h"
+#include "coop/entities/spawn.h"
+#include "coop/entity.h"
 #include "coop/session.h"
 
 #include "guard/guard.h"
@@ -206,63 +209,64 @@ void take(const std::string& name, ue::UObject* enemy) {
 
 void present_lilies(const snap::Frame& f, const core::schema::Script& s);
 
-// World objects (adapter worldobj): host cleared → interactables get the vanilla "already cleared" entry
-// (OnClearedStatusChecked(true) — the same call the map makes for objects cleared in the save: opened door /
-// chest, consumed item); host gone (breakable broken / item destroyed) → hidden + no collision. Presentation
-// only: nothing is marked cleared in the client's save (and saving is refused by the guard anyway).
-std::unordered_map<std::string, std::uint8_t> g_world_done; // name → flags already presented
-std::uint64_t g_world_presented = 0;
-
-void present_world(const snap::Frame& f) {
-    if (!f.w.n) return;
-    static reflect::FuncRef status, hide, trigger_status;
-    static ue::UClass* trigger = reflect::find_class(L"/Script/Zenith.Trigger");
-    if (!status.ok()) {
-        status = reflect::Resolver("Interactable", reflect::find_class(L"/Script/Zenith.Interactable")).func(L"OnClearedStatusChecked", 1);
-        trigger_status = reflect::Resolver("Trigger", reflect::find_class(L"/Script/Zenith.Trigger")).func(L"OnClearedStatusChecked", 1);
-        hide = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).func(L"SetActorHiddenInGame", 1);
-    }
-    static ue::UClass* interactable = reflect::find_class(L"/Script/Zenith.Interactable");
-    for (const auto& row : f.w.view()) {
-        const auto* name = g_names.text(row.key);
-        if (!name) continue;
-        auto& done = g_world_done[*name];
-        if ((done & row.flags) == row.flags) continue;
-        ue::UObject* a = nullptr;
-        for (auto kind : {registry::Kind::Interactable, registry::Kind::Breakable, registry::Kind::Trigger}) {
-            for (const auto& e : registry::bucket(kind))
-                if (auto* o = e.handle.get(); o && ue::utf8_name(o) == *name) a = o;
-            if (a) break;
-        }
-        if (!a) continue; // not streamed in locally yet
-        if ((row.flags & 1) && !(done & 1) && interactable && a->GetClassPrivate()->IsChildOf(interactable) && status.ok()) {
-            reflect::Frame fs(status);
-            fs.arg_bool(0, true);
-            fs.invoke(a);
-        }
-        // triggers (fake walls, conversations, events) the host has consumed: the vanilla "already cleared"
-        // entry (wall gone, conversation not offered) — the client never fires a trigger itself (P1 presentation)
-        if ((row.flags & 1) && !(done & 1) && trigger && a->GetClassPrivate()->IsChildOf(trigger) && trigger_status.ok()) {
-            reflect::Frame ft(trigger_status);
-            ft.arg_bool(0, true);
-            ft.invoke(a);
-        }
-        static ue::UClass* breakable = reflect::find_class(L"/Script/Zenith.Breakable");
-        const bool is_breakable = breakable && a->GetClassPrivate()->IsChildOf(breakable);
-        // Broken on the host → hidden + no collision (no vanilla break replay on the client: drops would be
-        // spawned locally; presentation decision P2, net-facts「worldobj」).
-        if ((row.flags & 2 || (is_breakable && (row.flags & 4))) && !(done & 2) && hide.ok()) {
-            reflect::Frame h(hide);
-            h.arg_bool(0, true);
-            h.invoke(a);
-            if (g_set_collision.ok()) {
-                reflect::Frame fc(g_set_collision);
-                fc.arg_bool(0, false);
-                fc.invoke(a);
+// One enemy row (adapter enemy; also used by enemy_dyn for adopted / spawned copies): takeover on first
+// sight, facing, buffered position, HP, Spine pose.
+void present_enemy(const std::string& key, ue::UObject* enemy, const snap::EnemyRow& row, const snap::Frame& f, const core::schema::Script& s_) {
+    const auto* s = &s_;
+        if (auto t = g_taken.find(key); t == g_taken.end() || t->second.enemy.get() != enemy) take(key, enemy);
+    auto& t = g_taken[key];
+    if (row.facing && row.facing != t.facing) // vanilla facing entry (v1 net-facts: LocomotionComponent:SetFacing)
+        if (auto* loco = s->zc_locomotion.object(enemy)) {
+            static reflect::FuncRef set_facing =
+                reflect::Resolver("LocomotionComponent", reflect::find_class(L"/Script/Zenith.LocomotionComponent")).func(L"SetFacing", 1);
+            if (set_facing.ok()) {
+                reflect::Frame ff(set_facing);
+                ff.arg_bool(0, row.facing > 0);
+                if (ff.invoke(loco)) t.facing = row.facing;
             }
         }
-        done |= row.flags | ((is_breakable && (row.flags & 4)) ? 2 : 0);
-        ++g_world_presented;
+    // position: buffered by host time, presented every frame with interpolation (present_motion)
+    if (!t.n || f.t_ms != t.s[(t.head + t.n - 1) % 16].t) {
+        const int at = (t.head + t.n) % 16;
+        t.s[at] = {f.t_ms, row.x, row.y, row.z};
+        if (t.n < 16) ++t.n;
+        else t.head = (t.head + 1) % 16;
+    }
+    if (auto* hp = s->zc_hp.object(enemy)) {
+        // property write (no SetCurrHP in vanilla). Death is presentation only: the host's death pose keeps
+        // streaming while the row exists; when the host removes the actor the copy is hidden (below). The
+        // vanilla death pipeline is never run here (it would clear the client's spawn point — v1 net-facts
+        // 「重构后联机验收」defect 1).
+        *s->hp_curr.at<std::int32_t>(hp) = row.hp;
+        if ((row.flags & 4) && !t.killed) t.killed = true, ++g_kills;
+    }
+    t.frame = g_latest;
+    if (row.anim && row.anim != t.anim) { // pose: switch track 0 only on an animation change (§16)
+        const auto* anim = g_names.text(row.anim);
+        if (!t.spine.get()) {
+            static ObjHandle cls = ObjHandle::of(reflect::find_object(L"/Script/SpineExtensionPlugin.SpineSkeletonAnimationExComponent"));
+            reflect::Frame f(s->actor_component_by_class);
+            f.arg(0, cls.get());
+            if (f.invoke(enemy)) t.spine = ObjHandle::of(f.ret<ue::UObject*>());
+        }
+        if (auto* spine = t.spine.get(); spine && anim) {
+            reflect::Frame f(s->sp_set_animation);
+            f.arg(0, 0).arg_string(1, log::wide(*anim)).arg_bool(2, row.loop != 0);
+            if (f.invoke(spine)) {
+                ++g_anim_sets;
+                // align the new track to the host's playback time (no restart-from-zero phase lag)
+                static reflect::FuncRef set_time =
+                    reflect::Resolver("TrackEntry", reflect::find_class(L"/Script/SpinePlugin.TrackEntry")).func(L"SetTrackTime", 1);
+                if (auto* entry = f.ret<ue::UObject*>(); set_time.ok() && ue::alive(entry) && row.t > 0) {
+                    reflect::Frame st(set_time);
+                    st.arg(0, row.t);
+                    st.invoke(entry);
+                }
+            } else {
+                ++g_anim_fail;
+            }
+            t.anim = row.anim;
+        }
     }
 }
 
@@ -281,61 +285,7 @@ void apply(const snap::Frame& f) {
         auto it = g_index.find(*name);
         auto* enemy = it == g_index.end() ? nullptr : it->second.get();
         if (!enemy) continue; // not streamed in locally (Client ⊆ Host)
-        if (auto t = g_taken.find(*name); t == g_taken.end() || t->second.enemy.get() != enemy) take(*name, enemy);
-        auto& t = g_taken[*name];
-        if (row.facing && row.facing != t.facing) // vanilla facing entry (v1 net-facts: LocomotionComponent:SetFacing)
-            if (auto* loco = s->zc_locomotion.object(enemy)) {
-                static reflect::FuncRef set_facing =
-                    reflect::Resolver("LocomotionComponent", reflect::find_class(L"/Script/Zenith.LocomotionComponent")).func(L"SetFacing", 1);
-                if (set_facing.ok()) {
-                    reflect::Frame ff(set_facing);
-                    ff.arg_bool(0, row.facing > 0);
-                    if (ff.invoke(loco)) t.facing = row.facing;
-                }
-            }
-        // position: buffered by host time, presented every frame with interpolation (present_motion)
-        if (!t.n || f.t_ms != t.s[(t.head + t.n - 1) % 16].t) {
-            const int at = (t.head + t.n) % 16;
-            t.s[at] = {f.t_ms, row.x, row.y, row.z};
-            if (t.n < 16) ++t.n;
-            else t.head = (t.head + 1) % 16;
-        }
-        if (auto* hp = s->zc_hp.object(enemy)) {
-            // property write (no SetCurrHP in vanilla). Death is presentation only: the host's death pose keeps
-            // streaming while the row exists; when the host removes the actor the copy is hidden (below). The
-            // vanilla death pipeline is never run here (it would clear the client's spawn point — v1 net-facts
-            // 「重构后联机验收」defect 1).
-            *s->hp_curr.at<std::int32_t>(hp) = row.hp;
-            if ((row.flags & 4) && !t.killed) t.killed = true, ++g_kills;
-        }
-        t.frame = g_latest;
-        if (row.anim && row.anim != t.anim) { // pose: switch track 0 only on an animation change (§16)
-            const auto* anim = g_names.text(row.anim);
-            if (!t.spine.get()) {
-                static ObjHandle cls = ObjHandle::of(reflect::find_object(L"/Script/SpineExtensionPlugin.SpineSkeletonAnimationExComponent"));
-                reflect::Frame f(s->actor_component_by_class);
-                f.arg(0, cls.get());
-                if (f.invoke(enemy)) t.spine = ObjHandle::of(f.ret<ue::UObject*>());
-            }
-            if (auto* spine = t.spine.get(); spine && anim) {
-                reflect::Frame f(s->sp_set_animation);
-                f.arg(0, 0).arg_string(1, log::wide(*anim)).arg_bool(2, row.loop != 0);
-                if (f.invoke(spine)) {
-                    ++g_anim_sets;
-                    // align the new track to the host's playback time (no restart-from-zero phase lag)
-                    static reflect::FuncRef set_time =
-                        reflect::Resolver("TrackEntry", reflect::find_class(L"/Script/SpinePlugin.TrackEntry")).func(L"SetTrackTime", 1);
-                    if (auto* entry = f.ret<ue::UObject*>(); set_time.ok() && ue::alive(entry) && row.t > 0) {
-                        reflect::Frame st(set_time);
-                        st.arg(0, row.t);
-                        st.invoke(entry);
-                    }
-                } else {
-                    ++g_anim_fail;
-                }
-                t.anim = row.anim;
-            }
-        }
+        present_enemy(*name, enemy, row, f, *s);
     }
     // host-dead enemies whose row is gone: the host destroyed them → hide + no collision (residency: a row
     // absent without a death is an unload / interest change and stays as it was)
@@ -355,7 +305,8 @@ void apply(const snap::Frame& f) {
                 t.hidden = true;
             }
     present_lilies(f, *s);
-    present_world(f);
+    ClientCtx ctx{f, [](std::uint16_t id) { return g_names.text(id); }};
+    for (auto* a : adapters()) a->apply_client(ctx);
     ++g_applied;
     h_apply.add(static_cast<double>(clock::now_us() - t0));
 }
@@ -579,7 +530,7 @@ void follow(std::int64_t now_us) {
         coop::send_reliable(0, std::span(g_buf.data(), proto::encode(proto::MapReady{g_host_map}, g_buf)));
         g_follow_pending = false;
         g_taken.clear(); // the previous map's enemies are gone (unload ≠ death)
-        g_world_done.clear();
+        for (auto* a : adapters()) a->reset();
         return;
     }
     g_follow_next_us = now_us + 2'000'000; // ≥ 2 s between attempts
@@ -745,7 +696,7 @@ void stop() {
     g_ring.reset();
     g_names.clear();
     g_act_last.clear();
-    g_world_done.clear();
+    for (auto* a : adapters()) a->reset();
     g_equip_sent.clear();
     g_index.clear();
     g_index_version = ~0ull;
@@ -768,6 +719,66 @@ void on_closed(std::uint32_t, const std::string&, net::Reject) {}
 
 } // namespace
 
+// enemy_dyn client half: ed row key → local enemy (adopted unbound same-class enemy ≤ 300 UU, or a spawned
+// presentation copy). Key in g_taken = "dyn:<id>".
+struct Dyn {
+    ObjHandle actor;
+    bool spawned = false, seen = false;
+};
+std::map<std::uint16_t, Dyn> g_dyn;
+std::uint64_t g_dyn_adopted = 0, g_dyn_spawned = 0, g_dyn_removed = 0;
+
+void present_dynamic(const ClientCtx& c) {
+    const auto* s = core::schema::script();
+    if (!s || !g_resolved) return;
+    for (auto& [k, d] : g_dyn) d.seen = false;
+    for (const auto& row : c.frame.ed.view()) {
+        auto& d = g_dyn[row.key];
+        d.seen = true;
+        auto* e = d.actor.get();
+        if (!e) {
+            const auto* path = c.text(row.type);
+            if (!path) continue;
+            auto* cls = entities::class_by_path(*path);
+            if (!cls) continue;
+            for (const auto& en : registry::bucket(registry::Kind::Enemy)) { // adopt
+                auto* o = en.handle.get();
+                if (!o || o->GetClassPrivate() != cls || g_spawn_point.object(o)) continue;
+                bool bound = false;
+                for (const auto& [k2, d2] : g_dyn) bound |= d2.actor == en.handle;
+                const auto at = core::location(o);
+                if (!bound && at && std::fabs(at->y - row.y) + std::fabs(at->z - row.z) <= 300.0f) {
+                    e = o;
+                    ++g_dyn_adopted;
+                    break;
+                }
+            }
+            if (!e && (e = entities::spawn_copy(cls, row.x, row.y, row.z))) d.spawned = true, ++g_dyn_spawned;
+            if (!e) continue;
+            d.actor = ObjHandle::of(e);
+        }
+        present_enemy(std::format("dyn:{}", row.key), e, row, c.frame, *s);
+    }
+    for (auto it = g_dyn.begin(); it != g_dyn.end();) {
+        if (it->second.seen) {
+            ++it;
+            continue;
+        }
+        if (auto* e = it->second.actor.get()) {
+            guard::unmark(e);
+            if (it->second.spawned) entities::destroy_copy(e);
+            else entities::hide_actor(e);
+        }
+        g_taken.erase(std::format("dyn:{}", it->first));
+        ++g_dyn_removed;
+        it = g_dyn.erase(it);
+    }
+}
+
+std::string describe_dynamic() {
+    return std::format("enemy_dyn(client): bound={} adopted={} spawned={} removed={}\n", g_dyn.size(), g_dyn_adopted, g_dyn_spawned, g_dyn_removed);
+}
+
 std::string trace(const std::string& name) {
     std::string out;
     for (float y : g_trace) out += std::format("{:.1f} ", y);
@@ -776,9 +787,15 @@ std::string trace(const std::string& name) {
     return out.empty() ? "(tracing " + name + ")" : out;
 }
 
+std::string adapters_text() {
+    std::string out;
+    for (auto* a : adapters()) out += a->describe();
+    return out;
+}
+
 std::string describe() {
     return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} copies={} reconciles={} kills={} actBad={} actAbsent={} rechecks={} aiLeaks={} world={} equipRequests={} motionWrites={} presses(attack)={}\n{}{}", g_seat,
-                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, g_world_presented, g_equip_requests, g_motion_writes, g_input.presses[3], ability::describe(),
+                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, std::uint64_t{0}, g_equip_requests, g_motion_writes, g_input.presses[3], ability::describe() + adapters_text(),
                        guard::describe());
 }
 
