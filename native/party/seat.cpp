@@ -8,6 +8,8 @@
 #include "party/respawn.h"
 #include "party/transit.h"
 
+#include "coop/session.h"
+
 #include "core/hitrules.h"
 #include "core/permission.h"
 #include "core/profile.h"
@@ -75,6 +77,8 @@ std::optional<core::Vec3> behind_p1(int n) {
 
 std::string join(const JoinOptions& opt, std::int64_t* slot_out) {
     if (lifecycle::state() != lifecycle::State::Settled) return "world not settled";
+    // FR-NET-3d: a guest process has no local seats (its world is a presentation of the host's)
+    if (opt.source != Source::Network && coop::role() == coop::Role::Client) return "local players are disabled while joined to a host";
     if (!world::p1_pawn()) return "the original player is not in the world";
     if (auto e = storage::join_allowed(); !e.empty()) return e;
     std::int64_t slot = opt.slot;
