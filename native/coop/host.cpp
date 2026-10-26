@@ -218,6 +218,10 @@ void capture(std::int64_t now_us) {
                 if (cur <= 0) row->flags |= 4; // dead only when the last sample says so (unload ≠ death)
             }
             row->type = e.class_id;
+            if (auto* loco = s->zc_locomotion.object(enemy)) {
+                reflect::Frame fr(s->loco_facing_right);
+                if (fr.invoke(loco)) row->facing = fr.ret_bool() ? 1 : -1;
+            }
             pose(enemy, e.handle, *row, *s);
         }
     capture_world(now_us);

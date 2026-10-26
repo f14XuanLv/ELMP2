@@ -64,6 +64,7 @@ struct Taken {
     ObjHandle enemy, controller, spine;
     std::uint16_t anim = 0;
     bool killed = false, hidden = false;
+    std::int8_t facing = 0;
     std::uint32_t frame = 0; // last snapshot that carried the row
 };
 
@@ -267,6 +268,16 @@ void apply(const snap::Frame& f) {
         if (!enemy) continue; // not streamed in locally (Client ⊆ Host)
         if (auto t = g_taken.find(*name); t == g_taken.end() || t->second.enemy.get() != enemy) take(*name, enemy);
         auto& t = g_taken[*name];
+        if (row.facing && row.facing != t.facing) // vanilla facing entry (v1 net-facts: LocomotionComponent:SetFacing)
+            if (auto* loco = s->zc_locomotion.object(enemy)) {
+                static reflect::FuncRef set_facing =
+                    reflect::Resolver("LocomotionComponent", reflect::find_class(L"/Script/Zenith.LocomotionComponent")).func(L"SetFacing", 1);
+                if (set_facing.ok()) {
+                    reflect::Frame ff(set_facing);
+                    ff.arg_bool(0, row.facing > 0);
+                    if (ff.invoke(loco)) t.facing = row.facing;
+                }
+            }
         // position: buffered by host time, presented every frame with interpolation (present_motion)
         if (!t.n || f.t_ms != t.s[(t.head + t.n - 1) % 4].t) {
             const int at = (t.head + t.n) % 4;
