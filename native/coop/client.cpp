@@ -683,7 +683,7 @@ void present_motion(std::int64_t now_us) {
         if (n == g_trace_name && g_trace.size() < 240) g_trace.push_back(p.y); // Dev: per-frame presented Y
         if (auto at = core::location(e); at && (std::fabs(at->x - p.x) + std::fabs(at->y - p.y) + std::fabs(at->z - p.z)) > 0.2f) {
             reflect::Frame tp(s->actor_teleport);
-            tp.arg(0, p).arg_bool(1, false).arg_bool(3, true);
+            tp.arg(0, p).arg_bool(1, false).arg_bool(3, false); // TeleportPhysics resets every component's physics state (Spine procedural mesh) → ~80 µs; plain move
             const auto w0 = clock::now_us();
             tp.invoke(e);
             h_write.add(static_cast<double>(clock::now_us() - w0));
