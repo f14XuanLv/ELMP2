@@ -56,4 +56,4 @@
   | 144 | 371 µs | 191 µs | 6.94 / 7.0 ms |
   | 波动 40/144/75/30/120/60 | 407 µs | 208 µs | 8.3 / 33.3 ms（随上限切换） |
 
-  截图 `g4a-client.png`（Spine 敌人 + Lily）、`g4b-client.png`（两只 Lily Spine）；弹体截图待补（church_07 史莱姆近战无弹体，需远程敌或精灵弹）。`[E-实测]`
+  截图 `g4a-client.png`（Spine 敌人 + Lily）、`g4b-client.png`（两只 Lily Spine）；`g4p3-client.png`（church_07 士兵挥砍：Host 捕获的技能经 Client 原版入口重放，刀光技能特效与士兵 / Lily / 护卫精灵 Spine 同屏可见；`replayed=59 lifeCapped=59`）。church_07 无远程弹体敌人，技能特效 Actor 即本图的“弹体”类呈现。`[E-实测]`

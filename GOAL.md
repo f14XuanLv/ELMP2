@@ -97,7 +97,7 @@
 - [x] G1 Client 无 AI 决策：三闸 + 1 Hz 复检计数可观测，泄漏 0 —— 2026-10-26 · 证据：net-facts「晚加入 + G1 复检」「guard 逐项」（AI 激活闸 24、tick / 碰撞原语闸、rechecks 20 aiLeaks 0、IsActive 0/26） · commit 1f50732 / 本提交
 - [x] G2 客人输入经 Host 原版管线（动画序列取证） —— 2026-10-26 · 证据：net-facts「P2 首次联机切片」G2（idle → run → jump_down → idle；攻击 → summon_DEFAULT_A 击杀 3 敌） · commit f5dfef7 / bb5630f
 - [ ] G3 世界一致：敌人数量 / 位置 ≤5 UU / HP、门、宝箱、可破坏物（Client ⊆ Host）、剧情旗标、Boss 窗口
-- [ ] G4 60 / 144 / 波动三档帧时间 + 截图可见 Spine 动画与弹体
+- [x] G4 60 / 144 / 波动三档帧时间 + 截图可见 Spine 动画与弹体 —— 2026-10-26 · 证据：net-facts「Client 帧开销回归与修复 + G4 三档帧时间」（Client P99 303/191/208 µs、Host 490/371/407 µs；截图 g4a / g4b / g4p3） · commit 本提交 / ability 寿命修复前一提交
 - [x] 晚加入 —— 2026-10-26 · 证据：net-facts「晚加入 + G1 复检」 · commit 本提交
 - [x] 断线（非主动离开）重连，座位与构筑保留 —— 2026-10-26 · 证据：net-facts「非主动断线重连」 · commit 9b58b34 / 本提交
 - [x] Host P1 死亡重生 / 切图时 Client 不把卸载当死亡 —— 2026-10-26 · 证据：net-facts「Host P1 死亡重生不误判」 · commit 本提交
