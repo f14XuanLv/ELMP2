@@ -18,6 +18,7 @@ namespace elmp::overlay {
 std::string install(const std::filesystem::path& data_dir);
 void uninstall();
 bool installed();
+void set_banner(std::string text); // top-centre status line (empty = none); any thread
 bool ready(); // renderer initialised on the game swap chain
 
 double now(); // monotonic seconds (same clock as base/clock)

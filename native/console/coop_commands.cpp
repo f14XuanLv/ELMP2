@@ -8,6 +8,7 @@
 #include "coop/session.h"
 #include "coop/maps.h"
 #include "world/level_instance.h"
+#include "modes/hunter.h"
 
 #include <charconv>
 #include <format>
@@ -63,6 +64,34 @@ void lan_cmd(Args a, std::string& out) {
 
 } // namespace
 
-void register_coop_commands() { add("lan", "host <code> [port] [max] | join <addr> <code> [port] | leave | status", lan_cmd); }
+// elmp hunter start [kills N] [time S] [grace S] [respawn S] [target boss|<mapId>] [progress mirror|preset] | stop | status
+void hunter_cmd(Args a, std::string& out) {
+    const std::string sub = a.empty() ? "status" : a[0];
+    if (sub == "start") {
+        modes::hunter::Options o;
+        for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+            const auto& k = a[i];
+            const auto& v = a[i + 1];
+            if (k == "kills") o.kills = std::atoi(v.c_str());
+            else if (k == "time") o.time_limit_s = std::atoi(v.c_str());
+            else if (k == "grace") o.grace_s = std::atoi(v.c_str());
+            else if (k == "respawn") o.respawn_s = std::atoi(v.c_str());
+            else if (k == "target") o.target = v;
+            else if (k == "progress") o.preset = v == "preset";
+            else throw std::runtime_error("unknown option '" + k + "'");
+        }
+        const auto e = modes::hunter::start(o);
+        out += e.empty() ? "hunter match started\n" : "error: " + e + "\n";
+    } else if (sub == "stop") {
+        modes::hunter::stop();
+        out += "hunter match stopped\n";
+    }
+    out += modes::hunter::describe();
+}
+
+void register_coop_commands() {
+    add("lan", "host <code> [port] [max] | join <addr> <code> [port] | leave | status | bg load|unload|boss", lan_cmd);
+    add("hunter", "start [kills N] [time S] [grace S] [respawn S] [target boss|<mapId>] [progress mirror|preset] | stop | status", hunter_cmd);
+}
 
 } // namespace elmp::console

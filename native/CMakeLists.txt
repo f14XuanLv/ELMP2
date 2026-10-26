@@ -80,6 +80,7 @@ set(ELMP_MOD_SOURCES
     coop/session.cpp
     coop/host.cpp
     coop/maps.cpp
+    modes/hunter.cpp
     coop/client.cpp
     coop/ability.cpp
     coop/entities/clearable.cpp

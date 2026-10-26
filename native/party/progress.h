@@ -32,6 +32,8 @@ void forget_all();
 
 std::string sync(std::int64_t slot); // immediate tick for one seat (respawn / menu); empty = aligned
 void tick();                         // 1 s
+// progress source "mirror" (hunters, F3.3): P1 is mirrored to the seat, its own gains are not granted to P1
+void set_mirror_only(bool (*mirror_only)(std::int64_t slot));
 std::string describe();
 
 void install();

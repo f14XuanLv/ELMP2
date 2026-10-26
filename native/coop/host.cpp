@@ -436,6 +436,11 @@ void stop() {
 
 } // namespace
 
+void broadcast_banner(const std::string& text, std::int64_t only_seat) {
+    for (auto& [id, p] : g_peers)
+        if (p.slot && (only_seat == 0 || p.slot == only_seat)) send_rel(id, proto::encode(proto::Control{proto::kControlBanner, text}, g_buf));
+}
+
 std::string trace(const std::string& name) {
     std::string out;
     for (float y : g_trace) out += std::format("{:.1f} ", y);

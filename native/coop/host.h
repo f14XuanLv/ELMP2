@@ -13,6 +13,8 @@ void write_lilies(HostCtx& c);
 void write_enemies(HostCtx& c);
 
 void install(); // registers the Host handlers with coop/session
+// mode status line to the peer seated at only_seat (0 = every peer); shown as the client's banner
+void broadcast_banner(const std::string& text, std::int64_t only_seat = 0);
 std::string describe();
 std::string trace(const std::string& spawn_point); // Dev: previous trace of captured Y, starts a new one
 

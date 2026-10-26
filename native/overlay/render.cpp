@@ -290,6 +290,24 @@ bool init(IDXGISwapChain* swap) {
     return true;
 }
 
+std::mutex g_banner_mu;
+std::string g_banner; // mode status line (hunter compass), top centre; written on the game thread
+
+void draw_banner(ImFont* font) {
+    std::string text;
+    {
+        std::lock_guard lk(g_banner_mu);
+        text = g_banner;
+    }
+    if (text.empty() || !font) return;
+    auto* dl = ImGui::GetForegroundDrawList();
+    const float sz = 18.0f * std::max(0.5f, g_display_h / 720.0f);
+    const auto ext = font->CalcTextSizeA(sz, FLT_MAX, 0.0f, text.c_str());
+    const ImVec2 p((g_display_w - ext.x) * 0.5f, sz * 0.8f);
+    dl->AddRectFilled(ImVec2(p.x - 10, p.y - 4), ImVec2(p.x + ext.x + 10, p.y + ext.y + 4), IM_COL32(12, 12, 16, 170), 4.0f);
+    dl->AddText(font, sz, p, IM_COL32(240, 220, 150, 255), text.c_str());
+}
+
 void render(IDXGISwapChain* swap) {
     if (g_failed) return;
     DXGI_SWAP_CHAIN_DESC check{};
@@ -322,6 +340,7 @@ void render(IDXGISwapChain* swap) {
     const double t = now();
     draw_hud(g_hud, g.font, t);
     draw_menu(g_menu, g.font, t);
+    draw_banner(g.font);
     draw_manager(g_manager, t);
     g_wants_mouse = g_manager.open || io.WantCaptureMouse;
     g_mouse_x = io.MousePos.x, g_mouse_y = io.MousePos.y, g_hover = io.WantCaptureMouse;
@@ -401,6 +420,11 @@ std::string install(const std::filesystem::path& data_dir) {
     input::rawinput::set_mouse_hook(&mouse_hook);
     g_installed = true;
     return {};
+}
+
+void set_banner(std::string text) {
+    std::lock_guard lk(g_banner_mu);
+    g_banner = std::move(text);
 }
 
 bool installed() { return g_installed; }

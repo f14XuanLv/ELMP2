@@ -7,6 +7,7 @@
 #include "coop/client.h"
 
 #include "coop/ability.h"
+#include "overlay/render.h"
 #include "coop/entities/clearable.h"
 #include "coop/entities/spawn.h"
 #include "coop/entity.h"
@@ -504,7 +505,9 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
     }
     case proto::Msg::Control: {
         proto::Control c;
-        if (proto::decode(msg, c)) log::warn("coop: host says: {}", c.text);
+        if (!proto::decode(msg, c)) break;
+        if (c.code == proto::kControlBanner) overlay::set_banner(c.text); // mode status (hunter compass)
+        else log::warn("coop: host says: {}", c.text);
         break;
     }
     default: break;
@@ -702,6 +705,7 @@ void stop() {
     g_taken.clear();
     guard::disarm();
     core::permission::p1_presentation(false);
+    overlay::set_banner({});
     g_seat = 0, g_epoch = 0, g_latest = 0;
     g_ring.reset();
     g_names.clear();

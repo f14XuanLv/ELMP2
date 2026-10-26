@@ -26,6 +26,8 @@ std::string place_at(std::int64_t slot, const core::Vec3& at, bool frozen, bool*
 bool alive(std::int64_t slot);
 
 void patrol(std::int64_t now_us); // 250 ms
+// a mode that owns death handling / recall of some seats (hunter); nullptr = none
+void set_override(bool (*owns)(std::int64_t slot));
 void forget(std::int64_t slot);
 std::string describe();
 

@@ -59,6 +59,7 @@ struct Act {
 };
 struct Json { std::string text; };
 struct Control { std::uint8_t code = 0; std::string text; };
+inline constexpr std::uint8_t kControlBanner = 10; // host → client: mode status line (empty = clear)
 
 std::size_t encode(const Welcome& m, std::span<std::uint8_t> out);
 std::size_t encode(const NameDef& m, std::span<std::uint8_t> out);

@@ -379,3 +379,11 @@ namespace elmp::coop::maps {
 bool boss_room(float y) { return boss_in(slot_of_y(y)); }
 } // namespace elmp::coop::maps
 
+
+namespace elmp::coop::maps {
+std::optional<core::Vec3> entrance_of_seat(std::int64_t seat) {
+    const int k = slot_of_seat(seat);
+    return k < 0 ? std::nullopt : player_start(k, k > 0 ? tag_of_seat(seat) : std::string{});
+}
+} // namespace elmp::coop::maps
+

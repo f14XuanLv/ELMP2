@@ -1,6 +1,7 @@
 #include "party/hud_feed.h"
 
 #include "party/bench.h"
+#include "modes/hunter.h"
 #include "party/devices.h"
 #include "party/manager.h"
 #include "party/menu_ctrl.h"
@@ -190,7 +191,7 @@ void slow(std::int64_t slot, SeatState& st, ue::UObject* pc, ue::UObject* pawn) 
     }
     const auto* seat = party::seat(slot);
     m.team = seat && seat->team == Team::Enemy ? 2 : 1;
-    m.prompt.set(v.alive && bench::nearby(slot) ? key_label(slot, b::Interact) + "  Rest" : std::string());
+    m.prompt.set(v.alive && bench::nearby(slot) ? key_label(slot, b::Interact) + "  Rest" : modes::hunter::compass(slot)); // hunter: compass line
     auto* equip = cs && pc ? cs->zpc_spirit_equip.object(pc) : nullptr;
     if (!equip || !s) return;
     m.summon_set = st.set = call<std::uint8_t>(cs->se_current, equip, 1);

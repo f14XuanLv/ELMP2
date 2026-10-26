@@ -60,6 +60,7 @@ ObjHandle g_needs_for;
 std::deque<std::string> g_log;
 metrics::Counter& c_mirrored = metrics::counter("progress.mirrored");
 metrics::Counter& c_grants = metrics::counter("progress.grants");
+bool (*g_mirror_only)(std::int64_t) = nullptr;
 metrics::Counter& c_failures = metrics::counter("progress.failures");
 
 int call_int(const reflect::FuncRef& f, ue::UObject* self) {
@@ -288,7 +289,7 @@ void run(const std::vector<std::int64_t>& slots) {
         auto snap = snapshot(pc);
         if (!snap.ok) continue;
         auto& st = g_seats[slot];
-        if (st.has_baseline) {
+        if (st.has_baseline && !(g_mirror_only && g_mirror_only(slot))) { // mirror-only seats (hunters): no write-back
             const auto g = gains(st.baseline, snap);
             if (!g.empty()) {
                 grant(*s, *b, host, host_snap, g);
@@ -360,6 +361,8 @@ std::string sync(std::int64_t slot) {
     const auto it = g_seats.find(slot);
     return it == g_seats.end() ? "no snapshot" : it->second.failure;
 }
+
+void set_mirror_only(bool (*mirror_only)(std::int64_t slot)) { g_mirror_only = mirror_only; }
 
 void tick() { phase({}); }
 

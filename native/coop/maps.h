@@ -10,7 +10,10 @@
 // Snapshot rows are banded by Y (slot k ↔ 300000·k ± 150000); a peer receives the rows of its seat's map,
 // translated to that map's local coordinates.
 
+#include "core/player.h"
+
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace elmp::coop::maps {
@@ -25,6 +28,7 @@ float offset(int slot);
 std::string tag_of_seat(std::int64_t seat);      // PlayerStart tag of the seat's last move into a background map                         // Y offset of the slot (0 for the foreground)
 void tick(std::int64_t now_us);                 // host: door polling, readiness, grace unloads
 void before_foreground_switch(const std::string& target_map); // host P1 is about to load target_map
+std::optional<core::Vec3> entrance_of_seat(std::int64_t seat); // a PlayerStart of the map the seat stands in
 bool boss_room(float y);                        // the band containing y holds an uncleared boss room (§7.1.3)
 void reset();
 std::string describe();

@@ -112,6 +112,10 @@ std::string place_at(std::int64_t slot, const core::Vec3& at, bool frozen, bool*
     return {};
 }
 
+bool (*g_override)(std::int64_t) = nullptr;
+
+void set_override(bool (*owns)(std::int64_t slot)) { g_override = owns; }
+
 void patrol(std::int64_t now_us) {
     g_last_us = now_us;
     if (lifecycle::state() != lifecycle::State::Settled || transit::active()) return;
@@ -131,6 +135,10 @@ void patrol(std::int64_t now_us) {
         const auto slot = seat.slot;
         auto& w = g_watch[slot];
         if (!core::controller(slot)) continue; // unknown / lost controller: never rebuilt blindly
+        if (g_override && g_override(slot)) { // a mode (hunter) owns death / recall of this seat
+            if (core::pawn(slot) && alive(slot)) bench::poll(slot);
+            continue;
+        }
         const bool has_pawn = core::pawn(slot) != nullptr;
         const bool is_alive = has_pawn && alive(slot);
         if (!is_alive) {
