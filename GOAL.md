@@ -5,7 +5,7 @@
 > 只有在全部完成、或某阶段门槛经充分尝试仍无法达成（写明尝试、证据、剩余选项）时才报告 goal 完成或 blocked。需要我决定的产品问题：先按需求树已有定案与 fail closed 默认继续其他工作，把问题集中列出，不要停下等。
 > **进度以 §7 的勾选表为准**：每完成一项就在该行打勾并补「日期 · 证据（kb 节 / 截图 / 命令输出）· commit」；下面「当前进行中」一行同步更新。goal 完成 = §7 全部打勾。
 
-**当前进行中**：§2 P3（2026-10-27）。P2 全部打勾。P3 已勾：第三实例 client2、满员 Full。下一步：多对端独立基线 / epoch / `me` 与两客人同图 G1–G4（Host + client + client2），然后 world/level_instance（后台图加载）、map_context、host/maps 生命周期、图 id + 局部坐标、§7.3 读者 IDA 分类。实例：Host2 已停（存档已还原），Client2 / Client3(client2) 运行中；脚本见 P2 报告（net-facts 末尾）。
+**当前进行中**：§2 P3（2026-10-27）。P2 全部打勾。P3 已勾：第三实例 client2、满员 Full。多对端与两客人同图已勾；下一步 world/level_instance（后台图加载）、map_context、host/maps 生命周期、图 id + 局部坐标、§7.3 读者 IDA 分类。实例：Host2 已停（存档已还原），Client2 / Client3(client2) 运行中；脚本见 P2 报告（net-facts 末尾）。
 **需要用户**：①若要补测 G3 门 / 宝箱 / Boss 窗口专项，请提供一个入口图里有未开门 / 宝箱、可进入未打 Boss 的存档放到 Host2/Client2（当前按同通路代证 + Boss fail closed 继续）；（P2 自行定案已记 net-facts：本地 P1 预测 + >150 UU 回拉；Client 离开会话回标题；可破坏物 Client 只隐藏不回放破坏）
 
 ## 0. 恢复上下文（每轮先读）
@@ -110,7 +110,7 @@
 
 ### P3 多客人 + 多地图 —— 实现
 - [x] 第三个隔离实例 `client2`（`Win64_LAN_Client3` + `ELMP_Test_Data\client2`，devconfig 登记） —— 2026-10-27 · 证据：net-facts「第三实例 + Full 拒绝原因」 · commit 本提交
-- [ ] 多对端：每对端独立会话 / 密钥 / 可靠层 / 基线 / epoch；快照公共部分 + 每对端 `me`；`l<seat>` 副本；满员 Full
+- [x] 多对端：每对端独立会话 / 密钥 / 可靠层 / 基线 / epoch；快照公共部分 + 每对端 `me`；`l<seat>` 副本；满员 Full —— 2026-10-27 · 证据：net-facts「两客人同图 G1–G4」「第三实例 + Full 拒绝原因」 · commit b6ac40b / 9b58b34 / 4f5e8c9
 - [ ] `world/level_instance`（`LoadLevelInstance` 反射参数校验、`ELMP_BG_<Map>__<Part>` 大 Y 偏移）
 - [ ] `world/map_context`（`0xCAAFF0` + `0xC997B0` 上下文窗口）
 - [ ] `coop/host/maps` 生命周期（首入加载、末离 10 s 宽限卸载、P1 进入先卸载再原版切图）
@@ -119,7 +119,7 @@
 - [ ] §7.3 的 12 个 `CurrentGameMapID` 读者逐个 IDA 分类并写入 kb（`0xC98210 0xC98D80 0xC99770 0xC9A9F0 0xCA2820 0xCB6240 0xCCDD10 0xCCE900 0xCD5060 0xCD52D0 0xCDC950 0xCDD110`）
 
 ### P3 多客人 + 多地图 —— 门槛
-- [ ] 两客人同图 G1–G4
+- [x] 两客人同图 G1–G4 —— 2026-10-27 · 证据：net-facts「P3 实测 / 两客人同图 G1–G4」 · commit 本提交
 - [ ] 一客人在后台图被敌人攻击 / 击杀敌人，Host 存档清除记账落在正确的图
 - [ ] P1 进入后台图的移交（先卸载再原版切图）
 - [x] 满员第 N+1 个客人收到 Full —— 2026-10-27 · 证据：net-facts「第三实例 + Full 拒绝原因」（上限 1，第 2 个客人 `host is full`、Host `fullRejects=1`） · commit 4f5e8c9

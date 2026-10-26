@@ -76,3 +76,6 @@
 - **遗留**：G3 门 / 宝箱 / Boss 窗口专项无可用存档（同通路代证 + Boss fail closed）；技能结束事件未同步（用寿命上限）；VisualPivot 竖直偏移未同步。
 - **实例最终状态**：Host2 槽 0 存档已从 `%TEMP%\elmp_bak_host_p2` 还原（GameSlot_0 哈希 2CA5…）；Client2 存档未被写（guard）；Client3（`client2`）新建，运行中。
 - **下一阶段（P3）产品问题**：无新增；按需求树 §7.3 / C18 定案实施（后台图 = Host 加载、Boss 房 fail closed）。
+
+## P3 实测
+- **两客人同图 G1–G4**（2026-10-27，Host2 + Client2 + Client3，church_07）：Host `peers=2`，客人各带独立 guestKey（5ba7… → P2，89d4… → P3），每对端独立可靠层 / 基线 / epoch（P2 epoch 2、P3 epoch 3，各自 seq / acked）与 `me`；两 Client 都 `taken=24 badSnaps≤1 unknownNames=0 copies=2`（Host P1 + 另一客人的副本），guard `aiActivateBlocked=24`、`IsActive` 0/26、`rechecks` 递增 `aiLeaks=0`（G1）；Client2 推左、Client3 推右 → Host P2 / P3 同时 `run`（G2）；24 敌位置 / HP 三方逐个全等（G3）；12 s `elmp perf`：Host P99 427 µs、Client2 267 µs、Client3 179 µs，帧间隔 16.67 ms（G4）。`[E-实测]`
