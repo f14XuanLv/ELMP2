@@ -28,3 +28,4 @@
 - Client `elmp lan join` → Host 落座 P2（`network`），Welcome epoch 2；5 s 内 Host seq 319 / acked 318，Client applied 313、badSnaps 0、mapReady 一致；guard 已武装。`[E-实测]`
 - **G2 取证**：Client 端 `elmp pad allow1 on` + `elmp move 1 1 0`（测试辅助，驱动 Client 本地 P1 的 InputSnapshot）→ Host P2 `idle → run`（Y −2027 → −1692 → −1236 → −871 → −474，原版移动管线，非瞬移）；`move 1 0 0` + `press 1 JUMP` → Host P2 `jump_down → idle`（按下计数差 → `pad::tap`）。`[E-实测]`
 - **跟图 + G1 首测**（同日）：Host P1 传送进 church_07 → Client 原版 `SwitchGameMap`（`DT_GameMapData` 行 + Host `WorldLoaderSubsystem.PlayerStartTag`）跟到 church_07、回 MapReady；Client 接管 24 敌（guard marked 48 = 敌人 + 控制器）。初版只拦登记对象时 Client 24/24 控制器 `IsActive`（敌人随生成即激活，先于接管）；改为武装期间 Client 全部 `AZenithAIController::Activate` fail closed 后：Client `aiActivateBlocked=24`、`IsActive` 0/26，Host 24/26。`[E-实测]`
+- **G3 敌人首测**（同日，church_07，均静止）：两侧 24 个出生点名一一对应，位置差 ≤ 1 UU（Slime21 6986 / 6985），HP 全等（100 / 40 / 150）。Spine 姿态 / 战斗中位移 / 击杀待测。`[E-实测]`
