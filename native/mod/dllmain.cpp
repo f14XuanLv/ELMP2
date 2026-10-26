@@ -29,6 +29,7 @@
 #include "core/catalog.h"
 #include "coop/client.h"
 #include "modes/hunter.h"
+#include "sdk/sdk.h"
 #include "coop/host.h"
 #include "coop/session.h"
 #include "core/hitrules.h"
@@ -172,6 +173,7 @@ public:
         coop::host::install();
         coop::client::install();
     modes::hunter::install();
+    sdk::install(mod_dir_.parent_path(), mod_dir_ / "data" / "sdk");
         // An open ELMP window is activity too (it pauses the world and polls devices).
         frame::set_activity([] { return core::active() > 0 || party::manager::is_open() || party::menu_ctrl::open_slot() != 0 || party::save_scope::busy(); },
                             [] { return coop::active(); });
@@ -185,7 +187,9 @@ public:
 
     void on_lua_start(RC::StringViewType mod_name, RC::LuaMadeSimple::Lua& lua, RC::LuaMadeSimple::Lua& main, RC::LuaMadeSimple::Lua& async,
                       RC::LuaMadeSimple::Lua* hook) override {
-        if (active_) dev::on_lua_start(mod_name, lua, main, async, hook);
+        if (!active_) return;
+        dev::on_lua_start(mod_name, lua, main, async, hook);
+        sdk::on_lua_start(mod_name, lua, main, async, hook);
     }
 
 private:

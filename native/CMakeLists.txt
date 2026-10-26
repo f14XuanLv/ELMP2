@@ -81,6 +81,7 @@ set(ELMP_MOD_SOURCES
     coop/host.cpp
     coop/maps.cpp
     modes/hunter.cpp
+    sdk/sdk.cpp
     coop/client.cpp
     coop/ability.cpp
     coop/entities/clearable.cpp

@@ -9,6 +9,7 @@
 #include "coop/maps.h"
 #include "world/level_instance.h"
 #include "modes/hunter.h"
+#include "sdk/sdk.h"
 
 #include <charconv>
 #include <format>
@@ -91,6 +92,7 @@ void hunter_cmd(Args a, std::string& out) {
 
 void register_coop_commands() {
     add("lan", "host <code> [port] [max] | join <addr> <code> [port] | leave | status | bg load|unload|boss", lan_cmd);
+    add("sdk", "SDK mods (Mods/*/elmp.json): registration, slot ranges, subscriptions", [](Args, std::string& out) { out += sdk::describe(); });
     add("hunter", "start [kills N] [time S] [grace S] [respawn S] [target boss|<mapId>] [progress mirror|preset] | stop | status", hunter_cmd);
 }
 
