@@ -26,8 +26,8 @@ struct Handlers {
 };
 void set_handlers(Role role, const Handlers& h);
 
-std::string host(std::uint16_t port, std::string_view code, std::size_t max_peers);
-std::string join(std::string_view addr, std::uint16_t port, std::string_view code);
+std::string start_host(std::uint16_t port, std::string_view code, std::size_t max_peers);
+std::string start_join(std::string_view addr, std::uint16_t port, std::string_view code);
 void leave(std::string_view reason = "left");
 
 Role role();

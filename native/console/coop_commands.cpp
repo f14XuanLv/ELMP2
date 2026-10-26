@@ -25,12 +25,12 @@ void lan_cmd(Args a, std::string& out) {
         if (a.size() < 2) throw std::runtime_error("usage: elmp lan host <code> [port] [maxGuests]");
         const auto port = a.size() > 2 ? port_of(a[2]) : std::uint16_t{7777};
         const std::size_t max = a.size() > 3 ? std::stoul(a[3]) : 3;
-        if (auto e = coop::host(port, a[1], max); !e.empty()) throw std::runtime_error(e);
+        if (auto e = coop::start_host(port, a[1], max); !e.empty()) throw std::runtime_error(e);
         out += std::format("hosting on UDP {} (max {} guests)\n", port, max);
     } else if (sub == "join") { // join <addr> <code> [port]
         if (a.size() < 3) throw std::runtime_error("usage: elmp lan join <addr> <code> [port]");
         const auto port = a.size() > 3 ? port_of(a[3]) : std::uint16_t{7777};
-        if (auto e = coop::join(a[1], port, a[2]); !e.empty()) throw std::runtime_error(e);
+        if (auto e = coop::start_join(a[1], port, a[2]); !e.empty()) throw std::runtime_error(e);
         out += std::format("joining {}:{}\n", a[1], port);
     } else if (sub == "leave") {
         coop::leave("left by command");

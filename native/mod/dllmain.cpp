@@ -27,6 +27,7 @@
 #include "party/save_scope.h"
 #include "party/storage.h"
 #include "core/catalog.h"
+#include "coop/host.h"
 #include "coop/session.h"
 #include "core/hitrules.h"
 #include "overlay/render.h"
@@ -166,6 +167,7 @@ public:
         console::register_party_commands();
         console::register_coop_commands();
         coop::install();
+        coop::host::install();
         // An open ELMP window is activity too (it pauses the world and polls devices).
         frame::set_activity([] { return core::active() > 0 || party::manager::is_open() || party::menu_ctrl::open_slot() != 0 || party::save_scope::busy(); },
                             [] { return coop::active(); });

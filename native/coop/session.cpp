@@ -121,7 +121,7 @@ net::Identity identity() {
     return g_identity;
 }
 
-std::string host(std::uint16_t port, std::string_view code, std::size_t max_peers) {
+std::string start_host(std::uint16_t port, std::string_view code, std::size_t max_peers) {
     if (g_ep) return "a session is already running (elmp lan leave first)";
     if (code.empty()) return "pairing code required";
     std::string err;
@@ -133,7 +133,7 @@ std::string host(std::uint16_t port, std::string_view code, std::size_t max_peer
     return {};
 }
 
-std::string join(std::string_view addr, std::uint16_t port, std::string_view code) {
+std::string start_join(std::string_view addr, std::uint16_t port, std::string_view code) {
     if (g_ep) return "a session is already running (elmp lan leave first)";
     if (code.empty()) return "pairing code required";
     std::string err;
