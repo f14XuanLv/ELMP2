@@ -305,8 +305,19 @@ void apply(const snap::Frame& f) {
             if (auto* spine = t.spine.get(); spine && anim) {
                 reflect::Frame f(s->sp_set_animation);
                 f.arg(0, 0).arg_string(1, log::wide(*anim)).arg_bool(2, row.loop != 0);
-                if (f.invoke(spine)) ++g_anim_sets;
-                else ++g_anim_fail;
+                if (f.invoke(spine)) {
+                    ++g_anim_sets;
+                    // align the new track to the host's playback time (no restart-from-zero phase lag)
+                    static reflect::FuncRef set_time =
+                        reflect::Resolver("TrackEntry", reflect::find_class(L"/Script/SpinePlugin.TrackEntry")).func(L"SetTrackTime", 1);
+                    if (auto* entry = f.ret<ue::UObject*>(); set_time.ok() && ue::alive(entry) && row.t > 0) {
+                        reflect::Frame st(set_time);
+                        st.arg(0, row.t);
+                        st.invoke(entry);
+                    }
+                } else {
+                    ++g_anim_fail;
+                }
                 t.anim = row.anim;
             }
         }
