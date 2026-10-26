@@ -266,11 +266,17 @@ bool resolve_script() {
         c.take(cm);
         Resolver pr("PrimitiveComponent", cls(L"/Script/Engine.PrimitiveComponent"));
         s.prim_ignore_actor = pr.func(L"IgnoreActorWhenMoving", 2);
+        s.prim_set_overlaps = pr.func(L"SetGenerateOverlapEvents", 1);
         c.take(pr);
         Resolver a("Actor", cls(L"/Script/Engine.Actor"));
         s.actor_components_by_class = a.func(L"K2_GetComponentsByClass", 1);
+        s.actor_component_by_class = a.func(L"GetComponentByClass", 1);
         c.take(a);
         s.primitive_class = ObjHandle::of(reflect::find_object(L"/Script/Engine.PrimitiveComponent"));
+        Resolver ac("AutoCollectComponent", cls(L"/Script/Zenith.AutoCollectComponent"));
+        s.autocollect_sphere = ac.prop(L"SphereComponent", Kind::Object);
+        c.take(ac);
+        s.autocollect_class = ObjHandle::of(reflect::find_object(L"/Script/Zenith.AutoCollectComponent"));
         Resolver t("TriggerBase", cls(L"/Script/Engine.TriggerBase"));
         s.trigger_collision = t.prop(L"CollisionComponent", Kind::Object);
         c.take(t);

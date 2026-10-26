@@ -11,10 +11,13 @@
 // (respawn), flag change, registry bucket version (new door / bench streamed in), teardown. Audit: the
 // 500 ms tick compares versions; `elmp gates` lists applied counts.
 // Targets (registry buckets): travel = BP_WorldTravelVolume_C, rest = BP_Interactable_RestingPoint_C,
-// interact = AInteractable, pickup = ACollectable, trigger.story / trigger.world = ATrigger by class
+// interact = AInteractable, trigger.story / trigger.world = ATrigger by class
 // (data/gates.json; unlisted = story, reported once). An object in several buckets (a bench is also an
 // Interactable) is ignored when any of its gates is closed. `save`: PX have no vanilla save entry — the
 // only one reachable by a body is the bench (EVT_Rest, closed by `rest`); the flag is recorded, not a target.
+// `pickup` closes the seat's own UAutoCollectComponent sphere (SetGenerateOverlapEvents false): drops spawn
+// already overlapping, so ignoring the collectable when moving leaks (party-facts P1 遗留). Uncollected
+// drops fly to P1 by vanilla fallback.
 
 #include <cstdint>
 #include <filesystem>

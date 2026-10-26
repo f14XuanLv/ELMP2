@@ -211,7 +211,7 @@
 | **M6 XInput 改写** | 改 EXE 导入表 `XInputGetState`（校验仍指向系统 DLL）；分配给座位的手柄对游戏报告“已连接、无输入” | `[E-实测]` |
 | **M7 Raw Input** | 按设备区分键盘；分配给 PX 的键盘消息不再送给游戏 | `[E-实测]` |
 | **M8 命中窗口** | UFunction pre/post：`AbilityHitbox:OnActorOverlapBegin`/`ProcessActorEnter`/`Ability:ExecuteAbilityEffectsOnTarget` + 原生 detour `AbilityEffectQueue 0xCBB110`；配对异队 → 目标 `Faction=2` 临时直写 → 还原；伤害倍率改 `DamagePercentBonus`；击退档位改 `AE_Knockback.bBypassStaminaCheck`+数据 | party-facts `[E-IDA]` `[E-实测]` |
-| **M9 重叠忽略闸门** | 对座位全部碰撞组件 `IgnoreActorWhenMoving(目标, true)`；新流入的目标由对象创建监听补设；适用：`BP_WorldTravelVolume_C`、`BP_Interactable_RestingPoint_C`、`ATrigger` 子类（按类策略）、`ACollectable`（pickup=false 时） | `[E-源码]` 引擎 `UpdateOverlapsImpl`；`[E-实测]` |
+| **M9 重叠忽略闸门** | 对座位全部碰撞组件 `IgnoreActorWhenMoving(目标, true)`；新流入的目标由对象创建监听补设；适用：`BP_WorldTravelVolume_C`、`BP_Interactable_RestingPoint_C`、`ATrigger` 子类（按类策略）；pickup=false 改为关闭座位 `UAutoCollectComponent` 球体的重叠事件（2026-10-26，§7.16.4 更正） | `[E-源码]` 引擎 `UpdateOverlapsImpl`；`[E-实测]` |
 | **M10 IsPlayer 跳板闸门** | detour `0xCE3C90`（蓝图侧 5 字节跳板），对登记对象返回 false；本体不 Hook | `[E-IDA]` |
 | **M11 结算拦截 / 存档保护** | detour `DoDamage 0xCA0380`、技能伤害 `0xCB07E0`、`SaveGame 0xD25410`、`SaveGameAsync 0xD25550`；回放窗口按目标放行 | `[E-IDA]` |
 | **M12 弱引用身份** | `FWeakObjectPtr`（index + serial）；身份键 = 地址 + 对象名；热路径不缓存裸地址 | `[E-源码]` |
@@ -414,7 +414,7 @@ ELMP 包零 Lua；对 Lua Mod 注入 C 函数；语法糖随 SDK 仓库。`elmp.
 1. **PX 原版交互**（F1.16 / §7.1.2）：P1 设备绑了专用交互键时，原版交互物只听 P1 本地玩家的 UE 动作 `"Interact"`，PX 无从触发。ELMP 把 PX 的 INTERACT 按下沿交给交互物自己的原版 Pressed 处理函数（manifest `InteractablePressInteract`，只对“当前交互者 = 该座位 PC”的那一个），判定 / 结果 / 弹窗全是原版；方向型（UP / DOWN）交互物不介入，座位按上 / 下即可。属“补齐上下文”。
 2. **`rest` 闸门打开的含义**：PX 走原版 `EVT_Rest` = P1 被摆去休息、P1 的休息菜单打开、原版保存与敌人重生（事件以 Controller0 为主体）。默认关闭不变。
 3. **复制存档**：复制件按槽名是新槽 → 新世代、空队伍；源槽的 PX 不跟随（PX 数据只属于一个槽；要带过去需在新槽重新加入）。
-4. **pickup 闸门**：测试图中经验光球在生成时已发放（`IsDropGranted`），闸门只影响光球表现；物品类掉落未找到，保持“未验证”，P2 远程列一并复核。
+4. **pickup 闸门**：测试图中经验光球在生成时已发放（`IsDropGranted`），闸门只影响光球表现；物品类掉落未找到，保持“未验证”，P2 远程列一并复核。**更正（2026-10-26 P1 遗留）**：白花掉落实测证明“碰撞忽略 Collectable”泄漏（掉落物在座位身上生成即重叠，掉落物自身的重叠更新不看座位的 MoveIgnoreActors）；改为关闭座位自己的 `UAutoCollectComponent.SphereComponent` 重叠事件（`SetGenerateOverlapEvents(false)`），未被捡的掉落物由原版兜底飞向 P1 并归 P1。实测见 party-facts「P1 遗留」。
 5. **§7.2 远程座位 / Client 副本两列**随 P2 联机实现后补做；P1 签收只含本地 PX 列。
 
 ---
@@ -438,8 +438,8 @@ ELMP 包零 Lua；对 Lua Mod 注入 C 函数；语法糖随 SDK 仓库。`elmp.
 |---|---|---|---|
 | F0.1 | 零座位零开销 | 部分（Lua 常驻循环仍在） | C++ 帧泵按需启用 |
 | F0.2/0.3 | 预检 / 安装 | 已实现 | 保持（去掉 Scripts） |
-| F1.1–F1.15 | 本地多人全部 | 已实现（F1.7 规则 1/2 空壳；F1.17 未做） | 全部 C++ 化；补规则 1/2、设置持久化 —— **v2 P1 已签收（2026-10-26，kb party-facts「P1f」）**；未验：精灵升级收益 |
-| F1.16 | 触发器 / 归属 | 未实现 | 实现 C5 类策略 —— **v2 已实现**（story / world / interact 实测；pickup 未验证，§7.16.4） |
+| F1.1–F1.15 | 本地多人全部 | 已实现（F1.7 规则 1/2 空壳；F1.17 未做） | 全部 C++ 化；补规则 1/2、设置持久化 —— **v2 P1 已签收（2026-10-26，kb party-facts「P1f」）**；精灵升级收益 2026-10-26 补测（party-facts「P1 遗留」） |
+| F1.16 | 触发器 / 归属 | 未实现 | 实现 C5 类策略 —— **v2 已实现**（story / world / interact / pickup 实测，§7.16.4） |
 | F2.1 | 联机 UI | 未实现 | 实现 |
 | F2.2–F2.9 | 同图联机 | 已实现，FR-NET-14 余项待验收 | C++ 化后重验 G1–G4 |
 | F2.10 | 客人装备通路 | 未实现 | 实现 |

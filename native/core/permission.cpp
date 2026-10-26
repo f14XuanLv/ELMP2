@@ -32,10 +32,11 @@ struct KindGate {
     registry::Kind kind;
     Gate gate; // Trigger: resolved per class (story / world)
 };
-constexpr std::array<KindGate, 5> kKinds{{{registry::Kind::TravelVolume, Gate::Travel},
+// pickup is not a target bucket: drops spawn already overlapping the seat (the collectable's own overlap
+// update ignores the seat's MoveIgnoreActors), so it closes the seat's UAutoCollectComponent sphere instead.
+constexpr std::array<KindGate, 4> kKinds{{{registry::Kind::TravelVolume, Gate::Travel},
                                           {registry::Kind::RestingPoint, Gate::Rest},
                                           {registry::Kind::Interactable, Gate::Interact},
-                                          {registry::Kind::Collectable, Gate::Pickup},
                                           {registry::Kind::Trigger, Gate::TriggerStory}}};
 
 std::map<std::string, Gate, std::less<>> g_trigger_policy; // blueprint class name → story / world
@@ -73,6 +74,8 @@ struct Rec {
     ObjHandle pawn;
     std::vector<ObjHandle> comps;
     std::unordered_map<std::int32_t, Target> applied; // target object index → state
+    ObjHandle sphere;           // UAutoCollectComponent.SphereComponent of `pawn`
+    std::int8_t sphere_on = -1; // last SetGenerateOverlapEvents value applied (-1 = none)
     std::array<std::uint64_t, kKinds.size()> versions;
     Rec() { versions.fill(~0ull); }
     bool dirty = true;
@@ -97,6 +100,14 @@ std::vector<ObjHandle> primitives(const schema::Script& s, ue::UObject* pawn) {
     return out;
 }
 
+ue::UObject* autocollect_sphere(const schema::Script& s, ue::UObject* pawn) {
+    reflect::Frame f(s.actor_component_by_class);
+    f.arg(0, s.autocollect_class.get());
+    if (!f.invoke(pawn)) return nullptr;
+    auto* comp = f.ret<ue::UObject*>();
+    return ue::alive(comp) ? s.autocollect_sphere.object(comp) : nullptr;
+}
+
 bool want_ignore(std::int64_t slot, Gate g, const registry::Entry& e) {
     if (slot == 1) return g == Gate::Travel && g_p1_hold && e.handle.index != g_p1_open;
     if (g == Gate::TriggerStory) g = trigger_gate(e);
@@ -115,7 +126,20 @@ void apply(std::int64_t slot, Rec& r) {
         r.pawn = ObjHandle::of(pawn);
         r.comps = primitives(*s, pawn);
         r.applied.clear();
+        r.sphere = ObjHandle::of(slot == 1 ? nullptr : autocollect_sphere(*s, pawn));
+        r.sphere_on = -1;
         r.dirty = true;
+    }
+    if (slot != 1 && r.dirty) {
+        const std::int8_t on = allows(slot, Gate::Pickup) ? 1 : 0;
+        auto* sphere = r.sphere.get();
+        if (sphere && on != r.sphere_on && !(r.sphere_on < 0 && on)) { // a fresh sphere already overlaps
+            reflect::Frame f(s->prim_set_overlaps);
+            f.arg_bool(0, on != 0);
+            f.invoke(sphere);
+            ++c_ignore_calls;
+        }
+        r.sphere_on = on;
     }
     bool changed = r.dirty;
     for (std::size_t k = 0; k < kKinds.size(); ++k) {
@@ -254,8 +278,9 @@ std::string describe() {
         for (const auto& [i, t] : r.applied) ignored += t.ignored;
         std::string flags;
         for (std::size_t g = 0; g < kNames.size(); ++g) flags += std::format(" {}={}", kNames[g], slot == 1 ? "-" : (allows(slot, static_cast<Gate>(g)) ? "on" : "off"));
-        out += std::format("{}: pawn={} comps={} targets={} ignored={}{}\n", slot == 1 ? "P1" : std::format("P{}", slot), r.pawn.valid() ? "live" : "none", r.comps.size(),
-                           r.applied.size(), ignored, slot == 1 ? std::format(" rule-2 hold={} open={}", g_p1_hold, g_p1_open) : flags);
+        const char* sphere = !r.sphere.valid() ? "none" : (r.sphere_on ? "on" : "off");
+        out += std::format("{}: pawn={} comps={} targets={} ignored={} collect-sphere={}{}\n", slot == 1 ? "P1" : std::format("P{}", slot), r.pawn.valid() ? "live" : "none",
+                           r.comps.size(), r.applied.size(), ignored, slot == 1 ? "-" : sphere, slot == 1 ? std::format(" rule-2 hold={} open={}", g_p1_hold, g_p1_open) : flags);
     }
     return g_recs.empty() ? out + "no gated seats\n" : out;
 }

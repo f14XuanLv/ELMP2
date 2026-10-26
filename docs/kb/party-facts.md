@@ -50,6 +50,23 @@
 ### 性能（P1 + P2 + P3 脚本座位，church_08 静止，15 s）
 - `frame.elmp_us` P50 9 / P95 30 / P99 124 µs（门槛 300）；`party.patrol` 每 250 ms P99 42 µs；`party.progress` 每秒 P99 156 µs。两人离开后回调注销，6 s 内 `g0.reflect_calls = 0`，`registry verify` consistent。`[E-实测]`
 
+## P1 遗留：pickup 闸门 / 精灵升级收益（v2 2026-10-26，Dev2，槽 2 church_12）
+
+### pickup（`UAutoCollectComponent`）
+- 掉落链：`BP_Breakable_Flower_White`（`/Game/_Zenith/Gameplay/LevelDesign/Breakables/`）被 `HPComponent:DoDamage` 打碎 → `BP_Collectable_ItemDrop_HealCount_RestoreOne_C`（`AReusableActor`，池化，同名对象复用）。每个 Lily 的 `UAutoCollectComponent` 半径 **500**、运行时创建 `SphereComponent`。`[E-实测]`
+- **旧实现泄漏**（P1e 起的“座位全部碰撞组件 `IgnoreActorWhenMoving(Collectable)`”）：pickup=off 的 P2 脚下打碎白花，掉落物 1 s 内 `granted=true pc=P2 的 PC`。原因：掉落物在座位身上生成即与球体重叠，重叠由**掉落物自己**的注册 / 移动更新产生，它的 MoveIgnoreActors 里没有座位；另外桶插入后 500 ms 节拍才补设。`[E-实测][E-源码]`
+- **原版兜底**：座位球体不产生重叠时，掉落物不会消失，而是被收给 P1：样本 `pc=P1` 后逐 0.4 s 位置 −22 → −354 → −753 → −1241 → −1812 → −2087（P1 Y −2102），约 2.4 s `granted=true`。`[E-实测]`
+- **v2 实现**：pickup 关 = 对座位 `AutoCollect.SphereComponent` 调 `SetGenerateOverlapEvents(false)`（新 Pawn 加入 / 复活时 `track()` 立即施加；开 = `true`；新球体默认开着，不重复调用）；Collectable 不再是碰撞忽略目标桶。`elmp gates` 显示 `collect-sphere=on|off`。
+- 实测（P2 离 P1 2100 UU，P3 / P4 在 P1 旁）：off → 掉落物飞向 P1 归 P1；on → P2 当场收取（第一次采样 0.4 s 内 `pc=P2`，随后回池 `hidden`）；再 off → 再次归 P1；`elmp kill 2` 复活后新 Pawn `collect-sphere=off`。`[E-实测]`
+
+### 精灵升级收益（F1.5，`SpiritLevels`）
+- 槽 2 P1 只有 s5000（1 级）。测试辅助：P1 `ItemSpiritInventory:AddSpiritLevel('s5000')`（原版升级入口本体，跳过货币与菜单）→ 下一拍 P2（以及 P3）`GetSpiritLevel(s5000)` 1 → 2；再升一次 2 → 3，同样 1 拍内镜像。`elmp progress` `mirrored=2 failures=0`。`[E-实测]`
+- 收益：`pvpDamage 1`，P2 对 P3（敌方，满血 100）`press ATTACK` 一击：2 级 −54（两次相同），3 级 −63。座位的精灵伤害随镜像等级变化。`[E-实测]`
+
+### 测试辅助（P1 遗留，登记）
+- 读档 ×2（槽 2）；`elmp tp` ×4；白花生成（`World:SpawnActor` + `LoadAsset`）+ `DoDamage(9999)` ×6；UEBridge 直接 `SetGenerateOverlapEvents` ×2（修复前验证原理）；P1 `AddSpiritLevel` ×2（只在内存，未保存）；`elmp kill 2` ×1、`vitals 3 restore` ×2、`press 2 ATTACK` ×3；`recall 0` / `pvpDamage 1` 只在本轮（settings 随备份还原）。
+- 测前备份 Dev2 `SaveGames\*.sav` 与 `Saved\ELMP\ELMP\*`，测后整体还原，删除本轮生成的 `party_3953….json(.bak)`（槽 2 的座位被记录后读档自动重入，属预期）。
+
 ## P1f 总验收：闸门矩阵 / 原版交互 / 存档 / 性能（v2 2026-10-26，Dev2）
 
 ### 原版交互入口（新取证）
@@ -67,7 +84,7 @@
 | trigger.world | 槽 2 church_12：P2 两次传送进 `BP_Trigger_HideFakeWall2` 盒，`BP_FakeWall_2.Disappeared=false` | 同一序列 → `Disappeared=true`（第二面墙 `BP_Trigger_HideFakeWall_2` 同样关 / 开对照） | 假墙消失 |
 | trigger.story | 槽 3 church_01：P2 进 `BP_TriggerConditioned_Conversation_2D_2`，`ClearableComponent.IsCleared=false` | 同一序列 → `IsCleared=true`、`CanTrigger=false` | 剧情触发器被消耗 |
 | interact | 槽 2：P2 在 `BP_Interactable_Item_Tip1` 旁：不激活、按交互 delivered=0、Tip 行 0 | 激活给 P2 的 PC；按交互 → 原版取得弹窗「白巫女像的文字」（世界暂停）；确认后 P1 背包 Tip 行 0 → 1 | 弹窗 / 背包行数 |
-| pickup | 未能验证 | — | church_07 打死的史莱姆掉 `BP_Collectable_Experience_C`：`IsDropGranted()=true`、`GetCollectingPlayerController()=nil` —— 经验在生成时已发放，光球只是表现，P1 / P2 站上去都不收；测试图里没有找到待领取的掉落物 |
+| pickup | 槽 2 church_12，P2 离 P1 2100 UU，脚下打碎白花：掉落物飞 2100 UU 归 P1 的 PC（`granted=true`，约 2.4 s） | 同位置：P2 的 PC 当场收取（< 0.4 s） | `GetCollectingPlayerController()`（见「P1 遗留」；P1f 时测试图里没有待领取掉落物） |
 | save | 无独立目标（§7.15.3） | — | — |
 
 - 教程体积（`BP_Trigger_Tutorial_C`）是世界空间提示文字（「space 跳跃」「J 攻击」），不是弹窗，不作判据。

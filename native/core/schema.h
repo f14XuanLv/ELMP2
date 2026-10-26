@@ -72,6 +72,9 @@ struct Script {
     FuncRef cm_disable, cm_set_mode, mc_stop;
     FuncRef prim_ignore_actor, actor_components_by_class;
     ObjHandle primitive_class;
+    FuncRef prim_set_overlaps, actor_component_by_class; // pickup gate: the seat's UAutoCollectComponent sphere
+    PropRef autocollect_sphere;
+    ObjHandle autocollect_class;
     PropRef trigger_collision, box_extent, scene_rel_scale;
     // Spawning (GameplayStatics CDO)
     FuncRef gs_begin_spawn, gs_finish_spawn;
