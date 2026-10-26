@@ -650,10 +650,21 @@ void present_motion(std::int64_t now_us) {
     const auto* s = core::schema::script();
     if (!s || !g_offset_known) return;
     const double render = static_cast<double>(now_us) / 1000.0 + g_offset_ms - 100.0;
+    // a position write costs ~80 µs (actor + Spine children transform update, net-facts「敌人位置插值」):
+    // enemies farther than 3000 UU from the local lily (off-screen) are written at ~10 Hz only
+    static std::uint32_t frame = 0;
+    ++frame;
+    const auto me = core::location(world::p1_pawn());
+    int idx = 0;
     for (auto& [n, t] : g_taken) {
+        ++idx;
         if (!t.n || t.hidden) continue;
         auto* e = t.enemy.get();
         if (!e) continue;
+        if (me) {
+            const auto& last = t.s[(t.head + t.n - 1) % 16];
+            if (std::fabs(last.y - me->y) + std::fabs(last.z - me->z) > 3000.0f && (frame + idx) % 6) continue;
+        }
         const Sample* a = &t.s[t.head];
         const Sample* b = a;
         for (int i = 1; i < t.n; ++i) {
