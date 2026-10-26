@@ -1,12 +1,40 @@
-# ELMP v2 文档（需求树 + C++ 重写架构）
+# ELMP v2 —— ENDER LILIES 多人 Mod（纯 C++ UE4SS）
 
-本目录是对 `D:\CodeT\ELMP` 的**需求重排与架构重设计**产物（2026-10-25），不含代码。
+本地多人、Host 权威联机（同图 + 多地图）、猎人模式与第三方 SDK。仓库同时保存需求树与架构设计（2026-10-25 起），代码按其实现。
 
 | 文件 | 内容 |
 |---|---|
 | [`docs/REQUIREMENTS-TREE.md`](docs/REQUIREMENTS-TREE.md) | 自顶向下需求树（L0 玩家目标 → L1 可感知功能 → L2 系统能力 → L3 机制 → L4 原版入口 / 事实）、依赖图（Mermaid + 邻接表 + 关键路径）、原 [待定] / [调研] 项的全部定案（§7）、验收口径与性能门槛（§8）、节点索引（§9） |
 | [`AGENTS.md`](AGENTS.md) | 新仓库开发规则：拿走知识不照搬旧代码、Shipping 零 Lua、以真实实例验证为主不为测试而测试、可直接替换实例中旧仓库部署的 Mod；**资料与知识来源表**（v1 仓库、重建 UE 工程 + Spine/Event 插件源码、UE 4.26 源码、UE4SS 源码、LilyInEM 参考实现、Randomizer、Lilac2LilyMod、HKMP/SSMP）及证据等级 |
 | [`docs/ARCHITECTURE-V2.md`](docs/ARCHITECTURE-V2.md) | 现状性能诊断、Shipping 纯 C++ / Dev 带 Lua 的目标形态、分层与模块布局、线程模型与单帧泵、反射访问层、对象注册表、Hook 总表、各模块设计、类型化联机协议、多地图、持久化、Dev 构建、SDK（C ABI + Lua 注入）、测试、构建发布、迁移计划、性能设计、风险、ADR 更新清单 |
+
+## 安装
+
+见 [`INSTALL.txt`](INSTALL.txt)（随发布包附带）：UE4SS v3.0.1-998-g32d8a381 解压到 `Binaries\Win64\`，`ELMP` 文件夹放进 `ue4ss\Mods\`，`mods.txt` 加 `ELMP : 1`。ELMP 启动时校验游戏 EXE SHA-256 与全部原生入口前缀，不符则整体停用并在 `UE4SS.log` 写原因。发布包：`dist\ELMP-<版本>-shipping.zip`（零 `.lua` / `.pdb`）与 `-dev.zip`（Dev 构建 + pdb + SDK 示例）。
+
+## 使用
+
+- **管理器**：屏幕右下角 “ELMP” 按钮 → 玩家（加入 / 设备 / 队伍）、规则（切图规则、PvP、镜头）、联机（主持 / 加入 / 离开 / 拒绝原因）、存储。
+- **本地多人**：每个座位一个手柄或键盘；PX 与 P1 共享进度，可各自配装（PX 菜单）、在椅子旁回满；过图跟随、死亡 1.5 s 后在 P1 旁复活。
+- **联机（Host 权威）**：Host `elmp lan host <配对码> [端口] [上限]`，客人 `elmp lan join <地址> <配对码> [端口]`；客人进程不结算任何伤害 / 存档，世界状态来自 Host；客人可进别的图（Host 后台加载该图），Boss 战只能在 Host P1 所在图发起。
+- **猎人模式**：`elmp hunter start [kills N] [time S] [grace S] [respawn S] [target boss|<mapId>] [progress mirror|preset]`。
+- **SDK**：C ABI `ELMP/sdk/elmp_sdk.h`（`ELMP_GetApi`），Lua Mod 带 `elmp.json` 即获得 `ELMP_*` C 函数；示例见 `sdk/examples/`。
+
+## 控制台命令（UE4SS 控制台，`elmp help` 列全）
+
+`status | preflight | perf | registry | lifecycle | events | set | get`；本地多人 `join | leave | seats | devices | assign | bind | bindings | mute | progress | gates | perm | rest | transit | team | pvp | camera | menu | manager | hud | storage`；core `spawn | despawn | respawn | lily | profile | vitals | skin | pad`；联机 `lan host|join|leave|status|trace|bg`；模式 / SDK `hunter | sdk`。
+
+## 已知限制
+
+- 后台图（客人所在、Host P1 不在的图）只加载 GEO / DESIGN / GAMEPLAY：无音效、剧情事件与 Boss 战 fail closed；后台图对象收到的切图 / 就绪事件按前台语义（前台切图时后台正在放的技能会被清）。后台槽 3 个。
+- 客人端技能结束事件不同步（重放的技能 Actor 2 s 寿命上限）；敌人 VisualPivot 竖直偏移未同步。
+- G3 门 / 宝箱 / Boss 窗口专项未在真实对象上实测（测试存档无可用对象，按同一原版通路代证）。
+- SDK：第三方对象不参与联机同步；Lua 事件用 `ELMP_PollEvents` 轮询；最多 16 个 SDK Mod。
+- 只支持 `elmp.json` 列出的游戏 EXE 版本。
+
+## 架构
+
+纯 C++ UE4SS Mod（Shipping 零 Lua）：`base`（预检 / Hook / 设置 / 事件 / 槽位租约）→ `engine`（反射缓存、对象注册表、单帧泵、生命周期）→ `core`（槽位 / 生成 / 档案 / 生命值 / 权限闸门 / 命中规则）→ `input`、`party`（本地多人）、`camera`、`pvp`、`overlay`（DXGI ImGui）→ `net`（CNG 握手 + AES-GCM、可靠 / 不可靠 UDP、typed 增量快照）、`guard`（客人进程结算拦截 / 存档保护）、`coop`（session、host、client、ability 动作通道、maps、六个实体适配器）、`world`（后台图实例 + map_context）、`modes/hunter`、`sdk`。详见 [`docs/ARCHITECTURE-V2.md`](docs/ARCHITECTURE-V2.md) 与 [`docs/adr/0005-cpp-rewrite.md`](docs/adr/0005-cpp-rewrite.md)。
 
 ## 本次新增的取证（已写入需求树 §5 E4a–E4c、E6、E9）
 
