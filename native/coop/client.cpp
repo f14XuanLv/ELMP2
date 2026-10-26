@@ -59,7 +59,7 @@ struct Sample {
     float x = 0, y = 0, z = 0;
 };
 struct Taken {
-    std::array<Sample, 4> s{};
+    std::array<Sample, 16> s{}; // ≥ 100 ms buffer at 60 Hz host capture (4 was too few: held the oldest sample, stepped on rotation)
     int head = 0, n = 0;
     ObjHandle enemy, controller, spine;
     std::uint16_t anim = 0;
@@ -279,11 +279,11 @@ void apply(const snap::Frame& f) {
                 }
             }
         // position: buffered by host time, presented every frame with interpolation (present_motion)
-        if (!t.n || f.t_ms != t.s[(t.head + t.n - 1) % 4].t) {
-            const int at = (t.head + t.n) % 4;
+        if (!t.n || f.t_ms != t.s[(t.head + t.n - 1) % 16].t) {
+            const int at = (t.head + t.n) % 16;
             t.s[at] = {f.t_ms, row.x, row.y, row.z};
-            if (t.n < 4) ++t.n;
-            else t.head = (t.head + 1) % 4;
+            if (t.n < 16) ++t.n;
+            else t.head = (t.head + 1) % 16;
         }
         if (auto* hp = s->zc_hp.object(enemy)) {
             // property write (no SetCurrHP in vanilla). Death is presentation only: the host's death pose keeps
@@ -642,7 +642,7 @@ void present_motion(std::int64_t now_us) {
         const Sample* a = &t.s[t.head];
         const Sample* b = a;
         for (int i = 1; i < t.n; ++i) {
-            const auto& c = t.s[(t.head + i) % 4];
+            const auto& c = t.s[(t.head + i) % 16];
             if (c.t <= render) a = &c;
             b = &c;
             if (c.t > render) break;
