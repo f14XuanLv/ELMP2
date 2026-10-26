@@ -1,6 +1,7 @@
 // Typed codec boundaries (§13 CTest class 1): writer overflow latches, reader never reads past the end,
 // varint limits, string caps, truncation of every prefix of a valid message fails cleanly.
 #include "net/codec.h"
+#include "net/protocol.h"
 #include "net/snapshot.h"
 
 #include <memory>
@@ -106,5 +107,34 @@ TEST_MAIN({
         CHECK(!decode(bad, nullptr, *got2));
         std::vector<std::uint8_t> small(100);
         CHECK(encode(*a, nullptr, 0, small) == 0); // too small → 0, no overflow
+    }
+    { // typed messages: round trip, value ranges, truncation
+        using namespace elmp::net::proto;
+        std::array<std::uint8_t, 256> mb{};
+        Input in;
+        in.x = 100, in.y = -100, in.raw = 1 << 3, in.presses[3] = 65535, in.snap_ack = 9;
+        auto n = encode(in, mb);
+        Input in2;
+        CHECK(n && decode(std::span(mb.data(), n), in2) && in2.presses[3] == 65535 && in2.snap_ack == 9);
+        mb[2] = 101; // x out of range
+        CHECK(!decode(std::span(mb.data(), n), in2));
+        Act act;
+        act.ability = 5, act.xf = {0, 0, 0, 1, 1, 2, 3, 1, 1, 1};
+        n = encode(act, mb);
+        Act act2;
+        CHECK(n && decode(std::span(mb.data(), n), act2) && act2.xf[5] == 2);
+        for (std::size_t k = 0; k < n; ++k) CHECK(!decode(std::span(mb.data(), k), act2));
+        act.xf[3] = 0; // degenerate quaternion
+        n = encode(act, mb);
+        CHECK(!decode(std::span(mb.data(), n), act2));
+        NameDef nd{7, "map_church_08"};
+        n = encode(nd, mb);
+        NameDef nd2;
+        CHECK(decode(std::span(mb.data(), n), nd2) && nd2.text == "map_church_08" && type_of(std::span(mb.data(), n)) == Msg::NameDef);
+        Welcome wel;
+        CHECK(!decode(std::span(mb.data(), n), wel)); // wrong type
+        NameTable t;
+        bool fresh = false;
+        CHECK(t.intern("a", &fresh) == 1 && fresh && t.intern("a", &fresh) == 1 && !fresh && *t.text(1) == "a" && !t.text(2));
     }
 })
