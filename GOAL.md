@@ -86,7 +86,7 @@
 - [ ] `coop/entities`：enemy / enemy_dyn / lily / worldobj / story / pickup 六个 `IEntityAdapter`
 - [x] `guard`：结算拦截（DoDamage / 技能伤害）、`IsPlayer` 跳板、`SaveGame/SaveGameAsync` 存档保护、碰撞 / tick 原语闸 + 激活闸、回放窗口 —— 2026-10-26 · 证据：net-facts「guard 逐项」 · commit fbded06 / 1f50732
 - [x] 动作通道：`AbilityLaunchFromDesc` pre 取参 → 可靠下发 → Client 同入口重放（幂等 + 值域校验） —— 2026-10-26 · 证据：net-facts「动作通道」（captured 38 / replayed 38 / rejected 0） · commit 1693017
-- [ ] 远程座位：kind=network 同构座位、500 ms 停滞松键、`map/mapReady` 跟图闸门、晚加入 / 断线重连保留座位
+- [x] 远程座位：kind=network 同构座位、500 ms 停滞松键、`map/mapReady` 跟图闸门、晚加入 / 断线重连保留座位 —— 2026-10-26 · 证据：net-facts「500 ms 停滞松键」「晚加入 + G1 复检」「非主动断线重连」 · commit c79f4ca / 9b58b34 / 1ec1742
 - [ ] 客人进度与构筑归属（FR-NET-2c）+ Client 原版档只读
 - [ ] 客人装备通路（F2.10）
 - [ ] 管理器「联机」页（F2.1）+ FR-NET-8 版本一致 / 拒绝原因 / Full
