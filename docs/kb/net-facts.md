@@ -115,3 +115,7 @@
 - **遗留**：猎人模式 Boss 目标只在前台图判定（Boss 战本就只在 P1 所在图）；SDK Lua 无回调式订阅（用 `ELMP_PollEvents` 轮询），C++ 有 `subscribe`。
 - **实例最终状态**：Dev2 运行（带三个示例 Mod）、Host2 / Client2 / Client3 运行；存档未改写。
 - **P5 产品问题**：无。
+
+## P5 实测
+- **Shipping 构建三实例冒烟**（2026-10-27，`deploy.py <inst> --flavor shipping`，Host2 + Client2 + Client3，槽 0；Shipping 无 ELMP_Command，命令经 UE4SS 控制台 `bridge.py console`、观测经 UEBridge eval 与 UE4SS.log）：本地多人 —— Host `elmp join` 加入本地座位（Host 共 P2–P4 本地座位）；同图联机 —— `elmp lan host 4821`，两客人依次 join：Host 日志 `peer 1 seated at P5`、`peer 2 seated at P6`、构筑 apply ok，两客人 guard 各 hook armed、`presenting host P1…` 副本；Host P1 经 eval 传进 church_07 门 → 三实例都 `map_church_07 enemies=24`；后台图 —— `elmp perm 5 travel on` 后把五个座位传进 church_07 的 church_08 门：本地座位经原版门带 Host 前台切到 church_08、P6（travel 关）跟随 Host，P5 被 coop/maps 送进后台 church_07：Host `map_church_08 bgEnemies=24 bgLilies=1`，Client2（P5）独自 `map_church_07 enemies=24`，Client3（P6）`map_church_08`。`coop: 9 boss maps` 正常读取。`[E-实测]`
+
