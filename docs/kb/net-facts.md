@@ -23,3 +23,7 @@
 - 正确码 → 两侧 `connected`，RTT 1.1 ms；Host 同时持有两条链路（陈旧的 authing + 已连接）验证对端表。`[E-实测]`
 - Client `elmp lan leave` → Host 1 s 内 `peer 2 closed: peer closed: left the session`（`F_CLOSE`），`peers=0`。`[E-实测]`
 - 身份日志：`proto 2 exe 9b939a44 dll 0199bea7 data 78e12c94 (75 files)`，两实例部署同一构建，一致。
+
+## P2 首次联机切片（v2 2026-10-26，Host2 / Client2，两侧槽 0 church_08）
+- Client `elmp lan join` → Host 落座 P2（`network`），Welcome epoch 2；5 s 内 Host seq 319 / acked 318，Client applied 313、badSnaps 0、mapReady 一致；guard 已武装。`[E-实测]`
+- **G2 取证**：Client 端 `elmp pad allow1 on` + `elmp move 1 1 0`（测试辅助，驱动 Client 本地 P1 的 InputSnapshot）→ Host P2 `idle → run`（Y −2027 → −1692 → −1236 → −871 → −474，原版移动管线，非瞬移）；`move 1 0 0` + `press 1 JUMP` → Host P2 `jump_down → idle`（按下计数差 → `pad::tap`）。`[E-实测]`
