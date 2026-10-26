@@ -84,7 +84,7 @@
 - [x] `coop`：typed 位掩码增量快照 + 名字表 + 预分配 `FrameSnapshot` —— 2026-10-26 · 证据：`test_net_codec`（全量 / 增量 / 删除 / 截断）+ net-facts「P2 首次联机切片」（Host seq 319 / acked 318、badSnaps 0） · commit 096b186 / 5304e2c
 - [ ] `coop`：session / world_model / host capture / client takeover · apply · presenter · vitals
 - [ ] `coop/entities`：enemy / enemy_dyn / lily / worldobj / story / pickup 六个 `IEntityAdapter`
-- [ ] `guard`：结算拦截（DoDamage / 技能伤害）、`IsPlayer` 跳板、`SaveGame/SaveGameAsync` 存档保护、碰撞 / tick 原语闸 + 激活闸、回放窗口
+- [x] `guard`：结算拦截（DoDamage / 技能伤害）、`IsPlayer` 跳板、`SaveGame/SaveGameAsync` 存档保护、碰撞 / tick 原语闸 + 激活闸、回放窗口 —— 2026-10-26 · 证据：net-facts「guard 逐项」 · commit fbded06 / 1f50732
 - [x] 动作通道：`AbilityLaunchFromDesc` pre 取参 → 可靠下发 → Client 同入口重放（幂等 + 值域校验） —— 2026-10-26 · 证据：net-facts「动作通道」（captured 38 / replayed 38 / rejected 0） · commit 1693017
 - [ ] 远程座位：kind=network 同构座位、500 ms 停滞松键、`map/mapReady` 跟图闸门、晚加入 / 断线重连保留座位
 - [ ] 客人进度与构筑归属（FR-NET-2c）+ Client 原版档只读
