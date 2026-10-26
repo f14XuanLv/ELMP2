@@ -51,6 +51,9 @@ struct Taken {
 std::uint8_t g_seat = 0;
 std::uint16_t g_epoch = 0, g_host_map = 0;
 std::uint32_t g_latest = 0;
+std::string g_follow_tag;
+bool g_follow_pending = false;
+std::int64_t g_follow_next_us = 0;
 std::unique_ptr<std::array<snap::Frame, kRing>> g_ring;
 proto::NameTable g_names;
 proto::Input g_input;
@@ -183,10 +186,9 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         proto::MapMsg m;
         if (!proto::decode(msg, m)) return;
         g_host_map = m.map;
-        const auto* host_map = g_names.text(m.map);
-        if (host_map && *host_map == ue::utf8(world::current_map_id()))
-            coop::send_reliable(0, std::span(g_buf.data(), proto::encode(proto::MapReady{m.map}, g_buf)));
-        else log::warn("coop: host is in {}, local map differs (map follow pending)", host_map ? *host_map : "?");
+        g_follow_tag = m.tag;
+        g_follow_pending = true;
+        g_follow_next_us = 0;
         break;
     }
     case proto::Msg::Control: {
@@ -214,8 +216,44 @@ void on_unreliable(std::uint32_t, std::uint8_t stream, std::span<const std::uint
     if (lifecycle::state() == lifecycle::State::Settled) apply(slot);
 }
 
-void tick(std::int64_t) {
-    if (g_seat && lifecycle::state() == lifecycle::State::Settled) send_input();
+// Map follow (v1 net-facts「跟图」): only when the local loader is idle and the map is ready; the vanilla
+// SwitchGameMap with the host's row + entry tag; MapReady once the local map equals the host map.
+void follow(std::int64_t now_us) {
+    if (!g_follow_pending || now_us < g_follow_next_us) return;
+    const auto* host_map = g_names.text(g_host_map);
+    if (!host_map) return;
+    bool loading = true, ready = false;
+    if (!world::loader_flags(loading, ready) || loading || !ready) return;
+    if (*host_map == ue::utf8(world::current_map_id())) {
+        coop::send_reliable(0, std::span(g_buf.data(), proto::encode(proto::MapReady{g_host_map}, g_buf)));
+        g_follow_pending = false;
+        g_taken.clear(); // the previous map's enemies are gone (unload ≠ death)
+        return;
+    }
+    g_follow_next_us = now_us + 2'000'000; // ≥ 2 s between attempts
+    auto* wl = world::world_loader();
+    static reflect::FuncRef sw;
+    if (!sw.ok()) {
+        reflect::Resolver r("WorldLoaderSubsystem", reflect::find_class(L"/Script/Zenith.WorldLoaderSubsystem"));
+        sw = r.func(L"SwitchGameMap", 4);
+    }
+    auto* table = reflect::find_object(L"/Game/_Zenith/Gameplay/Data/DT_GameMapData.DT_GameMapData");
+    if (!wl || !sw.ok() || !table) return void(log::warn("coop: map follow unavailable (loader / SwitchGameMap / DT_GameMapData)"));
+    struct Handle {
+        ue::UObject* table;
+        ue::FName row;
+    } h{table, ue::FName(log::wide(*host_map).c_str(), RC::Unreal::FNAME_Add)};
+    const ue::FName tag(log::wide(g_follow_tag.empty() ? "0" : g_follow_tag).c_str(), RC::Unreal::FNAME_Add);
+    reflect::Frame f(sw);
+    f.arg(0, h).arg(1, static_cast<ue::UObject*>(nullptr)).arg(2, static_cast<ue::UObject*>(nullptr)).arg_name(3, tag);
+    f.invoke(wl);
+    log::info("coop: following the host to {} (tag {})", *host_map, g_follow_tag);
+}
+
+void tick(std::int64_t now_us) {
+    if (!g_seat || lifecycle::state() != lifecycle::State::Settled) return;
+    send_input();
+    follow(now_us);
 }
 
 void stop() {

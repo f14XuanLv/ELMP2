@@ -150,7 +150,11 @@ void send_snapshots() {
         }
         if (p.map_sent != g_frame->map) { // follow the host map (client replies MapReady)
             p.map_sent = g_frame->map;
-            send_rel(id, proto::encode(proto::MapMsg{g_frame->map, ""}, g_buf));
+            std::string tag;
+            if (auto* wl = world::world_loader())
+                if (auto* prop = reflect::find_property(static_cast<ue::UStruct*>(wl->GetClassPrivate()), L"PlayerStartTag"))
+                    tag = ue::utf8(*reinterpret_cast<const ue::FName*>(reinterpret_cast<const std::uint8_t*>(wl) + prop->GetOffset_Internal()));
+            send_rel(id, proto::encode(proto::MapMsg{g_frame->map, tag}, g_buf));
         }
     }
 }
