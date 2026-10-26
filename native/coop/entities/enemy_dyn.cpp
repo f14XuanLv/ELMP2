@@ -80,7 +80,7 @@ IEntityAdapter& enemy_dyn() {
 namespace elmp::coop {
 
 std::span<IEntityAdapter* const> adapters() {
-    static IEntityAdapter* const list[] = {&entities::worldobj(), &entities::story(), &entities::pickup(), &entities::enemy_dyn()};
+    static IEntityAdapter* const list[] = {&entities::lily(), &entities::enemy(), &entities::worldobj(), &entities::story(), &entities::pickup(), &entities::enemy_dyn()};
     return list;
 }
 

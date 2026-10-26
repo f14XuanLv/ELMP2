@@ -270,12 +270,8 @@ void present_enemy(const std::string& key, ue::UObject* enemy, const snap::Enemy
     }
 }
 
-void apply(const snap::Frame& f) {
-    const auto t0 = clock::now_us();
-    const auto* s = core::schema::script();
-    resolve();
-    if (!s || !g_resolved) return;
-    reindex();
+void present_enemies_impl(const snap::Frame& f, const core::schema::Script& s_) {
+    const auto* s = &s_;
     for (const auto& row : f.e.view()) {
         const auto* name = g_names.text(row.key);
         if (!name) {
@@ -304,7 +300,14 @@ void apply(const snap::Frame& f) {
                 }
                 t.hidden = true;
             }
-    present_lilies(f, *s);
+}
+
+void apply(const snap::Frame& f) {
+    const auto t0 = clock::now_us();
+    const auto* s = core::schema::script();
+    resolve();
+    if (!s || !g_resolved) return;
+    reindex();
     ClientCtx ctx{f, [](std::uint16_t id) { return g_names.text(id); }};
     for (auto* a : adapters()) a->apply_client(ctx);
     ++g_applied;
@@ -773,6 +776,14 @@ void present_dynamic(const ClientCtx& c) {
         ++g_dyn_removed;
         it = g_dyn.erase(it);
     }
+}
+
+void present_enemies(const ClientCtx& c) {
+    if (const auto* s = core::schema::script(); s && g_resolved) present_enemies_impl(c.frame, *s);
+}
+
+void present_lily_rows(const ClientCtx& c) {
+    if (const auto* s = core::schema::script()) present_lilies(c.frame, *s);
 }
 
 std::string describe_dynamic() {

@@ -4,7 +4,13 @@
 
 #include <string>
 
+namespace elmp::coop { struct HostCtx; }
+
 namespace elmp::coop::host {
+
+// adapter halves (coop/entities/{lily,enemy}.cpp)
+void write_lilies(HostCtx& c);
+void write_enemies(HostCtx& c);
 
 void install(); // registers the Host handlers with coop/session
 std::string describe();

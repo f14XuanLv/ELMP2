@@ -81,6 +81,7 @@ set(ELMP_MOD_SOURCES
     coop/client.cpp
     coop/ability.cpp
     coop/entities/clearable.cpp
+    coop/entities/enemy.cpp
     coop/entities/worldobj.cpp
     coop/entities/story.cpp
     coop/entities/pickup.cpp

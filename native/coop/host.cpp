@@ -148,16 +148,20 @@ void pose(ue::UObject* enemy, const ObjHandle& h, snap::EnemyRow& row, const cor
     }
     track0(c.second.get(), row, s);
 }
-void capture(std::int64_t now_us) {
-    const auto t0 = clock::now_us();
+} // namespace
+
+// adapter lily (host half): P1 + every seat
+void write_lilies(HostCtx&) {
     const auto* s = core::schema::script();
-    g_frame->clear();
-    g_frame->t_ms = static_cast<std::uint32_t>(now_us / 1000);
-    g_frame->epoch = g_epoch;
-    g_frame->map = name(ue::utf8(world::current_map_id()));
     if (!s) return;
     lily_row(1, world::p1_pawn(), *s);
     for (const auto& seat : party::seats()) lily_row(static_cast<std::uint16_t>(seat.slot), core::pawn(seat.slot), *s);
+}
+
+// adapter enemy (host half): spawn-point enemies keyed by the spawn point name
+void write_enemies(HostCtx&) {
+    const auto* s = core::schema::script();
+    if (!s) return;
     resolve();
     if (g_resolved)
         for (const auto& e : registry::bucket(registry::Kind::Enemy)) {
@@ -182,7 +186,18 @@ void capture(std::int64_t now_us) {
             }
             pose(enemy, e.handle, *row, *s);
         }
-    // adapters (worldobj / story / pickup / enemy_dyn); per-map bookkeeping resets on a map change
+}
+
+namespace {
+void capture(std::int64_t now_us) {
+    const auto t0 = clock::now_us();
+    const auto* s = core::schema::script();
+    g_frame->clear();
+    g_frame->t_ms = static_cast<std::uint32_t>(now_us / 1000);
+    g_frame->epoch = g_epoch;
+    g_frame->map = name(ue::utf8(world::current_map_id()));
+    if (!s) return;
+    // adapters (lily / enemy / enemy_dyn / worldobj / story / pickup); per-map bookkeeping resets on a map change
     if (g_adapter_map != g_frame->map) {
         for (auto* a : adapters()) a->reset();
         g_adapter_map = g_frame->map;
