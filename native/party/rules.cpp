@@ -100,6 +100,10 @@ std::string describe() {
 
 void install() {
     core::permission::set_grant(&grant);
+    core::permission::set_network_predicate([](std::int64_t slot) {
+        const auto* s = party::seat(slot);
+        return s && s->source == party::Source::Network;
+    });
     settings::on_change([](const std::string& key) {
         if (key == "mapRule") core::permission::set_grant(&grant); // re-evaluate every seat's travel gate
     });

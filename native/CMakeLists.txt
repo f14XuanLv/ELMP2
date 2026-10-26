@@ -79,6 +79,7 @@ set(ELMP_MOD_SOURCES
     world/level_instance.cpp
     coop/session.cpp
     coop/host.cpp
+    coop/maps.cpp
     coop/client.cpp
     coop/ability.cpp
     coop/entities/clearable.cpp

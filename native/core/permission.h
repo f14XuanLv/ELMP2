@@ -44,6 +44,8 @@ void hold_p1_doors(bool hold, std::int32_t open_door_index = 0);
 // benches, interactables, all triggers) and its collect sphere is off, so the local world never runs a
 // vanilla door / bench / trigger / pickup for it; the host does, and the client presents the result.
 void p1_presentation(bool on);
+// party installs "is this slot a remote (network) seat" (core does not know seat sources)
+void set_network_predicate(bool (*is_network)(std::int64_t slot));
 
 void track(std::int64_t slot);  // a seat to manage (join / respawn)
 void forget(std::int64_t slot); // seat left (revokes nothing: the pawn is gone or leaving)

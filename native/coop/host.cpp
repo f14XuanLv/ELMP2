@@ -8,6 +8,7 @@
 
 #include "coop/ability.h"
 #include "coop/entity.h"
+#include "coop/maps.h"
 #include "coop/session.h"
 
 #include "party/seat.h"
@@ -389,6 +390,7 @@ void tick(std::int64_t now_us) {
         }
     capture(now_us);
     ability::host_enable(on_launch);
+    maps::tick(now_us);
     send_acts();
     send_snapshots();
 }
@@ -398,6 +400,7 @@ void stop() {
         if (p.slot) party::leave(p.slot);
     for (auto& [k, slot] : g_parked) party::leave(slot);
     ability::host_disable();
+    maps::reset();
     g_pending.clear();
     g_act_seq.clear();
     g_peers.clear();
@@ -419,6 +422,7 @@ std::string describe() {
     std::string out = std::format("host: peers={} parked={} names={} epoch={} actsSent={} actsDropped={}\n", g_peers.size(), g_parked.size(), g_names.size(), g_epoch,
                                   g_acts_sent, g_acts_dropped) + ability::describe();
     for (auto* a : adapters()) out += a->describe();
+    out += maps::describe();
     for (const auto& [id, p] : g_peers)
         out += std::format("  peer {} -> P{} key={} seq={} acked={} input={} mapReady={} build=[{}]\n", id, p.slot, p.guest_key, p.seq, p.acked, p.stalled ? "stalled" : "live", p.map_ready, p.build_report);
     return out;

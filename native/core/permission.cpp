@@ -84,6 +84,7 @@ struct Rec {
 std::map<std::int64_t, Rec> g_recs; // slot 1 = P1 (rule-2 door hold only)
 Grant g_grant = nullptr;
 bool g_p1_hold = false;
+bool (*g_network_seat)(std::int64_t) = nullptr;
 bool g_p1_presentation = false; // guest process: P1 is a presentation of the host seat (FR-NET-3d)
 std::int32_t g_p1_open = 0;
 metrics::Counter& c_ignore_calls = metrics::counter("gates.ignore_calls");
@@ -112,6 +113,9 @@ ue::UObject* autocollect_sphere(const schema::Script& s, ue::UObject* pawn) {
 bool want_ignore(std::int64_t slot, Gate g, const registry::Entry& e) {
     if (slot == 1) return g_p1_presentation || (g == Gate::Travel && g_p1_hold && e.handle.index != g_p1_open);
     if (g == Gate::TriggerStory) g = trigger_gate(e);
+    // remote seats never run a vanilla door (it would switch the whole host world): coop/maps moves them
+    // into their own instance instead (C18); their travel gate only decides whether maps may move them
+    if (g == Gate::Travel && g_network_seat && g_network_seat(slot)) return true;
     return !allows(slot, g);
 }
 
@@ -230,6 +234,11 @@ void hold_p1_doors(bool hold, std::int32_t open_door) {
     r.managed = hold || !r.applied.empty();
     r.dirty = true;
     apply(1, r);
+}
+
+void set_network_predicate(bool (*is_network)(std::int64_t slot)) {
+    g_network_seat = is_network;
+    for (auto& [slot, r] : g_recs) r.dirty = true;
 }
 
 void p1_presentation(bool on) {
