@@ -36,16 +36,18 @@ std::string area_name(std::string key) {
 } // namespace
 
 std::vector<Part> parts(std::string_view map_id) {
-    // map_<area>_<rest> → /Game/_Zenith/Maps/<Area>/Map_<Area>_<rest>/Map_<Area>_<rest>_<Part>
+    // map_<area>_<rest> → /Game/_Zenith/Maps/AreaMaps/<Area>/<Area>_<rest>/<Area>_<rest>_<Part> (Host2 church_08:
+    // PackageNameToLoad of the vanilla instances; the map also has _AUDIO / _EVENT / _Map / <Area>_Common_LIGHT,
+    // not loaded in the background: no sound / light needed, events stay fail closed)
     if (map_id.size() < 6 || (map_id.substr(0, 4) != "map_" && map_id.substr(0, 4) != "Map_")) return {};
     const auto rest0 = map_id.substr(4);
     const auto us = rest0.find('_');
     if (us == std::string_view::npos || us == 0 || us + 1 >= rest0.size()) return {};
     const auto area = area_name(std::string(rest0.substr(0, us)));
-    const auto folder = std::format("Map_{}_{}", area, rest0.substr(us + 1));
+    const auto folder = std::format("{}_{}", area, rest0.substr(us + 1));
     std::vector<Part> out;
     for (const char* p : kParts)
-        out.push_back({p, std::format("/Game/_Zenith/Maps/{}/{}/{}_{}", area, folder, folder, p), std::format("{}{}__{}", kPrefix, map_id, p)});
+        out.push_back({p, std::format("/Game/_Zenith/Maps/AreaMaps/{}/{}/{}_{}", area, folder, folder, p), std::format("{}{}__{}", kPrefix, map_id, p)});
     return out;
 }
 

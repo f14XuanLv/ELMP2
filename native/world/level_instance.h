@@ -1,7 +1,7 @@
 #pragma once
 
 // Background map instances (§7.3 C18, FR-NET-10; v1 net-facts「后台图」): a vanilla game map is a set of
-// sublevel packages `/Game/_Zenith/Maps/<Area>/Map_<Area>_<NN>/Map_<Area>_<NN>_<Part>` that the
+// sublevel packages `/Game/_Zenith/Maps/AreaMaps/<Area>/<Area>_<NN>/<Area>_<NN>_<Part>` that the
 // WorldLoaderSubsystem streams into PersistentGameMap with ULevelStreamingDynamic::LoadLevelInstance at zero
 // offset. The host loads another map's GEO / DESIGN / GAMEPLAY the same way at a large Y offset
 // (slot k → +300000·k) under instance names `ELMP_BG_<mapId>__<Part>`, so map_context can tell its objects
