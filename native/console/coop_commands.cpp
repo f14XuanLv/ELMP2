@@ -3,6 +3,8 @@
 
 #include "console/console.h"
 
+#include "coop/client.h"
+#include "coop/host.h"
 #include "coop/session.h"
 
 #include <charconv>
@@ -37,6 +39,8 @@ void lan_cmd(Args a, std::string& out) {
         out += "left\n";
     } else if (sub == "status") {
         out += coop::describe();
+        if (coop::role() == coop::Role::Host) out += coop::host::describe();
+        if (coop::role() == coop::Role::Client) out += coop::client::describe();
     } else {
         throw std::runtime_error("usage: elmp lan host|join|leave|status");
     }
