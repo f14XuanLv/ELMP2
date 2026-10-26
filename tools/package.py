@@ -18,16 +18,7 @@ import devconfig  # noqa: E402
 REPO = devconfig.REPO
 UE4SS = {"shipping": "UE4SS_v3.0.1-998-g32d8a381.zip", "dev": "zDEV-UE4SS_v3.0.1-998-g32d8a381.zip"}
 
-INSTALL = """ELMP {version} ({flavor})
-
-Requirements: Windows 10/11 (x64), ENDER LILIES (Steam), UE4SS v3.0.1-998-g32d8a381 ({archive}):
-https://github.com/UE4SS-RE/RE-UE4SS/releases/download/experimental/{archive}
-
-1. Extract UE4SS into ENDER LILIES\\EnderLilies\\Binaries\\Win64\\ (ue4ss\\ and dwmapi.dll appear there).
-2. Copy the ELMP folder from this archive into Binaries\\Win64\\ue4ss\\Mods\\.
-3. Add the line "ELMP : 1" to Binaries\\Win64\\ue4ss\\Mods\\mods.txt (before the built-in Keybinds entry).
-4. Start the game. ELMP writes its status to ue4ss\\UE4SS.log ("preflight ok" or the reason it disabled itself).
-"""
+INSTALL = (REPO / "INSTALL.txt").read_text(encoding="utf-8")  # template: {version} {flavor} {archive}
 
 
 def build_zip(flavor: str, config: str, version: str) -> Path:
@@ -44,7 +35,15 @@ def build_zip(flavor: str, config: str, version: str) -> Path:
         for f in sorted((REPO / "pilot").rglob("*")):
             if f.is_file():
                 files.append((f, "ELMP/pilot/" + f.relative_to(REPO / "pilot").as_posix()))
+    files.append((REPO / "native" / "sdk" / "elmp_sdk.h", "ELMP/sdk/elmp_sdk.h"))  # C ABI header (both flavors)
+    if flavor == "dev":  # third-party example mods (Lua) only in the Dev archive
+        for f in sorted((REPO / "sdk" / "examples").rglob("*")):
+            if f.is_file():
+                files.append((f, "ELMP/sdk/examples/" + f.relative_to(REPO / "sdk" / "examples").as_posix()))
     if flavor == "shipping":
+        bad = [arc for _, arc in files if arc.lower().endswith((".pdb",)) or "/pilot/" in arc]
+        if bad:
+            sys.exit(f"shipping package must not contain pdb / pilot files: {bad}")
         lua = [arc for _, arc in files if arc.lower().endswith(".lua")]
         if lua:
             sys.exit(f"shipping package must not contain .lua: {lua}")

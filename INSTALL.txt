@@ -1,0 +1,25 @@
+ELMP {version} ({flavor}) — ENDER LILIES Multiplayer
+
+Requirements
+  - Windows 10/11 x64, ENDER LILIES (Steam). ELMP checks the game EXE (SHA-256 listed in ELMP\elmp.json)
+    and disables itself with a reason in ue4ss\UE4SS.log when the game version does not match.
+  - UE4SS v3.0.1-998-g32d8a381 ({archive}):
+    https://github.com/UE4SS-RE/RE-UE4SS/releases/download/experimental/{archive}
+
+Install
+  1. Extract UE4SS into ENDER LILIES\EnderLilies\Binaries\Win64\ (ue4ss\ and dwmapi.dll appear there).
+  2. Copy the ELMP folder from this archive into Binaries\Win64\ue4ss\Mods\.
+  3. Add the line "ELMP : 1" to Binaries\Win64\ue4ss\Mods\mods.txt (before the built-in Keybinds entry).
+  4. Start the game. ue4ss\UE4SS.log shows "preflight ok" (or why ELMP disabled itself).
+
+Use
+  - Local multiplayer: connect controllers / keyboards, open the ELMP manager (the "ELMP" button at the bottom-right of the screen) → Players → Join,
+    or use the UE4SS console: elmp join, elmp seats, elmp leave.
+  - LAN / online co-op: both players install the same ELMP version. Host: manager → Online → Host
+    (or "elmp lan host <code> [port]"); guest: Online → Join with the host address and the same pairing
+    code ("elmp lan join <address> <code> [port]"). UDP port 7777 by default.
+  - Hunter mode: "elmp hunter start" on the host (speedrunner = host P1, hunters = all other seats).
+
+Uninstall
+  Remove Binaries\Win64\ue4ss\Mods\ELMP and its line in mods.txt. Your vanilla saves are not modified by
+  guests; ELMP's own data lives in <save folder>\ELMP\.
