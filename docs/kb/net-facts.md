@@ -48,3 +48,12 @@
 - **Client 相机 / 本地座位压制 / HUD（FR-NET-3c/3d）**（同日）：会话中 Client `elmp join` → `error: local players are disabled while joined to a host`；Client 镜头只跟本地 P1（自己的预测体），Host P1 副本不注册进镜头（`elmp camera`：allies=0 registered=0）；Client 原版 HUD 的 HP 取 Host 座位值（战斗中两侧 250/400 / 36/400 一致，见「客人战斗」）。`[E-实测]`
 - **G4 截图（部分）**（同日，`client\Saved\ELMP\pilot\shots\g4a-client.png`）：Client church_07 画面可见本地 Lily 与被接管的史莱姆群（Spine 网格正常渲染、非静止贴片），同时 `ability replayed=8`（Host 史莱姆技能在 Client 重放）。60 / 144 / 波动三档帧时间待测。`[E-实测]`
 - **敌人位置插值**（同日）：Client 按 Host 时间 100 ms 缓冲逐帧插值（样本环 16；4 太小会停在最旧样本、按环转动跳步），朝向走原版 `LocomotionComponent:SetFacing`。两侧同时 `elmp lan trace e2010_Slime7`（240 帧）：Host 原始捕获逐帧 Y 差 +39 −37 −55 −55 −55 −55 −10 … −1（史莱姆突进本身就是每帧 55 UU）；Client 呈现 +26 +14 −26 −10 −39 −16 … −10 … −0.3（同段运动被摊平、无停顿回跳）。结论：Client 不比 Host 原始运动更跳；Spine 轨道时间对齐 / VisualPivot 竖直偏移待做。`[E-实测]`
+- **Client 帧开销回归与修复 + G4 三档帧时间**（同日）：加插值后 Client `frame.elmp_us` 随战斗时长涨到均值 5 ms、P99 46 ms。分段计时（`coop.client.{apply,motion,motion_write,replay,input,slow}_us`）定位两处：(1) 重放的技能 Actor 在 Client 永不结束（Host 由敌人自己的时间线 / AI 结束，Client 不跑）→ 几分钟后 Client `AbilityHitbox_e2010_Default_C` 586 个 vs Host 7 个，敌人每次移动拖着全部附着体，单次位置写入 58 µs → 1.3 ms；修：重放 Actor `SetLifeSpan(2 s)`（P2 定案，Host 发结束事件可更精确）→ Client 0 个残留；(2) 重放每次 `StaticLoadObject(类路径)` ≈ 3.4 ms；修：类路径 ↔ 类对象弱句柄双向缓存 → 重放 3.9 → 0.35–0.49 ms。另：离本地 Lily >3000 UU 的敌人位置写入降为 ~10 Hz；`bTeleport` 真假对写入开销无影响。修后战斗 60 s 以上再测（各 12 s，`elmp perf`）：
+
+  | 档 | Host elmp P99 | Client elmp P99 | 帧间隔 P50 / P99 |
+  |---|---|---|---|
+  | 60 | 490 µs | 303 µs | 16.67 / 16.8 ms |
+  | 144 | 371 µs | 191 µs | 6.94 / 7.0 ms |
+  | 波动 40/144/75/30/120/60 | 407 µs | 208 µs | 8.3 / 33.3 ms（随上限切换） |
+
+  截图 `g4a-client.png`（Spine 敌人 + Lily）、`g4b-client.png`（两只 Lily Spine）；弹体截图待补（church_07 史莱姆近战无弹体，需远程敌或精灵弹）。`[E-实测]`
