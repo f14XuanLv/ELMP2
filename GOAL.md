@@ -6,7 +6,7 @@
 > **进度以 §7 的勾选表为准**：每完成一项就在该行打勾并补「日期 · 证据（kb 节 / 截图 / 命令输出）· commit」；下面「当前进行中」一行同步更新。goal 完成 = §7 全部打勾。
 
 **当前进行中**：§2 P2（2026-10-26）。已打勾：net×2、快照、guard、动作通道、CTest、G1、G2、晚加入、断线重连、Host P1 死亡不误判、性能。已实现未勾：session/world_model/capture/takeover/presenter/vitals 行（缺 world_model 与世界对象），远程座位行（缺 FR-NET 映射核对）。下一步：worldobj / story / pickup / enemy_dyn adapter（G3 门 / 宝箱 / 可破坏物 / 剧情旗标）→ 客人进度构筑归属 + 装备通路 → 联机页 + 版本拒绝原因 → 相机 / HUD → 客人离开 Host 还原 → 联机 PvP → §7.2 两列 → G4 帧时间三档 + 截图 → P2 报告。worldobj 可破坏物已实测（交互物 OnClearedStatusChecked 待在有门 / 宝箱的图测）；实例：Host2/Client2 运行中、church_07、会话已连（码 4821 / UDP 7777）；备份 `%TEMP%\elmp_bak_{host,client}_p2`；脚本 `%TEMP%\elmp_redeploy.ps1`、`elmp_p2setup.ps1`、`elmp_p2late.ps1`、`elmp_epos2.lua`。
-**需要用户**：（无）
+**需要用户**：（无；P2 自行定案已记 net-facts：本地 P1 预测 + >150 UU 回拉；Client 离开会话回标题；可破坏物 Client 只隐藏不回放破坏）
 
 ## 0. 恢复上下文（每轮先读）
 1. `AGENTS.md`（规则、资料路径与证据等级、常用命令）。
@@ -101,7 +101,7 @@
 - [x] 晚加入 —— 2026-10-26 · 证据：net-facts「晚加入 + G1 复检」 · commit 本提交
 - [x] 断线（非主动离开）重连，座位与构筑保留 —— 2026-10-26 · 证据：net-facts「非主动断线重连」 · commit 9b58b34 / 本提交
 - [x] Host P1 死亡重生 / 切图时 Client 不把卸载当死亡 —— 2026-10-26 · 证据：net-facts「Host P1 死亡重生不误判」 · commit 本提交
-- [ ] 客人离开后 Host 本地 P1 数值还原
+- [x] 客人离开后 Host 本地 P1 数值还原 —— 2026-10-26 · 证据：net-facts「客人主动离开」 · commit 本提交
 - [ ] 联机 PvP（命中门 + 倍率 + 击退）
 - [ ] §7.2 矩阵「Host 上远程座位」列
 - [ ] §7.2 矩阵「Client 副本」列

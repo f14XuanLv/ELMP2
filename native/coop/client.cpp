@@ -572,6 +572,18 @@ void stop() {
     g_index.clear();
     g_index_version = ~0ull;
     g_input = {};
+    // The local world was a presentation of the host's (enemies frozen with AI gated, objects hidden):
+    // fail closed by returning to the title instead of continuing single-player on it (P2 decision).
+    if (lifecycle::state() == lifecycle::State::Settled) {
+        static reflect::FuncRef open = reflect::Resolver("GameplayStatics", reflect::find_class(L"/Script/Engine.GameplayStatics")).func(L"OpenLevel", 4);
+        auto* cdo = reflect::find_object(L"/Script/Engine.Default__GameplayStatics");
+        if (open.ok() && cdo) {
+            reflect::Frame f(open);
+            f.arg(0, world::game_instance()).arg_name(1, ue::FName(L"TitleMap", RC::Unreal::FNAME_Add)).arg_bool(2, true).arg_string(3, L"");
+            f.invoke(cdo);
+            log::info("coop: left the session — back to the title (the local world was a presentation)");
+        }
+    }
 }
 
 void on_closed(std::uint32_t, const std::string&, net::Reject) {}
