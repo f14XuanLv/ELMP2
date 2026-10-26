@@ -53,7 +53,7 @@ std::string load(std::string_view map_id, float offset_y) {
     if (loaded(map_id)) return {};
     const auto ps = parts(map_id);
     if (ps.empty()) return "unsupported map id";
-    static reflect::FuncRef fn = reflect::Resolver("LevelStreamingDynamic", reflect::find_class(L"/Script/Engine.LevelStreamingDynamic")).func(L"LoadLevelInstance", 7);
+    static reflect::FuncRef fn = reflect::Resolver("LevelStreamingDynamic", reflect::find_class(L"/Script/Engine.LevelStreamingDynamic")).func(L"LoadLevelInstance", 6); // nparms excludes the return value
     auto* cdo = reflect::find_object(L"/Script/Engine.Default__LevelStreamingDynamic");
     if (!fn.ok() || !cdo) return "LoadLevelInstance unavailable";
     Loaded rec;
