@@ -52,7 +52,7 @@ void on_teardown() {
 
 } // namespace
 
-const char* source_name(Source s) noexcept { return s == Source::Script ? "script" : "devices"; }
+const char* source_name(Source s) noexcept { return s == Source::Script ? "script" : s == Source::Network ? "network" : "devices"; }
 const char* team_name(Team t) noexcept { return t == Team::Enemy ? "enemy" : "friendly"; }
 
 std::optional<core::Vec3> behind_p1(int n) {

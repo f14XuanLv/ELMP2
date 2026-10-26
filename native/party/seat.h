@@ -16,7 +16,9 @@
 
 namespace elmp::party {
 
-enum class Source : std::uint8_t { Devices, Script };
+// Network = remote guest seat on the host (C17): same as a local seat except no device routing, no shared
+// camera, recall only on `fell`, input from the session (coop/host/guest).
+enum class Source : std::uint8_t { Devices, Script, Network };
 enum class Team : std::uint8_t { Friendly, Enemy };
 const char* source_name(Source s) noexcept;
 const char* team_name(Team t) noexcept;

@@ -112,7 +112,7 @@ void step(const frame::Tick&) {
     if (!cam) return;
     std::vector<ObjHandle> want;
     for (const auto& seat : party::seats())
-        if (auto* pc = core::controller(seat.slot)) want.push_back(ObjHandle::of(pc));
+        if (auto* pc = core::controller(seat.slot); pc && seat.source != party::Source::Network) want.push_back(ObjHandle::of(pc)); // remote guests have their own screen
     for (const auto& h : g_registered) {
         if (std::find(want.begin(), want.end(), h) != want.end()) continue;
         if (auto* pc = h.get()) call(s->unreg, cam, pc);

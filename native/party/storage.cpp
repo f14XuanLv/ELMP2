@@ -242,6 +242,7 @@ void on_bound(const std::string& id, bool fresh) {
 void capture(std::int64_t slot, bool active, bool edited) {
     if (g_restoring || g_id.empty() || !g_error.empty() || slot < 2 || slot > 100) return;
     const auto* seat = party::seat(slot);
+    if (seat && seat->source == Source::Network) return; // guest builds are stored by guestKey (coop/host/guest)
     auto& c = g_chars[slot];
     c.active = active;
     if (seat) c.source = seat->source, c.team = seat->team;

@@ -5,7 +5,7 @@
 > 只有在全部完成、或某阶段门槛经充分尝试仍无法达成（写明尝试、证据、剩余选项）时才报告 goal 完成或 blocked。需要我决定的产品问题：先按需求树已有定案与 fail closed 默认继续其他工作，把问题集中列出，不要停下等。
 > **进度以 §7 的勾选表为准**：每完成一项就在该行打勾并补「日期 · 证据（kb 节 / 截图 / 命令输出）· commit」；下面「当前进行中」一行同步更新。goal 完成 = §7 全部打勾。
 
-**当前进行中**：§2 P2 实现 —— net + `coop/session`（`elmp lan host <code> [port] [max]` / `join <addr> <code> [port]` / `leave` / `status`，`coop::set_handlers(Role, Handlers)` 分发）已在 Host2/Client2 跑通（`b6ac40b`）；下一步 `coop/protocol`（typed 消息 + 快照位掩码增量 + NameTable）→ guard → host capture / remote seat → client takeover / apply → adapters（2026-10-26）
+**当前进行中**：§2 P2 实现 —— net + `coop/session`（`elmp lan host <code> [port] [max]` / `join <addr> <code> [port]` / `leave` / `status`，`coop::set_handlers(Role, Handlers)` 分发）已在 Host2/Client2 跑通（`b6ac40b`）；`net/snapshot`（Frame = l/e/ed/w/pk 五节，encode/decode 增量 + CTest，`096b186`）、`net/protocol`（Input / Welcome / NameDef / Map / MapReady / Act / Json(Build·Equip) / Control + NameTable，`5304e2c`）完成；`guard/guard`（arm/disarm/mark/mark_not_player/open_replay，9 个 detour，`fbded06`，尚未实例验证）完成；下一步 coop host（远程座位落点：`party/seat.h` `Source{Devices,Script}` 加 `Network`；`camera_sync.cpp:114` 与 `respawn.cpp:129` 遍历座位时 Network 不进共享镜头、召回只保留 fell；`storage.cpp:33/65/123` 序列化 source，Network 座位改按 guestKey 存；`seat.cpp:119` 只有 Devices 进路由；输入用 `input::pad::set(slot,x,y,raw)` + 按计数差 `pad::tap`）（`party::Source` 加 Network 远程座位，`input::pad::set/tap` 喂输入）/ client → guard → host capture / remote seat → client takeover / apply → adapters（2026-10-26）
 **需要用户**：（无）
 
 ## 0. 恢复上下文（每轮先读）

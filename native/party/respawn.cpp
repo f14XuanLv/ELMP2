@@ -159,7 +159,7 @@ void patrol(std::int64_t now_us) {
         const double dy = pos->y - p1_pos->y, dz = pos->z - p1_pos->z;
         const char* reason = nullptr;
         if (dz < -config::recall_fall_depth()) reason = "fell";
-        else if (std::sqrt(dy * dy + dz * dz) > config::recall_distance()) {
+        else if (seat.source != Source::Network && std::sqrt(dy * dy + dz * dz) > config::recall_distance()) { // remote: fell only
             if (!w.far_since) w.far_since = now_us;
             if ((now_us - w.far_since) / 1000 >= static_cast<std::int64_t>(config::recall_delay_ms())) reason = "far";
         } else {
