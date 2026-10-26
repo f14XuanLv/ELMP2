@@ -83,7 +83,9 @@ void __fastcall d_save_async(UObject* self, void* widget, void* result) {
 }
 
 void __fastcall d_ai_activate(UObject* controller) {
-    if (g_armed && (g_marked.count(controller) || g_marked.count(controlled_pawn(controller)))) return void(++g_c.ai_activate_blocked);
+    // Armed = guest process: no local AI at all (every enemy is host-owned; activation happens at spawn,
+    // before takeover could mark it — engine-facts「敌人激活入口重新定位」).
+    if (g_armed) return void(++g_c.ai_activate_blocked);
     o_ai_activate(controller);
 }
 
