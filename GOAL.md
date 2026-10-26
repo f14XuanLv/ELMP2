@@ -5,7 +5,7 @@
 > 只有在全部完成、或某阶段门槛经充分尝试仍无法达成（写明尝试、证据、剩余选项）时才报告 goal 完成或 blocked。需要我决定的产品问题：先按需求树已有定案与 fail closed 默认继续其他工作，把问题集中列出，不要停下等。
 > **进度以 §7 的勾选表为准**：每完成一项就在该行打勾并补「日期 · 证据（kb 节 / 截图 / 命令输出）· commit」；下面「当前进行中」一行同步更新。goal 完成 = §7 全部打勾。
 
-**当前进行中**：§2 P3（2026-10-27）。P2 全部打勾。P3 已勾：第三实例 client2、满员 Full。多对端与两客人同图已勾；**world/level_instance 已写（commit HEAD，未测；测法：Host `elmp lan bg load map_village_04 300000` → `elmp lan bg` 看 ready、registry enemy 数增加；`elmp lan bg unload map_village_04`）**（依据 v1 net-facts 118–134：原版图 = 子关卡包 `<Area>/<Map>/<Map>_{GEO,DESIGN,GAMEPLAY}` 经 `ULevelStreamingDynamic::LoadLevelInstance` 零偏移挂进 PersistentGameMap；后台图按 `(0,+300000·k,0)` 大 Y 偏移、实例名 `ELMP_BG_<mapId>__<part>` 原生 ProcessEvent 加载（Lua 调不了：bOutSuccess out 参）；卸载 `SetIsRequestingUnloadAndRemoval(true)`；map_context = detour `ClearedQueryCurrentMapId 0xCAAFF0`（context 沿 Outer 链命中 `ELMP_BG_<mapId>__` 时写该图 FName）+ `ClearableBeginPlay 0xC997B0`（bClearStatusChecked 仍 false 时补 OnGameMapReady）；两者已在 EL.json；包名清单来源先按命名约定，再查 DT_GameMapData 行）。之后（后台图加载）、map_context、host/maps 生命周期、图 id + 局部坐标、§7.3 读者 IDA 分类。实例：Host2 已停（存档已还原），Client2 / Client3(client2) 运行中；脚本见 P2 报告（net-facts 末尾）。
+**当前进行中**：§2 P3（2026-10-27）。P2 全部打勾。P3 已勾：第三实例 client2、满员 Full。多对端与两客人同图已勾；level_instance 已勾；**下一步 world/map_context**（detour 0xCAAFF0 / 0xC997B0，用 `level_instance::map_of(context)`；测法：bg load village_04 后对后台敌人 DoDamage，看 `ClearedObjectManagerComponent.ClearedActors` 键是 map_village_04 而非 church_08）（旧计划：依据 v1 net-facts 118–134：原版图 = 子关卡包 `<Area>/<Map>/<Map>_{GEO,DESIGN,GAMEPLAY}` 经 `ULevelStreamingDynamic::LoadLevelInstance` 零偏移挂进 PersistentGameMap；后台图按 `(0,+300000·k,0)` 大 Y 偏移、实例名 `ELMP_BG_<mapId>__<part>` 原生 ProcessEvent 加载（Lua 调不了：bOutSuccess out 参）；卸载 `SetIsRequestingUnloadAndRemoval(true)`；map_context = detour `ClearedQueryCurrentMapId 0xCAAFF0`（context 沿 Outer 链命中 `ELMP_BG_<mapId>__` 时写该图 FName）+ `ClearableBeginPlay 0xC997B0`（bClearStatusChecked 仍 false 时补 OnGameMapReady）；两者已在 EL.json；包名清单来源先按命名约定，再查 DT_GameMapData 行）。之后（后台图加载）、map_context、host/maps 生命周期、图 id + 局部坐标、§7.3 读者 IDA 分类。实例：Host2 已停（存档已还原），Client2 / Client3(client2) 运行中；脚本见 P2 报告（net-facts 末尾）。
 **需要用户**：①若要补测 G3 门 / 宝箱 / Boss 窗口专项，请提供一个入口图里有未开门 / 宝箱、可进入未打 Boss 的存档放到 Host2/Client2（当前按同通路代证 + Boss fail closed 继续）；（P2 自行定案已记 net-facts：本地 P1 预测 + >150 UU 回拉；Client 离开会话回标题；可破坏物 Client 只隐藏不回放破坏）
 
 ## 0. 恢复上下文（每轮先读）
@@ -111,7 +111,7 @@
 ### P3 多客人 + 多地图 —— 实现
 - [x] 第三个隔离实例 `client2`（`Win64_LAN_Client3` + `ELMP_Test_Data\client2`，devconfig 登记） —— 2026-10-27 · 证据：net-facts「第三实例 + Full 拒绝原因」 · commit 本提交
 - [x] 多对端：每对端独立会话 / 密钥 / 可靠层 / 基线 / epoch；快照公共部分 + 每对端 `me`；`l<seat>` 副本；满员 Full —— 2026-10-27 · 证据：net-facts「两客人同图 G1–G4」「第三实例 + Full 拒绝原因」 · commit b6ac40b / 9b58b34 / 4f5e8c9
-- [ ] `world/level_instance`（`LoadLevelInstance` 反射参数校验、`ELMP_BG_<Map>__<Part>` 大 Y 偏移）
+- [x] `world/level_instance`（`LoadLevelInstance` 反射参数校验、`ELMP_BG_<Map>__<Part>` 大 Y 偏移） —— 2026-10-27 · 证据：net-facts「world/level_instance」 · commit 本提交前两提交
 - [ ] `world/map_context`（`0xCAAFF0` + `0xC997B0` 上下文窗口）
 - [ ] `coop/host/maps` 生命周期（首入加载、末离 10 s 宽限卸载、P1 进入先卸载再原版切图）
 - [ ] 坐标按「图 id + 局部坐标」传输 + 兴趣过滤；远程座位切图只切自己的实例
