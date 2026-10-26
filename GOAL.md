@@ -94,11 +94,11 @@
 - [x] CTest：typed 编解码边界 / 传输状态机 / 握手（只此三类） —— 2026-10-26 · 证据：`build.bat base test` 7/7 通过（test_net_codec / test_net_transport / test_net_handshake） · commit a3ebf0f / 096b186 / 5304e2c
 
 ### P2 同图联机 —— 门槛（Host2 / Client2）
-- [ ] G1 Client 无 AI 决策：三闸 + 1 Hz 复检计数可观测，泄漏 0
+- [x] G1 Client 无 AI 决策：三闸 + 1 Hz 复检计数可观测，泄漏 0 —— 2026-10-26 · 证据：net-facts「晚加入 + G1 复检」「guard 逐项」（AI 激活闸 24、tick / 碰撞原语闸、rechecks 20 aiLeaks 0、IsActive 0/26） · commit 1f50732 / 本提交
 - [x] G2 客人输入经 Host 原版管线（动画序列取证） —— 2026-10-26 · 证据：net-facts「P2 首次联机切片」G2（idle → run → jump_down → idle；攻击 → summon_DEFAULT_A 击杀 3 敌） · commit f5dfef7 / bb5630f
 - [ ] G3 世界一致：敌人数量 / 位置 ≤5 UU / HP、门、宝箱、可破坏物（Client ⊆ Host）、剧情旗标、Boss 窗口
 - [ ] G4 60 / 144 / 波动三档帧时间 + 截图可见 Spine 动画与弹体
-- [ ] 晚加入
+- [x] 晚加入 —— 2026-10-26 · 证据：net-facts「晚加入 + G1 复检」 · commit 本提交
 - [ ] 断线（非主动离开）重连，座位与构筑保留
 - [ ] Host P1 死亡重生 / 切图时 Client 不把卸载当死亡
 - [ ] 客人离开后 Host 本地 P1 数值还原
