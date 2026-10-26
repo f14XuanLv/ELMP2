@@ -12,6 +12,7 @@
 
 #include "core/player.h"
 #include "core/schema.h"
+#include "core/skin.h"
 
 #include "engine/lifecycle.h"
 #include "engine/reflect.h"
@@ -88,35 +89,9 @@ void resolve() {
     g_resolved = r.ok();
 }
 
-void lily_row(std::uint16_t key, ue::UObject* pawn, const core::schema::Script& s) {
-    auto* row = g_frame->l.add(key);
-    if (!row || !pawn) return;
-    if (auto at = core::location(pawn)) row->x = at->x, row->y = at->y, row->z = at->z;
-    if (auto* hp = s.zc_hp.object(pawn)) {
-        row->hp = static_cast<std::uint16_t>(std::max(0, s.hp_curr.read<std::int32_t>(hp)));
-        row->mhp = static_cast<std::uint16_t>(std::max(0, s.hp_max.read<std::int32_t>(hp)));
-        row->alive = row->hp > 0;
-    }
-    if (auto* mp = s.zc_mp.object(pawn)) {
-        row->mp = static_cast<std::uint16_t>(std::max(0, s.mp_curr.read<std::int32_t>(mp)));
-        row->mmp = static_cast<std::uint16_t>(std::max(0, s.mp_max.read<std::int32_t>(mp)));
-    }
-}
-
-// Spine track 0 (stage 1 of §4: GetCurrent + getAnimationName / GetTrackTime / GetLoop via ProcessEvent;
-// the spine component is cached per enemy handle — invalidated when the handle dies).
-std::unordered_map<std::int32_t, std::pair<ObjHandle, ObjHandle>> g_spine; // enemy index → (enemy, spine comp)
-std::unordered_map<std::string, std::uint16_t> g_anim_ids;
-
-void pose(ue::UObject* enemy, const ObjHandle& h, snap::EnemyRow& row, const core::schema::Script& s) {
-    auto& c = g_spine[h.index];
-    if (c.first != h) {
-        static ObjHandle cls = ObjHandle::of(reflect::find_object(L"/Script/SpineExtensionPlugin.SpineSkeletonAnimationExComponent"));
-        reflect::Frame f(s.actor_component_by_class);
-        f.arg(0, cls.get());
-        c = {h, f.invoke(enemy) ? ObjHandle::of(f.ret<ue::UObject*>()) : ObjHandle{}};
-    }
-    auto* spine = c.second.get();
+// Spine track 0 (stage 1 of §4: GetCurrent + getAnimationName / GetTrackTime / GetLoop via ProcessEvent).
+template <class Row>
+void track0(ue::UObject* spine, Row& row, const core::schema::Script& s) {
     if (!spine) return;
     reflect::Frame cur(s.sp_get_current);
     cur.arg(0, 0);
@@ -131,6 +106,40 @@ void pose(ue::UObject* enemy, const ObjHandle& h, snap::EnemyRow& row, const cor
     if (lp.invoke(entry)) row.loop = lp.ret_bool();
 }
 
+void lily_row(std::uint16_t key, ue::UObject* pawn, const core::schema::Script& s) {
+    auto* row = g_frame->l.add(key);
+    if (!row || !pawn) return;
+    if (auto at = core::location(pawn)) row->x = at->x, row->y = at->y, row->z = at->z;
+    if (auto* hp = s.zc_hp.object(pawn)) {
+        row->hp = static_cast<std::uint16_t>(std::max(0, s.hp_curr.read<std::int32_t>(hp)));
+        row->mhp = static_cast<std::uint16_t>(std::max(0, s.hp_max.read<std::int32_t>(hp)));
+        row->alive = row->hp > 0;
+    }
+    if (auto* mp = s.zc_mp.object(pawn)) {
+        row->mp = static_cast<std::uint16_t>(std::max(0, s.mp_curr.read<std::int32_t>(mp)));
+        row->mmp = static_cast<std::uint16_t>(std::max(0, s.mp_max.read<std::int32_t>(mp)));
+    }
+    if (auto* loco = s.zc_locomotion.object(pawn)) {
+        reflect::Frame f(s.loco_facing_right);
+        if (f.invoke(loco)) row->facing = f.ret_bool() ? 1 : -1;
+    }
+    row->skin = static_cast<std::uint16_t>(std::max(0, core::skin::current(pawn)));
+    if (const auto* bp = core::schema::blueprint()) track0(bp->lily_spine.object(pawn), *row, s);
+}
+
+// the enemy spine component is cached per enemy handle — invalidated when the handle dies
+std::unordered_map<std::int32_t, std::pair<ObjHandle, ObjHandle>> g_spine; // enemy index → (enemy, spine comp)
+
+void pose(ue::UObject* enemy, const ObjHandle& h, snap::EnemyRow& row, const core::schema::Script& s) {
+    auto& c = g_spine[h.index];
+    if (c.first != h) {
+        static ObjHandle cls = ObjHandle::of(reflect::find_object(L"/Script/SpineExtensionPlugin.SpineSkeletonAnimationExComponent"));
+        reflect::Frame f(s.actor_component_by_class);
+        f.arg(0, cls.get());
+        c = {h, f.invoke(enemy) ? ObjHandle::of(f.ret<ue::UObject*>()) : ObjHandle{}};
+    }
+    track0(c.second.get(), row, s);
+}
 void capture(std::int64_t now_us) {
     const auto t0 = clock::now_us();
     const auto* s = core::schema::script();

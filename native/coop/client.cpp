@@ -12,6 +12,7 @@
 
 #include "core/player.h"
 #include "core/schema.h"
+#include "core/spawn.h"
 
 #include "engine/binary_checks.h"
 #include "engine/lifecycle.h"
@@ -32,7 +33,9 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <map>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 
 namespace elmp::coop::client {
@@ -43,6 +46,8 @@ namespace snap = net::snap;
 namespace proto = net::proto;
 
 constexpr std::size_t kRing = 32;
+constexpr float kReconcileUU = 150.0f; // local P1 vs host seat drift before a snap (decision P2: prediction + snap)
+std::uint64_t g_reconciles = 0;
 
 struct Taken {
     ObjHandle enemy, controller, spine;
@@ -163,6 +168,8 @@ void take(const std::string& name, ue::UObject* enemy) {
     g_taken[name] = {ObjHandle::of(enemy), ObjHandle::of(controller)};
 }
 
+void present_lilies(const snap::Frame& f, const core::schema::Script& s);
+
 void apply(const snap::Frame& f) {
     const auto t0 = clock::now_us();
     const auto* s = core::schema::script();
@@ -203,8 +210,102 @@ void apply(const snap::Frame& f) {
             }
         }
     }
+    present_lilies(f, *s);
     ++g_applied;
     h_apply.add(static_cast<double>(clock::now_us() - t0));
+}
+
+// Copies of the other lilies on the host (host P1 + other seats): a pooled ELMP Lily at slot 50 + key,
+// marked (no AI / no collision / IsPlayer false), positioned / turned / animated from the l rows.
+struct Copy {
+    std::int64_t slot = 0;
+    std::uint16_t anim = 0;
+    std::int8_t facing = 0;
+    bool seen = false;
+};
+std::map<std::uint16_t, Copy> g_copies;
+reflect::FuncRef g_set_collision, g_set_rotation;
+
+void drop_copy(std::uint16_t key) {
+    auto it = g_copies.find(key);
+    if (it == g_copies.end()) return;
+    if (auto* p = core::pawn(it->second.slot)) guard::unmark(p), guard::mark_not_player(p, false);
+    core::spawn::despawn(it->second.slot, false);
+    core::leases().release({"ELMP", slots::OwnerKind::Elmp}, it->second.slot);
+    g_copies.erase(it);
+}
+
+void drop_copies() {
+    while (!g_copies.empty()) drop_copy(g_copies.begin()->first);
+}
+
+void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
+    if (!g_set_collision.ok()) {
+        reflect::Resolver a("Actor", reflect::find_class(L"/Script/Engine.Actor"));
+        g_set_collision = a.func(L"SetActorEnableCollision", 1);
+        g_set_rotation = a.func(L"K2_SetActorRotation", 2);
+    }
+    for (auto& [k, c] : g_copies) c.seen = false;
+    const auto* bp = core::schema::blueprint();
+    for (const auto& row : f.l.view()) {
+        if (row.key == g_seat) { // own seat: the local P1 predicts; snap back when it drifts from the host seat
+            auto* p1 = world::p1_pawn();
+            if (auto at = p1 ? core::location(p1) : std::nullopt; at && std::hypot(at->y - row.y, at->z - row.z) > kReconcileUU) {
+                reflect::Frame tp(s.actor_teleport);
+                tp.arg(0, core::Vec3{row.x, row.y, row.z}).arg_bool(1, false).arg_bool(3, true);
+                if (tp.invoke(p1)) ++g_reconciles;
+            }
+            continue;
+        }
+        if (row.key == 0 || row.key > 8) continue;
+        auto& c = g_copies[row.key];
+        c.seen = true;
+        if (!c.slot || !core::pawn(c.slot)) {
+            const std::int64_t slot = 50 + row.key;
+            if (!c.slot && core::leases().acquire({"ELMP", slots::OwnerKind::Elmp}, slot) != slots::Result::Ok) continue;
+            c.slot = slot;
+            core::spawn::Options o;
+            o.location = core::Vec3{row.x, row.y, row.z};
+            o.skin = row.skin ? row.skin : 1;
+            if (auto e = core::spawn::spawn(slot, o); !e.empty()) {
+                log::warn("coop: copy of P{} failed: {}", row.key, e);
+                continue;
+            }
+            auto* p = core::pawn(slot);
+            if (g_set_collision.ok()) {
+                reflect::Frame fc(g_set_collision);
+                fc.arg_bool(0, false);
+                fc.invoke(p);
+            }
+            guard::mark(p);
+            guard::mark_not_player(p, true);
+            c.anim = 0, c.facing = 0;
+            log::info("coop: presenting host P{} as local slot {}", row.key, slot);
+        }
+        auto* p = core::pawn(c.slot);
+        if (!p) continue;
+        if (auto at = core::location(p); at && (std::fabs(at->x - row.x) + std::fabs(at->y - row.y) + std::fabs(at->z - row.z)) > 0.5f) {
+            reflect::Frame tp(s.actor_teleport);
+            tp.arg(0, core::Vec3{row.x, row.y, row.z}).arg_bool(1, false).arg_bool(3, true);
+            tp.invoke(p);
+        }
+        if (row.facing && row.facing != c.facing && g_set_rotation.ok()) {
+            reflect::Frame fr(g_set_rotation);
+            fr.arg(0, core::Vec3{0, row.facing > 0 ? 90.0f : -90.0f, 0}).arg_bool(1, false);
+            if (fr.invoke(p)) c.facing = row.facing;
+        }
+        if (row.anim && row.anim != c.anim && bp)
+            if (const auto* anim = g_names.text(row.anim))
+                if (auto* spine = bp->lily_spine.object(p)) {
+                    reflect::Frame fa(s.sp_set_animation);
+                    fa.arg(0, 0).arg_string(1, log::wide(*anim)).arg_bool(2, row.loop != 0);
+                    if (fa.invoke(spine)) c.anim = row.anim;
+                }
+    }
+    std::vector<std::uint16_t> gone;
+    for (auto& [k, c] : g_copies)
+        if (!c.seen) gone.push_back(k);
+    for (auto k : gone) drop_copy(k);
 }
 
 void on_connected(std::uint32_t) {
@@ -277,6 +378,7 @@ void follow(std::int64_t now_us) {
         return;
     }
     g_follow_next_us = now_us + 2'000'000; // ≥ 2 s between attempts
+    drop_copies();
     auto* wl = world::world_loader();
     static reflect::FuncRef sw;
     if (!sw.ok()) {
@@ -303,6 +405,7 @@ void tick(std::int64_t now_us) {
 }
 
 void stop() {
+    drop_copies();
     for (auto& [name, t] : g_taken)
         if (auto* e = t.enemy.get(); e && g_set_tick.ok()) {
             guard::unmark(e);
@@ -325,8 +428,8 @@ void on_closed(std::uint32_t, const std::string&, net::Reject) {}
 } // namespace
 
 std::string describe() {
-    return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} presses(attack)={}\n{}", g_seat,
-                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_input.presses[3],
+    return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} copies={} reconciles={} presses(attack)={}\n{}", g_seat,
+                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_input.presses[3],
                        guard::describe());
 }
 
