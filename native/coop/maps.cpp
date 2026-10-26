@@ -166,6 +166,23 @@ const std::vector<std::string>* boss_maps() {
     return maps.empty() ? nullptr : &maps;
 }
 
+// A live boss in slot: an enemy whose class name carries a boss id (the NNNN suffix of the recollection
+// map ids: e5010 … e6000). The recollection rows name the rematch arenas, not the story boss rooms, so the
+// story rooms are recognised by their occupant once the instance is loaded.
+bool boss_in(int slot) {
+    const auto* bosses = boss_maps();
+    if (!bosses) return true;
+    for (const auto& e : registry::bucket(registry::Kind::Enemy)) {
+        auto* a = e.handle.get();
+        const auto at = a ? core::location(a) : std::nullopt;
+        if (!at || slot_of_y(at->y) != slot) continue;
+        const auto cls = registry::class_name(e.class_id);
+        for (const auto& b : *bosses)
+            if (const auto us = b.rfind('_'); us != std::string::npos && cls.find(b.substr(us + 1)) != std::string::npos) return true;
+    }
+    return false;
+}
+
 int slot_for(const std::string& map) {
     for (int k = 1; k < kSlots; ++k)
         if (g_slots[k].map == map) return k;
@@ -181,7 +198,7 @@ void move_seat(std::int64_t seat, const Door& d) {
         return;
     }
     const auto* bosses = boss_maps();
-    if (!bosses || std::find(bosses->begin(), bosses->end(), d.dest) != bosses->end()) {
+    if (!bosses || std::find(bosses->begin(), bosses->end(), d.dest) != bosses->end()) { // rematch arenas themselves
         ++g_boss_refusals;
         return void(g_last = std::format("P{} -> {}: refused — boss fights only start in host P1's map (§7.1.3){}", seat, d.dest, bosses ? "" : " (boss list unreadable)"));
     }
@@ -247,6 +264,13 @@ void tick(std::int64_t now_us) {
     for (auto it = g_pending.begin(); it != g_pending.end();) {
         if (!world::level_instance::ready(g_slots[it->slot].map)) {
             ++it;
+            continue;
+        }
+        if (boss_in(it->slot)) { // §7.1.3: boss fights only in host P1's map
+            ++g_boss_refusals;
+            g_last = std::format("P{} -> {}: refused — boss room (boss fights only start in host P1's map, §7.1.3)", it->seat, g_slots[it->slot].map);
+            log::info("coop: {}", g_last);
+            it = g_pending.erase(it);
             continue;
         }
         auto at = player_start(it->slot, it->tag);
