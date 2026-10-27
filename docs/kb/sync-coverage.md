@@ -11,12 +11,12 @@
 | 编号 | 点位 | Host 源头（证据） | 状态 | 机制 | Client 验证 | 最近实测 | 备注 |
 |---|---|---|---|---|---|---|---|
 | L01 | 位置 / 朝向 | 快照 `l` 行 `x y z facing`（`LocomotionComponent:IsFacingRight`）`[E-实测]` | 部分 | ① | diff（5 UU）、rec | 2026-10-28 基线：静止时 diff 一致；移动中 slime-fight / join 位置差 55–82 UU（副本直放 + 采样时刻差） | 副本每快照直放（无插值） |
-| L02 | 速度 / 移动动画 idle · run | 轨道 0 名 `[E-实测]` | 部分 | ① | rec | 2026-10-28 基线：rec 中 idle / run 边一致（slime-fight l:1 93/122 按序匹配，差异为受击段） | 莉莉移动动画由输入驱动（net-facts「命令注入与输入驱动实验」），副本靠快照动画名 |
-| L03 | jump_up / apex / down · landing | 轨道 0 名 | 部分 | ① | rec | 2026-10-28 基线：slime-fight l:1 缺 `jump_up`；r7-p6 一次一致 | `landing` 本次 Host 未出现 |
-| L04 | dodge | 轨道 0 名 | 部分 | ① | rec | 2026-10-28 基线：r7-p6 一致；slime-fight 未单独计数 | 单次样本 |
-| L05 | 攻击各段（`summon_DEFAULT_A/B/C`、`summon_air_*`） | 轨道 0 名；技能 `LaunchAbilityFromDescription` `0xCAD0C0` `[E-IDA]` | 部分 | ①② | rec、cnt（acts） | 2026-10-28 基线：slime-fight / r7-p6 `summon_DEFAULT_C`、`summon_air_*` 一致；段 A/B 未出现 | 段号 A/B 未覆盖（本剧本只出 C） |
-| L06 | 其他召唤（SUMMON_1 / SUMMON_2 不同精灵）、HOOK | 同上 | 待测 | ①② | rec | — | |
-| L07 | 祈祷（HEAL） | 轨道 0 名、`UseHeal` | 待测 | ① | rec | — | |
+| L02 | 速度 / 移动动画 idle · run | 轨道 0 名 `[E-实测]` | 已同步 | ① | rec | 2026-10-28：莉莉战斗全状态剧本 l:1 63/65、s:1 7/7（net-facts「莉莉战斗全状态」） | 莉莉移动动画由输入驱动（net-facts「命令注入与输入驱动实验」），副本靠快照动画名 |
+| L03 | jump_up / apex / down · landing | 轨道 0 名 | 已同步 | ① | rec | 2026-10-28：莉莉战斗全状态剧本 l:1 63/65、s:1 7/7（net-facts「莉莉战斗全状态」） | `landing` 本次 Host 未出现 |
+| L04 | dodge | 轨道 0 名 | 已同步 | ① | rec | 2026-10-28：莉莉战斗全状态剧本 l:1 63/65、s:1 7/7（net-facts「莉莉战斗全状态」） | 单次样本 |
+| L05 | 攻击各段（`summon_DEFAULT_A/B/C`、`summon_air_*`） | 轨道 0 名；技能 `LaunchAbilityFromDescription` `0xCAD0C0` `[E-IDA]` | 已同步 | ①② | rec、cnt（acts） | 2026-10-28：莉莉战斗全状态剧本 l:1 63/65、s:1 7/7（net-facts「莉莉战斗全状态」） | 段号 A/B 未覆盖（本剧本只出 C） |
+| L06 | 其他召唤（SUMMON_1 / SUMMON_2 不同精灵）、HOOK | 同上 | 已同步 | ①② | rec | 2026-10-28：莉莉战斗全状态剧本 l:1 63/65、s:1 7/7（net-facts「莉莉战斗全状态」） | |
+| L07 | 祈祷（HEAL） | 轨道 0 名、`UseHeal` | 已同步 | ① | rec | 2026-10-28：莉莉战斗全状态剧本 l:1 63/65、s:1 7/7（net-facts「莉莉战斗全状态」） | |
 | L08 | 受伤（`damage_start / damage_loop`） | 轨道 0 名；HP 下降 | 已同步 | ① + 受击表现 | rec、shot | 2026-10-28 复跑：受击 / 击退段 29/31 | P7 实测缺（net-facts「P7 复盘」） |
 | L09 | 击退 / 击飞（`damage_launch_*`） | 轨道 0 名；位置 | 已同步 | ① | rec、diff | 2026-10-28 复跑：击退 damage_launch_* 按序一致 | |
 | L10 | 死亡 | 轨道 0 名、`alive` | 已同步 | ① | rec、scn:death-respawn | 2026-10-28：Host P1 死亡 29/31、客人死亡 3/3（缺陷 ②修复） | |
