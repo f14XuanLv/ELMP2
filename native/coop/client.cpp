@@ -78,6 +78,7 @@ struct Taken {
     std::int8_t facing = 0;
     std::uint32_t frame = 0; // last snapshot that carried the row
     std::int32_t hp = -1;    // last presented HP (hit reaction on a drop)
+    bool loop = false;       // last applied row: loop flag (track-0 watchdog re-apply)
 };
 
 // Hit reaction (P6): the vanilla OnReceiveDamage handler of BP_Character_SpineBase (additive damage
@@ -309,7 +310,7 @@ void present_enemy(const std::string& key, ue::UObject* enemy, const snap::Enemy
             if (set_track0(spine, *anim, row.loop != 0, row.t, *s)) ++g_anim_sets;
             else ++g_anim_fail;
             sync::rec_note(key.starts_with("dyn:") ? "d:" + key.substr(4) : "e:" + key, "set " + *anim);
-            t.anim = row.anim;
+            t.anim = row.anim, t.loop = row.loop != 0;
         }
     }
 }
@@ -834,6 +835,37 @@ void present_motion(std::int64_t now_us) {
     }
 }
 
+// Track-0 watchdog (P7 restart baseline defect ①): while the guest's local P1 acts near presented enemies,
+// a local writer (not the hit-effect path, not replayed events — bisected) empties their track 0 to "<empty>",
+// a pose the host never shows. Every frame, enemies within 3000 UU of the local P1 whose track 0 is empty
+// while the last host row was not get the row's animation back (mechanism ①: the snapshot corrects).
+std::uint64_t g_pose_watchdog = 0;
+void pose_watchdog() {
+    const auto* s = core::schema::script();
+    const auto me = core::location(world::p1_pawn());
+    if (!s || !me) return;
+    static const std::wstring kEmpty = L"<empty>";
+    for (auto& [n, t] : g_taken) {
+        if (!t.anim || t.hidden || t.killed) continue;
+        auto* spine = t.spine.get();
+        if (!spine || !t.n) continue;
+        const auto& last = t.s[(t.head + t.n - 1) % 16];
+        if (std::fabs(last.y - me->y) + std::fabs(last.z - me->z) > 3000.0f) continue;
+        const auto* want = g_names.text(t.anim);
+        if (!want || *want == "<empty>") continue;
+        reflect::Frame cur(s->sp_get_current);
+        cur.arg(0, 0);
+        auto* entry = cur.invoke(spine) ? cur.ret<ue::UObject*>() : nullptr;
+        std::wstring own;
+        if (ue::alive(entry)) {
+            reflect::Frame nm(s->te_animation_name);
+            if (nm.invoke(entry)) own = nm.ret_string();
+        }
+        if (!own.empty() && own != kEmpty) continue;
+        if (set_track0(spine, *want, t.loop, 0, *s)) ++g_pose_watchdog;
+    }
+}
+
 void tick(std::int64_t now_us) {
     if (!g_seat || lifecycle::state() != lifecycle::State::Settled) return;
     auto t0 = clock::now_us();
@@ -848,6 +880,7 @@ void tick(std::int64_t now_us) {
     h_input.add(static_cast<double>(t3 - t2));
     recheck(now_us);
     retry_events(now_us);
+    pose_watchdog();
     sync::rec_tick();
     if (t2 - t1 + clock::now_us() - t3 > 50) h_slow.add(static_cast<double>(t2 - t1 + clock::now_us() - t3));
 }
@@ -1175,7 +1208,7 @@ std::string sync_report(const std::string& cat) {
                            "\"reconciles\":{},\"anim_sets\":{},\"anim_fail\":{},\"act_bad\":{},\"act_absent\":{},\"hit_reacts\":{},\"ev_retried\":{},\"ev_absent\":{},"
                            "\"fx_bad\":{},\"sound_bad\":{},\"sound_far\":{},\"stop_missed\":{},\"ai_leaks\":{},\"dyn_bound\":{}}}\n",
                            g_applied, g_bad_snaps, g_unknown_names, g_taken.size(), g_kills, g_copies.size(), g_spirits.size(), g_reconciles, g_anim_sets, g_anim_fail, g_act_bad,
-                           g_act_absent, g_hit_reacts, g_ev_retried, g_ev_absent, g_fx_bad, g_snd_bad, g_snd_far, g_stop_missed, g_leaks, g_dyn.size(), g_empty_sets);
+                           g_act_absent, g_hit_reacts, g_ev_retried, g_ev_absent, g_fx_bad, g_snd_bad, g_snd_far, g_stop_missed, g_leaks, g_dyn.size(), g_empty_sets, g_pose_watchdog);
     }
     if (sync::wants(cat, "world")) sync::world_objects(out);
     if (sync::wants(cat, "hash")) sync::hashes(out);

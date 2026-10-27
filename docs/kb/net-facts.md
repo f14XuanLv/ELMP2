@@ -203,3 +203,5 @@ P7 的方向（复制决策、让原版执行层产生表现）对“完全由�
 - 瞬时 `sync` 的位置 / 动画差在运动中是 100 ms 插值缓冲的预期滞后；判定看 `rec` 序列与正确性行。
 - **基线缺陷（§7.4 第一项逐条修）**：①Client 敌人轨道 0 出现 Host 没有的 `<empty>`；②客人自己的本地 P1 死亡无 `death` 动画（G03）；③敌人静止时 Client 卡 `idle_turn`、Host 已 `idle`；④Client 重放技能 Actor 无 Owner 且残留（2 s 寿命）；⑤入座前首个快照让 Client 为自己的座位生成过一次副本（日志 `presenting host P2 as local slot 52`，Welcome 后删除）；⑥Client 战斗窗口 `frame.elmp_us` P99 1.2–1.3 ms（> 1 ms 门槛）。
 - 测试辅助（登记）：`elmp tp / kill / press / vitals / perm`；eval `Breakable.HPComponent:DoDamage`、`Lily.HPComponent:DoDamage(99999)`、`BP_Interactable_RestingPoint_C:OnInteract(PC)`、`WBP_RestMenu_C:RemoveFromParent`、`OpenLevel TitleMap` + `OnSaveSlotSelected`；`instance.py stop/start client`（断线）。
+
+- **基线缺陷 ① 修复**（2026-10-28）：二分（`elmp lan evmask` 关掉全部重放事件仍出现；Host P1 攻击时 0 次；命中效果 thunk `0xD3BCB0` 闸无效；冻结敌人上孤立设置 / 非循环动画播完都不会清空）→ 写入方未定位，按机制 ① 修：Client 每帧对本地 P1 3000 UU 内的接管敌人检查轨道 0，为空而 Host 行非空时重设行动画（`pose_watchdog` 计数）。guest-fight 复测：变化沿 199/215（93%，基线 92% 且多 16 次 `<empty>`）→ `<empty>` 多余边 0；死亡阶段 126/128（基线 4/7）；正确性行绿；Client P99 1053 µs（缺陷 ⑥ 另修）。`[E-实测]`
