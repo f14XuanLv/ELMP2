@@ -1,5 +1,7 @@
 #include "coop/ability.h"
 
+#include "core/schema.h"
+
 #include "engine/reflect.h"
 
 #include "base/hook.h"
@@ -134,6 +136,10 @@ bool replay(ue::UObject* enemy, const net::proto::Act& act, const std::string& c
     c.arg(0, comp_cls.get());
     auto* comp = c.invoke(enemy) ? c.ret<ue::UObject*>() : nullptr;
     if (!ue::alive(comp)) return fail("no AbilityComponent");
+    // P7 restart defect ⑦: the launch attaches the new ability to the owner's scene component
+    // (AActor::AttachToComponent AV reading 0x130 when it is gone — owner mid-teardown / respawned copy)
+    if (const auto* s = core::schema::script(); !s || !ue::alive(s->actor_root.object(enemy)) || enemy->HasAnyFlags(RC::Unreal::RF_BeginDestroyed))
+        return fail("owner has no live root component");
     reflect::Frame f(launch);
     auto* desc = static_cast<std::uint8_t*>(f.raw(0));
     auto* off = static_cast<std::uint8_t*>(f.raw(1));
