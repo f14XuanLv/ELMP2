@@ -120,6 +120,7 @@ void fx(std::string& out, const KeyOf& key_of) {
     const auto& r = refs();
     struct Count {
         int abilities = 0, psc = 0, audio = 0;
+        std::string acls;
     };
     std::map<std::string, Count> by;
     std::map<ue::UObject*, std::string> keys; // owner → key (memo for this walk)
@@ -142,7 +143,9 @@ void fx(std::string& out, const KeyOf& key_of) {
         if (!o || o->HasAnyFlags(flags) || !ue::alive(o)) return RC::LoopAction::Continue;
         auto* cls = o->GetClassPrivate();
         if (r.ability && cls->IsChildOf(r.ability)) {
-            ++by[key(r.owner.ok() ? r.owner.object(o) : nullptr)].abilities;
+            auto& cnt = by[key(r.owner.ok() ? r.owner.object(o) : nullptr)];
+            ++cnt.abilities;
+            if (cnt.acls.size() < 200) cnt.acls += log::utf8(ue::class_name_of(o)) + " ";
         } else if (r.psc && cls->IsChildOf(r.psc)) {
             if (r.comp_active.ok() && r.comp_active.read_bool(o) && r.psc_template.object(o)) ++by[key(owner_of(o))].psc;
         } else if (r.audio && cls->IsChildOf(r.audio) && r.audio_playing.ok()) {
@@ -158,6 +161,7 @@ void fx(std::string& out, const KeyOf& key_of) {
         v.set("abilities", c.abilities);
         v.set("psc", c.psc);
         v.set("audio", c.audio);
+        if (!c.acls.empty()) v.set("acls", c.acls);
         out += json::dump(v, 0) + "\n";
     }
 }
