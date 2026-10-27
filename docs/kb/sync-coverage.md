@@ -50,12 +50,12 @@
 | E03 | 死亡 / 消失 | `flags` bit2 dead、行消失 → 隐藏 | 部分 | ① | diff、rec | 2026-10-28 基线：Host 击杀 Slime21 → Client 隐藏（world-objects）；Host 死亡 Client 活 = 0 次 | Client 不跑原版死亡（v1 缺陷 1） |
 | E04 | 位置 / 朝向 | `e` 行；Client 100 ms 缓冲插值、`SetFacing` | 部分 | ① | diff、trace | 2026-10-28 基线：静止一致；移动中差 36–200 UU = 100 ms 插值缓冲（预期） | |
 | E05 | VisualPivot 竖直偏移 | 蓝图 ResetVisualPivotLocation（原生无引用 [E-IDA]） | 已同步 | 无需（敌人无非 0 写入者） | shot、diff | 2026-10-28：24 敌逐帧采样恒 0（史莱姆 300 帧 + 士兵 600 帧）；CUE 写入者只有重置与莉莉攀爬（net-facts「敌人 VisualPivot」） | |
-| E06 | 动画全状态（idle / walk / idle_turn / attack_* / fall / landing …） | 轨道 0 名 + 时间 | 部分 | ① | rec | 2026-10-28 基线：slime-fight / world-objects 序列 99%；**缺陷**：Client 插入 Host 没有的 `<empty>` 轨道（guest-fight / death-respawn 每只 4–10 次）、静止时卡 `idle_turn`（Host `idle`） | 其他敌种待测 |
+| E06 | 动画全状态（idle / walk / idle_turn / attack_* / fall / landing …） | 轨道 0 名 + 时间 | 已同步 | ① | rec | 2026-10-28：史莱姆 98–100% / 士兵 18/18 按序一致，多余 <empty> 0（net-facts「敌人受击 / 动画全状态」） | 其他敌种待测 |
 | E07 | 技能 / 弹体 | `Act`（`0xCAD0C0`）、`ActStop` | 部分 | ② | cnt | 2026-10-28 基线：acts 45 / Client act_bad 0 | |
 | E08 | 特效 | `SpawnFX` | 部分 | ② | cnt | 2026-10-28 基线：同 L21 | |
 | E09 | 一次性音效 | `PlayEventAtLocation` | 部分 | ② | cnt | 2026-10-28 基线：同 L23 | |
 | E10 | 附着 / 循环音效 | `PlayEventAttached` | 已同步 | ② | cnt | 2026-10-28：Host 闪避 player-dodge 附着在 Lily → Client 副本播放；测试辅助史莱姆附着声音 → Client 史莱姆上 FMODAudioComponent 1；soundBad 0（net-facts「附着 / 循环音效」） | |
-| E11 | 受击反应（附加受击动画 / 闪白） | Host HP 下降 → Client 调受击处理函数 | 部分 | ② | rec、shot | 2026-10-28 基线：hit_reacts 计数增长；未截图对照 | |
+| E11 | 受击反应（附加受击动画 / 闪白） | Host HP 下降 → Client 调受击处理函数 | 已同步 | ② | rec、shot | 2026-10-28：史莱姆 98–100% / 士兵 18/18 按序一致，多余 <empty> 0（net-facts「敌人受击 / 动画全状态」） | |
 | E12 | 硬直 / 击退 / 眩晕动画 | 轨道 0 名 | 待测 | ① | rec | — | |
 | E13 | Boss 阶段 | 待调研 | 待测 | — | — | — | 需要用户存档 |
 | E14 | Boss 血条 UI | 待调研 | 待测 | — | shot | — | 需要用户存档 |

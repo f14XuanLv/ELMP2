@@ -239,3 +239,9 @@ P7 的方向（复制决策、让原版执行层产生表现）对“完全由�
 - 类链 `[E-实测 / E-SDK]`：`BP_Companion_sXXXX_C < BP_CompanionFX_Base_C < ZenithCompanionCharacter < Character`，控制器 `AIC_Companion_C < ZenithAICompanionController`（`GetLeaderPawn()` 给出跟随的莉莉）。P6 Client 上远端座位的副本没有伴随精灵（world-objects 截图：Host 3 个、Client 0）。
 - 机制 ①（快照行）：registry 新类别 `Companion`（ZenithCompanionCharacter）；Host 把可见伴随精灵按 leader 莉莉的座位编入精灵行（键空间 `seat << 8 | n` 与精灵共用，类路径 / 位置 / 轨道 0），Client 照精灵副本生成冻结副本并插值呈现（伴随精灵无 LocomotionComponent，朝向写入只对 ZenithSpirit 做）。自己座位的伴随精灵本地生成，不复制。
 - 实测：map-change 剧本后 Host 可见伴随精灵 12（自己 6 + P2 6），Client 可见 12（自己 6 + Host P1 的 6），`spirits=6` 副本、`failed=0`；四个检查点实体全等、正确性行绿。截图 `companions-{host,client}.png`。`[E-实测]`
+
+## P7 重启 · 敌人受击 / 动画全状态（v2 2026-10-28）
+- 现状机制 ①（轨道 0 名 + 轨道时间 + `set_track0` 的 `<empty>` 处理 + 本地 P1 附近的轨道 0 看门狗）+ ②（受击反应事件）。
+- 史莱姆：slime-fight 变化沿 98–100%（无记录器窗口外的 Host 死亡段除外）、guest-fight 93–99%，多余 `<empty>` 0，静止卡 `idle_turn` 0（缺陷 ①③ 修复后）。
+- 士兵（新敌种）：Host P1 对 `e2020_Soldier` 群连击 20 次，`e2020_Soldier` 11/11、`e2021_Soldier2` 2/2、`e2021_Soldier3` 5/5 按序一致，总 54/57（95%，差的 3 条在 Host P1 副本的受击段）。截图 `soldier-fight-{host,client}.png`。`[E-实测]`
+- 结论：两种敌人的动画全状态与受击呈现与 Host 按序一致；更多敌种 / Boss 的阶段动画在 Boss 一项复测。
