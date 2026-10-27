@@ -4,7 +4,7 @@
 > **进度以 §7 的勾选表为准**：每完成一项就在该行打勾并补「日期 · 证据（kb 节 / 截图 / 命令输出）· commit」；「当前进行中」同步更新。goal 完成 = §7 全部打勾。
 > 只有在全部完成、或某项经充分尝试仍无法达成（写明尝试、证据、剩余选项）且再无其他可做项时才报告 goal 完成或 blocked。需要我决定的问题：先按需求树已有定案与 fail closed 默认继续其他工作，记到顶部「需要用户」与阶段报告，不要停下等。
 
-**当前进行中**：§2 覆盖矩阵 —— `docs/kb/sync-coverage.md` 列行（§1 复盘 2026-10-28 完成）
+**当前进行中**：§2/§3 —— 矩阵已列行；先做 `elmp lan sync` + `sync_diff.py` + `scenario.py`，再用它们逐行实测 P6 基线（§2 第二项与 §3 验收同一轮完成）
 **需要用户**：①G3 / 覆盖矩阵里门 / 宝箱 / Boss 行需要一个入口图里有未开门、宝箱、可进入未打 Boss 的存档放到 Host2 / Client2（没有就按同通路代证并在矩阵标「未在真对象上实测」）。
 
 ## 背景与本阶段目标
@@ -72,10 +72,10 @@ P7 失败的一个直接原因是没有能复跑的回归基线。先补：
 ### 7.1 复盘
 - [x] P7 diff 清单 + 逐项失败原因（证实过的）写入 net-facts「P7 复盘」 —— 2026-10-28 · 证据：net-facts「P7 复盘」（7 项 diff + 同剧本 A/B：动画变化沿按序匹配 P6 195/217 vs P7 140/313；P7 史莱姆缺全部 `idle_turn`、攻击循环 7 vs 5，Host P1 副本缺 dodge / jump / damage_*、HP 不更新）；截图 `r7-{p6,p7}-{host,client}.png` · commit 2c53789
 - [x] 失败分支里仍成立的事实（命令管线、结算汇点表、注入实验、莉莉输入驱动动画）按证据等级搬进 main 的 engine-facts / net-facts —— 2026-10-28 · 证据：engine-facts「CommandQueue 决策管线」「结算汇点」（`[E-IDA][E-CUE][E-SDK]`，补注“转身 / 走动 / 受击不经命令”“默认 FCommandSettings 插队”）、net-facts「命令注入与输入驱动实验」（`[E-实测]`），均注明来自 explore 分支 · commit 8236589
-- [x] `docs/adr/0006-remote-sync-coverage.md`（逐点位机制清单 ①–⑤ + 选择准则 + 否决的草案引用） —— 2026-10-28 · 证据：`docs/adr/0006-remote-sync-coverage.md`（机制表含适用条件与 main 现有载体、5 步选择准则、兜底不删 / 不整体换方法论、验收单元、否决草案）；架构 §18 登记 · commit 见本行提交
+- [x] `docs/adr/0006-remote-sync-coverage.md`（逐点位机制清单 ①–⑤ + 选择准则 + 否决的草案引用） —— 2026-10-28 · 证据：`docs/adr/0006-remote-sync-coverage.md`（机制表含适用条件与 main 现有载体、5 步选择准则、兜底不删 / 不整体换方法论、验收单元、否决草案）；架构 §18 登记 · commit b218c84
 
 ### 7.2 覆盖矩阵
-- [ ] `docs/kb/sync-coverage.md` 行列齐全（§2 清单全部落行，含正确性行）
+- [x] `docs/kb/sync-coverage.md` 行列齐全（§2 清单全部落行，含正确性行） —— 2026-10-28 · 证据：`docs/kb/sync-coverage.md`（远程莉莉 L01–L30、敌人 E01–E17、世界 W01–W13、客人自身 G01–G08、全局 X01–X05、正确性 C01–C08；新增复盘发现的 L19 伴随精灵、L30 副本动画相位；r7-p6 已证据的行预填）· commit 见本行提交
 - [ ] P6 基线逐行实测填入「当前状态」（Host2 / Client2）
 
 ### 7.3 工具
