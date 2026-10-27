@@ -250,6 +250,11 @@ def slime_fight(r: Run) -> None:
     r.rec_check("fight", wait=4)
     r.checkpoint("end")
     r.perf("fight")
+    # the recorder costs ~80 us per frame on each side: the frame-time gate is measured on a burst without it
+    r.elmp(r.host, "elmp vitals 1 restore")
+    r.perf_reset()
+    r.press(r.host, 1, "ATTACK", 12, 0.5)
+    r.perf("fight-norec")
 
 
 def guest_fight(r: Run) -> None:
@@ -273,6 +278,11 @@ def guest_fight(r: Run) -> None:
     r.rec_check("attack")
     r.checkpoint("attack")
     r.perf("attack")
+    r.perf_reset()
+    for _ in range(12):
+        r.elmp(c, "elmp press 1 ATTACK")
+        time.sleep(0.5)
+    r.perf("attack-norec")
     r.rec_start(600)
     r.elmp(r.host, "elmp kill 2 9999", quiet=False)
     time.sleep(1.5)

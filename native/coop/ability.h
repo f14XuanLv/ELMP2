@@ -29,6 +29,7 @@ void host_disable();
 
 // Client: replay on `owner` (enemy / lily copy / spirit copy; false + reason in *why on any validation
 // failure); *spawned_out = the replayed ability (ActStop target).
+ue::UClass* class_of(const std::string& cls_path, bool* loaded_now); // cached path → class
 bool replay(ue::UObject* owner, const net::proto::Act& act, const std::string& cls, const std::string& custom_spawn, const std::string& custom_attach,
             std::string* why, ue::UObject** spawned_out = nullptr);
 

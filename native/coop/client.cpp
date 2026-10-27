@@ -150,9 +150,14 @@ std::unordered_map<std::uint32_t, std::uint32_t> g_act_last; // kind << 16 | own
 metrics::Histogram& h_apply = metrics::histogram("coop.client.apply_us");
 metrics::Histogram& h_motion = metrics::histogram("coop.client.motion_us");
 metrics::Histogram& h_replay = metrics::histogram("coop.client.replay_us");
+std::int64_t g_replay_frame_us = 0; // replay time spent in the current frame (reset each tick)
+std::uint64_t g_replay_deferred = 0;
 metrics::Histogram& h_write = metrics::histogram("coop.client.motion_write_us");
 metrics::Histogram& h_input = metrics::histogram("coop.client.input_us");
 metrics::Histogram& h_slow = metrics::histogram("coop.client.slow_us"); // 1 Hz: equipment poll + recheck
+metrics::Histogram& h_equip = metrics::histogram("coop.client.equip_us");
+metrics::Histogram& h_recheck = metrics::histogram("coop.client.recheck_us");
+metrics::Histogram& h_watch = metrics::histogram("coop.client.watchdog_us");
 
 std::string guest_key() {
     const auto dir = std::filesystem::path(world::saved_dir()) / L"ELMP" / L"ELMP";
@@ -526,11 +531,18 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
         auto* owner = actor_of(a.kind, a.net_id);
         if (!owner) return EvResult::Retry;
         last = a.seq;
+        // P7 restart baseline defect ⑥: a replay is a vanilla ability spawn (p99 ~3 ms on first use of a class);
+        // several in one frame pushed the client frame P99 over 1 ms. Past 400 µs of replays in a frame the
+        // rest wait for the next frame (retry queue; one frame of delay on a presentation-only event).
+        if (g_replay_frame_us >= 400) return ++g_replay_deferred, EvResult::Retry;
+        // first use of a class: resolve it this frame, spawn next frame (load and spawn not in one frame)
+        if (bool fresh = false; ability::class_of(*cls, &fresh) && fresh) return ++g_replay_deferred, g_replay_frame_us = 400, EvResult::Retry;
         std::string why;
         ue::UObject* spawned = nullptr;
         const auto r0 = clock::now_us();
         const bool ok = ability::replay(owner, a, *cls, cs ? *cs : "", ca ? *ca : "", &why, &spawned);
         h_replay.add(static_cast<double>(clock::now_us() - r0));
+        g_replay_frame_us += clock::now_us() - r0;
         if (!ok && ++g_act_bad <= 5) log::warn("coop: act {} on kind {} id {} rejected: {}", *cls, a.kind, a.net_id, why);
         if (spawned) g_ab_live[ab_key(a.kind, a.net_id, a.seq)] = ObjHandle::of(spawned);
         if (a.kind == static_cast<std::uint8_t>(proto::RefKind::Enemy) && g_names.text(a.net_id)) sync::rec_note("e:" + *g_names.text(a.net_id), "act " + *cls);
@@ -890,10 +902,15 @@ void tick(std::int64_t now_us) {
     follow(now_us);
     auto t3 = clock::now_us();
     h_input.add(static_cast<double>(t3 - t2));
+    h_equip.add(static_cast<double>(t2 - t1));
     recheck(now_us);
     retry_events(now_us);
+    const auto t4 = clock::now_us();
+    h_recheck.add(static_cast<double>(t4 - t3));
     pose_watchdog();
+    h_watch.add(static_cast<double>(clock::now_us() - t4));
     sync::rec_tick();
+    g_replay_frame_us = 0;
     if (t2 - t1 + clock::now_us() - t3 > 50) h_slow.add(static_cast<double>(t2 - t1 + clock::now_us() - t3));
 }
 
@@ -1218,9 +1235,10 @@ std::string sync_report(const std::string& cat) {
         sync::guard_counters(out);
         out += std::format("{{\"cat\":\"cnt\",\"src\":\"client\",\"applied\":{},\"bad_snaps\":{},\"unknown_names\":{},\"taken\":{},\"kills\":{},\"copies\":{},\"spirits\":{},"
                            "\"reconciles\":{},\"anim_sets\":{},\"anim_fail\":{},\"act_bad\":{},\"act_absent\":{},\"hit_reacts\":{},\"ev_retried\":{},\"ev_absent\":{},"
-                           "\"fx_bad\":{},\"sound_bad\":{},\"sound_far\":{},\"stop_missed\":{},\"ai_leaks\":{},\"dyn_bound\":{}}}\n",
+                           "\"fx_bad\":{},\"sound_bad\":{},\"sound_far\":{},\"stop_missed\":{},\"ai_leaks\":{},\"dyn_bound\":{},\"empty_sets\":{},\"pose_watchdog\":{},\"replay_deferred\":{}}}\n",
                            g_applied, g_bad_snaps, g_unknown_names, g_taken.size(), g_kills, g_copies.size(), g_spirits.size(), g_reconciles, g_anim_sets, g_anim_fail, g_act_bad,
-                           g_act_absent, g_hit_reacts, g_ev_retried, g_ev_absent, g_fx_bad, g_snd_bad, g_snd_far, g_stop_missed, g_leaks, g_dyn.size(), g_empty_sets, g_pose_watchdog);
+                           g_act_absent, g_hit_reacts, g_ev_retried, g_ev_absent, g_fx_bad, g_snd_bad, g_snd_far, g_stop_missed, g_leaks, g_dyn.size(), g_empty_sets, g_pose_watchdog,
+                           g_replay_deferred);
     }
     if (sync::wants(cat, "world")) sync::world_objects(out);
     if (sync::wants(cat, "hash")) sync::hashes(out);

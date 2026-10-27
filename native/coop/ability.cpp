@@ -105,6 +105,21 @@ bool host_enable(void (*sink)(const Launch&)) {
 
 void host_disable() { g_sink = nullptr; }
 
+// class lookup by path costs milliseconds (StaticLoadObject string resolve) → cache per path, keyed by a weak
+// handle (invalidated when the class is unloaded). `loaded_now` reports a cache miss resolved in this call.
+ue::UClass* class_of(const std::string& cls_path, bool* loaded_now) {
+    static std::unordered_map<std::string, ObjHandle> cache;
+    auto& slot = cache[cls_path];
+    auto* cls = static_cast<ue::UClass*>(slot.get());
+    if (loaded_now) *loaded_now = false;
+    if (!cls) {
+        cls = static_cast<ue::UClass*>(reflect::load_object(log::wide(cls_path)));
+        slot = ObjHandle::of(cls);
+        if (loaded_now) *loaded_now = cls != nullptr;
+    }
+    return cls;
+}
+
 bool replay(ue::UObject* enemy, const net::proto::Act& act, const std::string& cls_path, const std::string& custom_spawn, const std::string& custom_attach,
             std::string* why, ue::UObject** spawned_out) {
     if (spawned_out) *spawned_out = nullptr;
@@ -115,15 +130,7 @@ bool replay(ue::UObject* enemy, const net::proto::Act& act, const std::string& c
     };
     if (!layout().ok) return fail("layout");
     static ue::UClass* ability_base = reflect::find_class(L"/Script/Zenith.Ability");
-    // class lookup by path costs milliseconds (StaticLoadObject string resolve) → cache per path, keyed by
-    // a weak handle (invalidated when the class is unloaded)
-    static std::unordered_map<std::string, ObjHandle> cache;
-    auto& slot = cache[cls_path];
-    auto* cls = static_cast<ue::UClass*>(slot.get());
-    if (!cls) {
-        cls = static_cast<ue::UClass*>(reflect::load_object(log::wide(cls_path)));
-        slot = ObjHandle::of(cls);
-    }
+    auto* cls = class_of(cls_path, nullptr);
     if (!cls || !ability_base || !cls->IsChildOf(ability_base)) return fail("not an Ability class");
     static ObjHandle comp_cls = ObjHandle::of(reflect::find_object(L"/Script/Zenith.AbilityComponent"));
     static reflect::FuncRef by_class, launch;
