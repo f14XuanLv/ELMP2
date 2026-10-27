@@ -405,8 +405,28 @@ struct Copy {
     std::int32_t hp = -1;
     std::int64_t mismatch_us = 0; // since when the copy's own track 0 differs from the host's (0 = agrees)
     bool held = false;            // host pose held: the copy's animation logic is paused (non-replicated state)
+    std::string build;            // SeatBuild json applied to this copy
 };
 std::map<std::uint16_t, Copy> g_copies;
+std::map<std::uint16_t, std::string> g_seat_builds; // seat → latest SeatBuild json (kept across copy respawns)
+std::uint64_t g_builds_applied = 0;
+std::string g_build_report;
+
+// §7.21-5a: the copy summons with the seat's own equipment (vanilla equip entry; items the local progress
+// does not own are reported, not granted)
+void apply_seat_build(std::uint16_t seat, Copy& c) {
+    auto it = g_seat_builds.find(seat);
+    if (it == g_seat_builds.end() || it->second == c.build) return;
+    c.build = it->second;
+    json::Value v;
+    core::profile::Profile prof;
+    std::string err;
+    const auto* b = json::parse(it->second, v) ? v.get("build") : nullptr;
+    if (!b || !core::profile::from_json(*b, prof, &err)) return void(g_build_report = "bad SeatBuild: " + err);
+    g_build_report = std::format("P{}: {}", seat, core::profile::apply(core::controller(c.slot), prof, false).text());
+    ++g_builds_applied;
+    log::info("coop: copy of P{} equipped: {}", seat, g_build_report);
+}
 std::uint64_t g_pose_holds = 0;
 
 // ADR 0006 §7.21-6 fallback: states the host reaches without a replicated command (chair rest / sleep —
@@ -546,6 +566,7 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
         }
         auto* p = core::pawn(c.slot);
         if (!p) continue;
+        apply_seat_build(row.key, c);
         input::pad::set(c.slot, row.ix / 100.0, row.iy / 100.0, row.iraw);
         // position correction (ADR 0006 §7.21-5): > 240 UU jump, 40–240 converge 15 % per snapshot, below: vanilla
         if (auto at = core::location(p)) {
@@ -724,6 +745,15 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         } else {
             queue_event(msg);
         }
+        break;
+    }
+    case proto::Msg::SeatBuild: {
+        proto::Json j;
+        json::Value v;
+        if (!proto::decode(msg, j) || !json::parse(j.text, v)) break;
+        const auto* s = v.get("seat");
+        const int seat = s ? static_cast<int>(s->number_or(0)) : 0;
+        if (seat > 0 && seat <= 8) g_seat_builds[static_cast<std::uint16_t>(seat)] = j.text;
         break;
     }
     case proto::Msg::EquipResult: {
@@ -971,6 +1001,7 @@ void stop() {
     g_names.clear();
     g_act_last.clear();
     g_cmd_last.clear(), g_cmd_due.clear();
+    g_seat_builds.clear();
     commands::clear_suppressed();
     g_ev_retry.clear();
     for (auto* a : adapters()) a->reset();
@@ -1084,7 +1115,8 @@ std::string describe_events() {
     return std::format("cmds(client): due={} bad={} owners={} copySnaps={} copyBlends={} poseHolds={}\n", g_cmd_due.size(), g_cmd_bad, g_cmd_last.size(), g_copy_snaps,
                        g_copy_blends, g_pose_holds) +
            commands::describe() +
-           std::format("events(client): hitReacts={} retryQueue={} retried={} absent={}\n", g_hit_reacts, g_ev_retry.size(), g_ev_retried, g_ev_absent);
+           std::format("events(client): hitReacts={} retryQueue={} retried={} absent={}\n", g_hit_reacts, g_ev_retry.size(), g_ev_retried, g_ev_absent) +
+           std::format("seatBuilds: known={} applied={} last=[{}]\n", g_seat_builds.size(), g_builds_applied, g_build_report);
 }
 
 void present_lily_rows(const ClientCtx& c) {

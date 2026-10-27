@@ -41,6 +41,7 @@ enum class Msg : std::uint8_t {
     EquipResult = 8,  // host → client: result json
     Control = 9,    // either: code + text
     Cmd = 14,       // host → client: CommandQueue command start of a replicated actor (ADR 0006)
+    SeatBuild = 15, // host → client: json {seat, build} — a seat's equipment for its client copy
 };
 
 // Owner of a replicated command: which presented actor on the client it belongs to.

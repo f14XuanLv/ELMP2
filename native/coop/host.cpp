@@ -68,6 +68,7 @@ struct Peer {
     std::uint16_t map_sent = 0;
     std::uint16_t map_ready = 0;
     std::string build_report;
+    std::map<std::uint16_t, std::string> builds_sent; // seat → last SeatBuild json sent to this peer
 };
 
 std::map<std::uint32_t, Peer> g_peers;
@@ -278,6 +279,33 @@ void send_to(const Ref& r, const Msg& m, std::uint64_t& counter) {
         if (wants(peer, r)) send_rel(id, n), ++counter;
 }
 
+// Seat builds (需求树 §7.21-5a): every lily's equipment (spirits / summon set / equipped passives) goes to each
+// peer presenting it, when it changed (1 Hz compare); the client copy runs vanilla summons with it.
+std::uint64_t g_builds_sent = 0;
+void send_builds(std::int64_t now_us) {
+    static clock::Cadence every(1000);
+    if (g_peers.empty() || !every.due(now_us)) return;
+    std::vector<std::uint8_t> big(proto::kMaxJson + 64);
+    for (const auto& [pawn, seat] : g_lily_pawns) {
+        auto* pc = seat == 1 ? world::p1_controller() : core::controller(seat);
+        const auto prof = pc ? core::profile::read(pc, nullptr) : std::nullopt;
+        if (!prof) continue;
+        core::profile::Profile b;
+        b.spirits = prof->spirits;
+        b.summon_set = prof->summon_set;
+        if (prof->passives && prof->passives->equipped) b.passives = core::profile::Passives{prof->passives->equipped, std::nullopt, std::nullopt};
+        json::Value root = json::Value::object();
+        root.set("seat", static_cast<std::int64_t>(seat));
+        root.set("build", core::profile::to_json(b));
+        const auto text = json::dump(root, 0);
+        for (auto& [id, peer] : g_peers) {
+            if (!peer.slot || peer.slot == seat || peer.builds_sent[seat] == text) continue;
+            if (const auto n = proto::encode(proto::Msg::SeatBuild, proto::Json{text}, big))
+                coop::send_reliable(id, std::span(big.data(), n)), peer.builds_sent[seat] = text, ++g_builds_sent;
+        }
+    }
+}
+
 // Command channel (ADR 0006): command starts of replicated actors, flushed before the snapshot of the frame.
 // Spirit commands are not sent: the client's copy derives them from the summoner's replayed command.
 struct CmdEv {
@@ -483,6 +511,7 @@ void tick(std::int64_t now_us) {
     party::transit::set_stay([](std::int64_t seat) { return maps::slot_of_seat(seat) > 0; });
     maps::tick(now_us);
     send_cmds();
+    send_builds(now_us);
     send_snapshots();
 }
 
@@ -516,7 +545,7 @@ std::string trace(const std::string& name) {
 
 std::string describe() {
     std::string out = std::format("host: peers={} parked={} names={} epoch={}\n", g_peers.size(), g_parked.size(), g_names.size(), g_epoch) +
-                      std::format("cmds: sent={} dropped={} noOwner={} spiritSkipped={}\n", g_cmds_sent, g_cmds_dropped, g_cmds_noref, g_cmds_spirit) + commands::describe();
+                      std::format("cmds: sent={} dropped={} noOwner={} spiritSkipped={} seatBuilds={}\n", g_cmds_sent, g_cmds_dropped, g_cmds_noref, g_cmds_spirit, g_builds_sent) + commands::describe();
     for (auto* a : adapters()) out += a->describe();
     out += maps::describe();
     for (const auto& [id, p] : g_peers)

@@ -4,6 +4,7 @@
 #include "console/console.h"
 
 #include "coop/client.h"
+#include "coop/commands.h"
 #include "coop/host.h"
 #include "coop/session.h"
 #include "coop/maps.h"
@@ -54,6 +55,8 @@ void lan_cmd(Args a, std::string& out) {
         out += world::level_instance::describe();
     } else if (sub == "trace" && a.size() > 1) {
         out += (coop::role() == coop::Role::Host ? coop::host::trace(a[1]) : coop::client::trace(a[1])) + "\n";
+    } else if (sub == "cmdlog") { // Dev: cmdlog [owner filter] — read the starts since the last call, keep recording
+        out += coop::commands::observe(true, a.size() > 1 ? a[1] : "") + "\n";
     } else if (sub == "status") {
         out += coop::describe();
         if (coop::role() == coop::Role::Host) out += coop::host::describe();

@@ -2,9 +2,11 @@
 
 #include "engine/reflect.h"
 
+#include "base/clock.h"
 #include "base/hook.h"
 #include "base/log.h"
 
+#include <array>
 #include <format>
 #include <unordered_map>
 #include <unordered_set>
@@ -43,7 +45,23 @@ void (*g_sink)(const Start&) = nullptr;
 bool g_installed = false, g_failed = false;
 std::uint64_t g_captured = 0, g_replayed = 0, g_rejected = 0;
 
+// Dev diagnostics: last command starts on either role (owner class / action class), `elmp lan cmdlog`
+bool g_observe = false;
+struct Seen {
+    std::int64_t us = 0;
+    std::string owner, action;
+};
+std::array<Seen, 48> g_seen{};
+std::size_t g_seen_n = 0;
+
 char __fastcall d_process(UObject* queue, void* a2, UObject* command) {
+    if (g_observe && queue && command && ue::on_game_thread() && layout().ok && *g_l.result.at<std::uint8_t>(command) == 0)
+        if (auto* action = g_l.action.object(command); action && queue->GetOuterPrivate()) {
+            auto& s = g_seen[g_seen_n++ % g_seen.size()];
+            s.us = clock::now_us();
+            s.owner = log::utf8(queue->GetOuterPrivate()->GetName());
+            s.action = log::utf8(action->GetClassPrivate()->GetName());
+        }
     if (g_sink && queue && command && ue::on_game_thread() && layout().ok && *g_l.result.at<std::uint8_t>(command) == 0) {
         auto* action = g_l.action.object(command);
         auto* cls = action ? action->GetClassPrivate() : nullptr;
@@ -103,6 +121,23 @@ bool host_enable(void (*sink)(const Start&)) {
 }
 
 void host_disable() { g_sink = nullptr; }
+
+std::string observe(bool on, const std::string& filter) {
+    if (!g_installed && !g_failed) {
+        g_installed = hook::install_manifest("CommandProcessStart", reinterpret_cast<void*>(&d_process), reinterpret_cast<void**>(&o_process));
+        g_failed = !g_installed;
+    }
+    std::string out;
+    const auto n = std::min(g_seen_n, g_seen.size());
+    const std::int64_t t0 = n ? g_seen[(g_seen_n - n) % g_seen.size()].us : 0;
+    for (std::size_t i = g_seen_n - n; i < g_seen_n; ++i) {
+        const auto& s = g_seen[i % g_seen.size()];
+        if (filter.empty() || s.owner.find(filter) != std::string::npos) out += std::format("{:>7.3f} {} {}\n", (s.us - t0) / 1e6, s.owner, s.action);
+    }
+    g_observe = on && g_installed;
+    g_seen_n = 0;
+    return out.empty() ? "(no command starts recorded)" : out;
+}
 
 bool replay(ue::UObject* owner, const std::string& cls_path, std::uint8_t dir, std::uint8_t cmd, std::string* why) {
     auto fail = [&](const char* w) {

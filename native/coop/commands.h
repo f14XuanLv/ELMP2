@@ -36,6 +36,10 @@ bool replay(ue::UObject* owner, const std::string& cls_path, std::uint8_t dir, s
 bool suppress_input_commands(ue::UObject* pawn, bool on);
 void clear_suppressed();
 
+// Dev: returns the command starts recorded since the previous call (owner name contains `filter`), then
+// (re)starts recording when `on`.
+std::string observe(bool on, const std::string& filter);
+
 std::string describe();
 
 } // namespace elmp::coop::commands

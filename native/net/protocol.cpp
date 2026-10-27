@@ -142,7 +142,9 @@ bool decode(std::span<const std::uint8_t> in, Cmd& m) {
 bool decode(std::span<const std::uint8_t> in, Json& m) {
     Reader r(in);
     const auto t = r.u8();
-    if (t != static_cast<std::uint8_t>(Msg::Build) && t != static_cast<std::uint8_t>(Msg::EquipRequest) && t != static_cast<std::uint8_t>(Msg::EquipResult)) return false;
+    if (t != static_cast<std::uint8_t>(Msg::Build) && t != static_cast<std::uint8_t>(Msg::EquipRequest) && t != static_cast<std::uint8_t>(Msg::EquipResult) &&
+        t != static_cast<std::uint8_t>(Msg::SeatBuild))
+        return false;
     m.text = std::string(r.str(kMaxJson));
     return r.done();
 }
