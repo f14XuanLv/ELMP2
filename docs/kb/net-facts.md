@@ -142,3 +142,42 @@
   - 帧时间（资产已缓存后的 16 击窗口，`elmp perf`）：Host `frame.elmp_us` P99 428 µs（capture P99 376）；Client P99 277 µs（apply P99 134，replay P50 131 µs）。首次加载窗口（首次 LoadObject 精灵类 / 粒子 / 音效）Client P99 1.2 ms、单帧最大 135 ms（类加载），属一次性。
   - `PlayEventAttached` 0 次（church_07 未触发附着式音效）。
 - **遗留**：附着 / 循环音效与蓝图直接 `SpawnEmitter*` 不复制；精灵位置无插值（每快照直放）；首次资产加载的一次性卡顿；敌人 VisualPivot 竖直偏移。
+
+## P7 复盘（v2 2026-10-28，P7 重启 §1；失败分支 `explore/p7-failed-client-vanilla-execution` 只读）
+
+### P7 改了什么（`git diff 4972eb0 explore/p7-failed-client-vanilla-execution --stat`：31 个文件 +948 / −1259；提交 `a06a320` 调研定案 → `1fdf05d` P7-1..4 → `e4bb032` 坐椅回归修复 → `aecee34` P7-5 删除 P6 通道 → `a4c49cd` SeatBuild 后止步）
+| # | 改动 | 代码位置（分支） |
+|---|---|---|
+| 1 | guard 命中效果按类拦截：`UAbilityEffectComponent::OnApplyEffect / OnFinalizeEffect` thunk（`0xD3BCB0 / 0xD3BD40`）只放行 `AE_HitStop / CameraShake / ShakeTarget / ForceFeedback` 及子类，其余（含未知类）不施加；`StartDeathProcess`（`0xCBD9A0`）对标记对象跳过 | `guard.cpp` `effect_is_presentation`、`d_death_start`；`EL.json` +3 钩子 |
+| 2 | 命令通道：Host detour 单命令处理 `0xCB4F00` 启动沿 → 可靠 `Cmd{Ref, seq, t_ms, 类, dir, cmd}`（协议 4）；Client 对呈现对象调原版 `AddNewImmediateCommand`（默认 `FCommandSettings`，无 Necessary / Forbidden） | `coop/commands.*`、`host.cpp send_cmds`、`client.cpp g_cmd_due` |
+| 3 | 敌人只停决策源：接管不再逐组件关 tick（`mark_exec` 反向拒绝“关 tick”），活敌人动画只由原版执行层产生，快照动画名只套给死亡敌人；无命令时插值速度写 `CharacterMovement.Velocity` | `client.cpp` 行 271–349、932–953 |
+| 4 | 莉莉副本走原版管线：快照莉莉行回带 `ix / iy / iraw` 经虚拟手柄喂入；`TryAddCommands`（`0xCC2520`）对副本返回 −1；位置 >240 直跳、40–240 收拢 15% | `client.cpp present_lilies`、`commands.cpp d_try_add` |
+| 5 | `hold_host_pose`：副本无命令、无输入且轨道 0 与 Host 不一致 >300 ms → 暂停 `SpineAnimationComponent` 套 Host 动画 | `client.cpp` 行 430–495 |
+| 6 | 删除 P2 / P6 加法通道：`Act / Fx / FxStop / Snd / ActStop`、`ability.* / fx.*`、精灵副本与 `sp` 段、6 个 EL.json 钩子（−1213 行，一次提交） | `aecee34` |
+| 7 | `SeatBuild`：Host 1 Hz 下发每个座位的配装，Client 套到副本（副本自己的召唤取决于副本配装） | `a4c49cd` |
+
+### 同一剧本 A/B（本次复现，Host2 / Client2，槽 0 church_07 史莱姆群，Host P1 10×ATTACK + DODGE + JUMP + 7×ATTACK，两侧 `%TEMP%\elmp_rec.lua` 逐帧记录 900 帧轨道 0 动画 / HP / 可见变化沿，`elmp_reccmp.py` 按实体做 LCS）`[E-实测]`
+| 指标 | P6（`4972eb0`，协议 3） | P7（分支构建 2026-10-27 23:40，协议 4） |
+|---|---|---|
+| 动画变化沿 Host 总数 / Client 按序匹配（LCS） | 217 / **195（90%）** | 313 / **140（45%）** |
+| 战斗中的 5 只史莱姆 | 序列逐项一致（含 `idle_turn`），差异只在两侧记录窗口首尾 | 每只 **缺全部 `idle_turn`**；Host 7 个攻击循环、Client 只 5 个（`replayed=304 rejected=0`，命令都到了但执行分叉） |
+| Host P1 副本 | 22 / 22 全匹配（`dodge`、`jump_up/apex/down`、`summon_air_DEFAULT_A` 都在） | 44 / 18：**缺 `dodge`、`jump_*`、`landing`、全部 `damage_*`（受击 / 击飞）**，HP 一直 400（Host 400→378→356） |
+| 被 Host 击杀的 Slime7 | — | Host HP 100→0、Client 窗口内仍 100 并继续攻击 |
+| 精灵 / 伴随精灵粒子（按所属类采样） | 精灵副本动作未被记录器覆盖（运行中生成，记录器只跟踪开始时存在的对象）；`BP_Companion_*` 伴随精灵粒子 Client 0 / Host 150 | `BP_Companion_*` 136 / 138；Assassin 序列 Client 多出 `attack_B` |
+| Client 结算 | guard `damage blocked=0` | `effect blocked=28 passed=16`、`damage blocked=5`、`deathBlocked=0`、`saveBlocked=0` |
+| 产物通道计数 | Host `fx=126 sounds=58 abilityStops=62`、技能 63；Client 重放 spawn 127 / sound 54 / stop 61 / 技能 64、`attachedSounds=1`（附着音效出现但不复制） | 通道已删除；`cmds sent=304`、Client `replayed=304 rejected=0` |
+| 帧时间（`elmp perf`，进程刚启动后的首个战斗窗口） | Host `frame.elmp_us` P99 573 µs；Client P99 **1047 µs**、max 6.6 ms（首次资产加载窗口，P6 已知一次性卡顿） | Host P99 565 µs、Client 382 µs |
+截图 `ELMP_Test_Data\{host,client}\Saved\ELMP\pilot\shots\r7-p7-{host,client}.png`、`r7-p6-*.png`；原始记录 `%TEMP%\elmp_r7_{p6,p7}_{host,client}.txt`。两次运行后两侧 `SaveGames` 与备份逐文件哈希一致，Host 的 `Saved\ELMP\ELMP` 已从 `%TEMP%\elmp_bk_r7_host` 还原。
+
+### 逐项：想解决什么 · 依据是否仍成立 · 为什么变差（只列证实过的）
+1. **结算边界按效果类收束**（想让 Client 放开执行层后仍零结算）。事实成立：效果唯一施加点 `0xD3BCB0`、死亡唯一起点 `0xCBD9A0` `[E-IDA]`（分支 EL.json 来源栏）。变差原因 `[代码证实]`：规则是“4 个表现类白名单 + 其余全部拦截”，拦截计数不按类分（`effect blocked=28` 里是哪些类无法得知），因此不能证明没有表现类被误拦；为了正确性必须 fail closed，但这让“放开执行层”的覆盖率取决于白名单是否穷尽，而白名单只列了原生 4 类（蓝图子类未枚举）。**结论**：效果按类分流本身可用作结算拦截的一道（它与 `DoDamage` / 技能伤害拦截并存），但它不是“放开执行层”的充分条件。
+2. **命令通道**（想用一条决策消息换掉特效 / 音效 / 技能 / 结束等产物通道）。事实成立：所有角色动作汇入 CommandQueue，注入休眠敌人只出起始帧、放开 tick 后完整重现 `[E-实测]`（见 engine-facts「CommandQueue 决策管线」）。变差原因 `[E-实测]`：命令到了（304/304）但 Client 的执行结果与 Host 分叉——史莱姆攻击循环 7 vs 5、Host P1 副本的 JUMP / DODGE 命令重放后没有对应动画；`AddNewImmediateCommand` 用默认 `FCommandSettings` 插队执行，Client 对象的本地状态（是否着地、上一命令是否结束、Move 时间线落点）与 Host 不同就做出不同结果，而 P7 已去掉快照动画兜底，没有东西把它拉回。
+3. **敌人只停决策源**（想让原版状态机自己产生走 / 转身 / 攻击动画）。变差原因 `[E-实测]`：不经命令的状态（`idle_turn` 转身，由 AI 朝向驱动；受击反应；死亡前的姿态）在 Client 上不出现——P7 只给死亡敌人套快照动画；而 P6 冻结 + 快照动画名在同一剧本里逐项一致。
+4. **莉莉副本回带输入 + 本地命令抑制**（想让副本的移动 / 按住语义来自原版输入）。事实成立：莉莉移动动画由输入驱动，只写位置 + 速度一直 `idle` `[E-实测]`。变差原因 `[E-实测]`：受击 / 击飞（`damage_*`）不经命令也不经输入，副本永远到不了；JUMP / DODGE 的命令重放与回带输入叠加后副本没有跳 / 闪避；副本 HP 未随 Host 更新。坐椅子休息同理（分支 net-facts「回归与修复：Host 坐椅子休息」，用户发现 → `hold_host_pose` 补丁，且只在“无命令无输入”时生效）。
+5. **`hold_host_pose`**：补丁性质 `[代码证实]`——每发现一个不经命令管线的状态就要扩一次条件；它在有输入时让位，所以“边移动边受击”之类仍不收敛。
+6. **一次性删除 P6 通道**（`aecee34`，−1213 行）`[代码 + kb 证实]`：删除前的验收只有 `cmds sent = replayed`、guard 计数和两张截图（分支 net-facts「P7 实施」），没有逐实体动画 / HP 对账；删除后失去兜底，上表的 45% 就是结果。
+7. **SeatBuild**（`a4c49cd`）`[代码证实]`：副本跑原版召唤时召唤哪只精灵、几级取决于副本自己的配装 → 为了让精灵对得上又要复制配装；Client 进度未拥有的条目无法授予（分支需求树 §7.21-5a “副本缺精灵 = 已知限制”）。这是“放开执行层 → 需要复制执行层依赖的全部本地状态”的一个实例。
+- **未证实、不写成结论的线索**：连段段号不同步（本次两侧 `summon_DEFAULT_C` 次数 10 / 9，未区分段号）；Client 本地技能生成的敌人 / 弹体 / 掉落需收养（分支未实现，本剧本未出现）。留作 §4 调研项。
+
+### 结论：每个同步点位按证据选机制（ADR 0006）
+P7 的方向（复制决策、让原版执行层产生表现）对“完全由命令驱动、执行层在 Client 无副作用、结果会被快照纠正”的点位成立；错在**一次性对所有点位、所有对象类换方法论并删除兜底**。今后每个点位从 ①快照状态 ②事件复制 ③决策复制 ④放开部分执行层 ⑤不同步 中按调研证据选择，③ / ④ 只在该点位的结算汇点已 xref 封闭、Client 状态被证明收敛到快照时采用，且不删除原通道直到覆盖矩阵（`docs/kb/sync-coverage.md`）该行全绿。
