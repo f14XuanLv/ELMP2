@@ -416,7 +416,9 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
             if (row.alive) own_anim = 0;
             continue;
         }
-        if (row.key == 0 || row.key > 8) continue;
+        // P7 restart baseline defect ⑤: a snapshot can arrive before Welcome (unreliable vs reliable); without
+        // our seat known, every row (ours included) would get a copy — present copies only once seated
+        if (row.key == 0 || row.key > 8 || g_seat == 0 || row.key == f.me) continue;
         auto& c = g_copies[row.key];
         c.seen = true;
         if (!c.slot || !core::pawn(c.slot)) {
