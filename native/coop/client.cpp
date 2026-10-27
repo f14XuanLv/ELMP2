@@ -405,8 +405,80 @@ struct Copy {
     std::int8_t facing = 0;
     bool seen = false;
     std::int32_t hp = -1;
+    std::int64_t mismatch_us = 0; // since when the copy's own track 0 differs from the host's (0 = agrees)
+    bool held = false;            // host pose held: the copy's animation logic is paused (non-replicated state)
 };
 std::map<std::uint16_t, Copy> g_copies;
+std::uint64_t g_pose_holds = 0;
+
+// ADR 0006 §7.21-6 fallback: states the host reaches without a replicated command (chair rest / sleep —
+// INTERACT is settlement and never replayed — cutscene poses, etc.) cannot come from the copy's own
+// pipeline. When the copy is idle (no running command, no input) and its track 0 has disagreed with the
+// host's for > 300 ms, the copy's animation logic (SpineAnimationComponent, which rewrites track 0 every
+// frame) is paused and the host pose is applied from the rows; any command or input releases it.
+void hold_host_pose(ue::UObject* p, Copy& c, const snap::LilyRow& row, const core::schema::Script& s, const core::schema::Blueprint* bp) {
+    static reflect::PropRef zc_queue, cq_array;
+    static reflect::FuncRef comp_tick;
+    static ObjHandle logic_cls;
+    if (!cq_array.ok()) {
+        zc_queue = reflect::Resolver("ZenithCharacter", reflect::find_class(L"/Script/Zenith.ZenithCharacter")).prop(L"CommandQueueComponent", reflect::Kind::Object);
+        cq_array = reflect::Resolver("CommandQueueComponent", reflect::find_class(L"/Script/Zenith.CommandQueueComponent")).prop(L"CommandQueue", reflect::Kind::Array);
+        comp_tick = reflect::Resolver("ActorComponent", reflect::find_class(L"/Script/Engine.ActorComponent")).func(L"SetComponentTickEnabled", 1);
+        logic_cls = ObjHandle::of(reflect::find_object(L"/Script/Zenith.SpineAnimationComponent"));
+    }
+    auto* spine = bp ? bp->lily_spine.object(p) : nullptr;
+    const auto* host_anim = row.anim ? g_names.text(row.anim) : nullptr;
+    if (!spine || !host_anim || !cq_array.ok() || !comp_tick.ok()) return;
+    auto* queue = zc_queue.object(p);
+    const bool busy = (queue && cq_array.at<reflect::RawArray>(queue)->num > 0) || row.ix || row.iy || row.iraw;
+    auto set_logic = [&](bool on) {
+        reflect::Frame f(s.actor_component_by_class);
+        f.arg(0, logic_cls.get());
+        if (auto* logic = f.invoke(p) ? f.ret<ue::UObject*>() : nullptr) {
+            reflect::Frame t(comp_tick);
+            t.arg_bool(0, on);
+            t.invoke(logic);
+        }
+    };
+    if (busy) {
+        if (c.held) set_logic(true), c.held = false;
+        c.mismatch_us = 0;
+        return;
+    }
+    std::wstring own;
+    reflect::Frame cur(s.sp_get_current);
+    cur.arg(0, 0);
+    if (cur.invoke(spine))
+        if (auto* entry = cur.ret<ue::UObject*>(); ue::alive(entry)) {
+            reflect::Frame nm(s.te_animation_name);
+            if (nm.invoke(entry)) own = nm.ret_string();
+        }
+    const auto now = clock::now_us();
+    if (own == log::wide(*host_anim)) {
+        c.mismatch_us = 0;
+        return;
+    }
+    if (!c.held) {
+        if (!c.mismatch_us) c.mismatch_us = now;
+        if (now - c.mismatch_us < 300'000) return;
+        set_logic(false);
+        c.held = true, c.anim = 0;
+        ++g_pose_holds;
+    }
+    if (row.anim != c.anim || own.empty()) {
+        reflect::Frame fa(s.sp_set_animation);
+        fa.arg(0, 0).arg_string(1, log::wide(*host_anim)).arg_bool(2, row.loop != 0);
+        if (fa.invoke(spine)) {
+            c.anim = row.anim;
+            static reflect::FuncRef set_time = reflect::Resolver("TrackEntry", reflect::find_class(L"/Script/SpinePlugin.TrackEntry")).func(L"SetTrackTime", 1);
+            if (auto* entry = fa.ret<ue::UObject*>(); set_time.ok() && ue::alive(entry) && row.t > 0) {
+                reflect::Frame st(set_time);
+                st.arg(0, row.t);
+                st.invoke(entry);
+            }
+        }
+    }
+}
 
 void drop_copy(std::uint16_t key) {
     auto it = g_copies.find(key);
@@ -513,7 +585,7 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
                     }
                 }
             }
-        (void)bp;
+        hold_host_pose(p, c, row, s, bp);
     }
     std::vector<std::uint16_t> gone;
     for (auto& [k, c] : g_copies)
@@ -1212,7 +1284,8 @@ ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id) {
 }
 
 std::string describe_events() {
-    return std::format("cmds(client): due={} bad={} owners={} copySnaps={} copyBlends={}\n", g_cmd_due.size(), g_cmd_bad, g_cmd_last.size(), g_copy_snaps, g_copy_blends) +
+    return std::format("cmds(client): due={} bad={} owners={} copySnaps={} copyBlends={} poseHolds={}\n", g_cmd_due.size(), g_cmd_bad, g_cmd_last.size(), g_copy_snaps,
+                       g_copy_blends, g_pose_holds) +
            commands::describe() +
            std::format("events(client): hitReacts={} spirits={} spawned={} failed={} retryQueue={} retried={} absent={} fxBad={} soundBad={} soundFar={} stopMissed={} live abilities={} fx={}\n",
                        g_hit_reacts, g_spirits.size(), g_spirit_spawned, g_spirit_failed, g_ev_retry.size(), g_ev_retried, g_ev_absent, g_fx_bad, g_snd_bad, g_snd_far, g_stop_missed, g_ab_live.size(),

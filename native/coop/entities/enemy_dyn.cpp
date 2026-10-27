@@ -89,7 +89,7 @@ std::uint16_t dyn_id_of(const ObjHandle& h) { return dyn_singleton().id_of(h); }
 namespace elmp::coop {
 
 std::span<IEntityAdapter* const> adapters() {
-    static IEntityAdapter* const list[] = {&entities::lily(), &entities::enemy(), &entities::worldobj(), &entities::story(), &entities::pickup(), &entities::enemy_dyn(), &entities::spirit()};
+    static IEntityAdapter* const list[] = {&entities::lily(), &entities::enemy(), &entities::worldobj(), &entities::story(), &entities::pickup(), &entities::enemy_dyn()};
     return list;
 }
 

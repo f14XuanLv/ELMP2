@@ -1,9 +1,10 @@
 // Adapters enemy and lily. Their halves live with the role state they share:
 // enemy — host: spawn-point enemies keyed by the SourceSpawnPoint name (position / facing / HP / dead flag /
-// Spine pose); client: takeover recipe (freeze, AI gate, marks), buffered interpolated position, facing,
-// HP property write, pose with track-time alignment, death = presentation (hide after the row goes).
-// lily — host: P1 + every seat; client: own seat → local P1 prediction with snap-back, others → pooled
-// copies (marked, IsPlayer false), HUD vitals from the host seat.
+// Spine pose); client (ADR 0006): takeover stops the decision source only (AI gate, marks), the vanilla
+// execution layer runs the host's commands; interpolated position + velocity, facing, HP property write,
+// death = presentation (frozen corpse with the host pose, hidden after the row goes).
+// lily — host: P1 + every seat (+ live input); client: own seat → local P1 prediction with snap-back,
+// others → pooled copies on the vanilla pipeline (host input via virtual pad, host commands), HUD vitals.
 
 #include "coop/client.h"
 #include "coop/entity.h"
@@ -27,23 +28,7 @@ public:
     void apply_client(const ClientCtx& c) override { client::present_lily_rows(c); }
 };
 
-// spirit (P6) — host: visible (summoned) spirits whose Owner is a seat's controller (P1 or a seat), keyed
-// seat << 8 | index, class / position / facing / Spine pose; client: presentation spirit actors (spawned per
-// key and class, frozen like enemies, marked, no collision) for the other seats; hidden when the row goes.
-class Spirit final : public IEntityAdapter {
-public:
-    const char* name() const override { return "spirit"; }
-    void write_host(HostCtx& c) override { host::write_spirits(c); }
-    void apply_client(const ClientCtx& c) override { client::present_spirits(c); }
-    void reset() override { host::reset_spirits(), client::reset_spirits(); }
-};
-
 } // namespace
-
-IEntityAdapter& spirit() {
-    static Spirit a;
-    return a;
-}
 
 IEntityAdapter& enemy() {
     static Enemy a;
