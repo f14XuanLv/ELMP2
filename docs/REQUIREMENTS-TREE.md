@@ -462,7 +462,7 @@ unner in <mapId>；客人经 Control code 10 横幅显示。
 3. **Client 重放**：对呈现对象调原版 `AddNewImmediateCommand(Dir, Cmd, 类)`；校验类 `IsChildOf(CommandAction)`、Cmd 类型白名单（JUMP / DODGE / ATTACK / SUMMON_1 / SUMMON_2 / SUMMON_SET_SWITCH / HOOK / HEAL；INTERACT / MAINMENU / PAUSE / MINIMAP 不重放）、所属对象为 guard 标记的呈现对象、每对象 seq 单调幂等、队列有界、未呈现重试 ≤ 300 ms。敌人按插值渲染时刻（Host 时间 − 100 ms）到点执行，莉莉副本到达即执行。
 4. **接管**：敌人只停决策源（AI 激活闸、激活体积源头冻结、1 Hz AI 泄漏复检），组件 tick 与世界碰撞保持原版；guard 的 tick / 碰撞原语闸只拦决策源对象。动态敌人同。
 5. **莉莉副本**：原版管线（组件不冻结）；快照莉莉行回带座位原始输入（轴 / 按住位 / 累计计数，与上行 `Input` 同语义），经虚拟手柄喂入；副本本地“输入 → 命令”生成被抑制（原生钩子，只对副本），命令只来自 Host（第 2 条）；位置纠正 >240 UU 直跳、40–240 每帧收拢 15%（复测后定）。精灵由副本自己的召唤命令派生，取消精灵呈现副本与 `sp` 段。
-6. **位置与动画**：敌人无进行中重放命令时由快照插值定位置，插值速度写 `CharacterMovement.Velocity`（原版状态机选 idle / walk / turn）；有进行中命令时原版 Move 时间线移动，偏差超阈值才校正。快照动画名只做漂移检测与兜底校正（默认：无命令且动画不一致持续 > 300 ms 才 `SetAnimation`）。
+6. **位置与动画**：敌人无进行中重放命令时由快照插值定位置，插值速度写 `CharacterMovement.Velocity`（原版状态机选 idle / walk / turn）；有进行中命令时原版 Move 时间线移动，偏差超阈值才校正。快照动画名只做漂移检测与兜底校正（无命令、无输入且动画不一致持续 > 300 ms → 暂停该对象的 `SpineAnimationComponent` 并按行套 Host 动画，命令或输入到来即释放；覆盖坐椅子休息等不复制命令的状态——2026-10-28 用户发现 P7-4 漏做此条导致回归，已补齐）。
 7. **结算边界**（P7-1 用 IDA 枚举后定稿，每项有拦截计数）：存档保护、`DoDamage` / 技能伤害拦截（已有）；命中效果按类——`AE_Damage / DamageAbsolute / HealAbsolute / Knockback / RestoreMPToInvoker / StaminaDamageAbsolute / StunDamageAbsolute` 不施加，`AE_HitStop / CameraShake / ShakeTarget / ForceFeedback` 照常；死亡只由快照呈现；交互类命令不重放、副本不生成；Client 本地生成的敌人交 `enemy_dyn` 收养或销毁；掉落不生成。本地 P1 被击退默认不放行（靠 >150 UU 回拉），实测后可复议。
 8. **保留**：Ref、乱序重试、受击表现（Host HP 下降 → 呈现对象蓝图 `OnReceiveDamage` 处理函数）、快照插值、HP / MP 直写。
 9. **删除**（命令通道实测对齐后）：`Act / Fx / FxStop / Snd / ActStop` 通道与对应 Host 钩子、本地特效抑制、精灵副本与 `sp` 段、重放寿命上限；协议版本升到 4。
