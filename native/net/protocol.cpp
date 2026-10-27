@@ -13,6 +13,17 @@ Writer start(std::span<std::uint8_t> out, Msg t) {
     return w;
 }
 bool open(Reader& r, Msg t) { return r.u8() == static_cast<std::uint8_t>(t) && r.ok(); }
+bool kind_ok(std::uint8_t k) { return k >= 1 && k <= kRefKindMax; }
+void read_xf(Reader& r, std::array<float, 10>& xf) {
+    for (auto& f : xf) {
+        f = r.f32();
+        if (!std::isfinite(f) || std::fabs(f) > 1e6f) r.fail();
+    }
+}
+bool unit(const std::array<float, 10>& x) {
+    const float q = x[0] * x[0] + x[1] * x[1] + x[2] * x[2] + x[3] * x[3];
+    return q > 0.5f && q < 1.5f;
+}
 
 } // namespace
 
@@ -65,7 +76,7 @@ std::size_t encode(const MapReady& m, std::span<std::uint8_t> out) {
 std::size_t encode(const Act& m, std::span<std::uint8_t> out) {
     auto w = start(out, Msg::Act);
     w.u16(m.net_id);
-    w.u8(m.dyn);
+    w.u8(m.kind);
     w.u32(m.seq);
     w.u16(m.ability);
     for (float f : m.xf) w.f32(f);
@@ -124,24 +135,90 @@ bool decode(std::span<const std::uint8_t> in, Act& m) {
     Reader r(in);
     if (!open(r, Msg::Act)) return false;
     m.net_id = r.u16();
-    m.dyn = r.u8();
+    m.kind = r.u8();
     m.seq = r.u32();
     m.ability = r.u16();
-    for (auto* xf : {&m.xf, &m.xf2})
-        for (auto& f : *xf) {
-            f = r.f32();
-            if (!std::isfinite(f) || std::fabs(f) > 1e6f) r.fail();
-        }
+    for (auto* xf : {&m.xf, &m.xf2}) read_xf(r, *xf);
     m.spawn_bone = r.u8();
     m.attach_bone = r.u8();
     m.custom_spawn = r.u16();
     m.custom_attach = r.u16();
     m.flags = r.u8();
-    auto unit = [](const std::array<float, 10>& x) {
-        const float q = x[0] * x[0] + x[1] * x[1] + x[2] * x[2] + x[3] * x[3];
-        return q > 0.5f && q < 1.5f;
-    };
-    return r.done() && m.ability != 0 && m.dyn <= 1 && unit(m.xf) && unit(m.xf2) && !(m.flags & ~7u);
+    return r.done() && m.ability != 0 && kind_ok(m.kind) && unit(m.xf) && unit(m.xf2) && !(m.flags & ~7u);
+}
+std::size_t encode(const Fx& m, std::span<std::uint8_t> out) {
+    auto w = start(out, Msg::Fx);
+    w.u8(m.kind);
+    w.u16(m.net_id);
+    w.u32(m.seq);
+    w.u16(m.ps);
+    w.u8(m.bone);
+    w.u16(m.custom_bone);
+    for (float f : m.xf) w.f32(f);
+    w.u8(m.flags);
+    w.u32(static_cast<std::uint32_t>(m.sort));
+    w.u8(m.pool);
+    return done(w);
+}
+bool decode(std::span<const std::uint8_t> in, Fx& m) {
+    Reader r(in);
+    if (!open(r, Msg::Fx)) return false;
+    m.kind = r.u8();
+    m.net_id = r.u16();
+    m.seq = r.u32();
+    m.ps = r.u16();
+    m.bone = r.u8();
+    m.custom_bone = r.u16();
+    read_xf(r, m.xf);
+    m.flags = r.u8();
+    m.sort = static_cast<std::int32_t>(r.u32());
+    m.pool = r.u8();
+    return r.done() && m.ps != 0 && kind_ok(m.kind) && unit(m.xf) && !(m.flags & ~7u) && m.pool <= 3;
+}
+std::size_t encode(const FxStop& m, std::span<std::uint8_t> out) {
+    auto w = start(out, Msg::FxStop);
+    w.u32(m.seq);
+    return done(w);
+}
+bool decode(std::span<const std::uint8_t> in, FxStop& m) {
+    Reader r(in);
+    if (!open(r, Msg::FxStop)) return false;
+    m.seq = r.u32();
+    return r.done();
+}
+std::size_t encode(const Snd& m, std::span<std::uint8_t> out) {
+    auto w = start(out, Msg::Snd);
+    w.u8(m.kind);
+    w.u16(m.net_id);
+    w.u16(m.event);
+    w.u8(m.is2d);
+    return done(w);
+}
+bool decode(std::span<const std::uint8_t> in, Snd& m) {
+    Reader r(in);
+    if (!open(r, Msg::Snd)) return false;
+    m.kind = r.u8();
+    m.net_id = r.u16();
+    m.event = r.u16();
+    m.is2d = r.u8();
+    return r.done() && m.event != 0 && kind_ok(m.kind) && m.is2d <= 1;
+}
+std::size_t encode(const ActStop& m, std::span<std::uint8_t> out) {
+    auto w = start(out, Msg::ActStop);
+    w.u8(m.kind);
+    w.u16(m.net_id);
+    w.u32(m.seq);
+    w.u8(m.reason);
+    return done(w);
+}
+bool decode(std::span<const std::uint8_t> in, ActStop& m) {
+    Reader r(in);
+    if (!open(r, Msg::ActStop)) return false;
+    m.kind = r.u8();
+    m.net_id = r.u16();
+    m.seq = r.u32();
+    m.reason = r.u8();
+    return r.done() && kind_ok(m.kind) && m.reason < 16;
 }
 bool decode(std::span<const std::uint8_t> in, Json& m) {
     Reader r(in);

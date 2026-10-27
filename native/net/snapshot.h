@@ -63,6 +63,19 @@ struct PickRow { // key = dyn id of a drop on the host
     static constexpr auto fields() { return std::make_tuple(&PickRow::x, &PickRow::y, &PickRow::z, &PickRow::cls); }
 };
 
+struct SpiritRow { // key = seat << 8 | per-seat index; only visible (summoned) spirits have rows
+    std::uint16_t key = 0;
+    std::uint16_t cls = 0; // class path name id
+    float x = 0, y = 0, z = 0;
+    std::int8_t facing = 0;
+    std::uint16_t anim = 0;
+    float t = 0;
+    std::uint8_t loop = 0;
+    static constexpr auto fields() {
+        return std::make_tuple(&SpiritRow::cls, &SpiritRow::x, &SpiritRow::y, &SpiritRow::z, &SpiritRow::facing, &SpiritRow::anim, &SpiritRow::t, &SpiritRow::loop);
+    }
+};
+
 template <class Row, std::size_t Cap>
 struct Section {
     std::array<Row, Cap> rows;
@@ -94,8 +107,9 @@ struct Frame {
     Section<EnemyRow, 64> ed;
     Section<WorldRow, 512> w;
     Section<PickRow, 64> pk;
+    Section<SpiritRow, 32> sp;
     void clear() {
-        l.clear(), e.clear(), ed.clear(), w.clear(), pk.clear();
+        l.clear(), e.clear(), ed.clear(), w.clear(), pk.clear(), sp.clear();
     }
 };
 

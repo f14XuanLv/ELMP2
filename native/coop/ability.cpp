@@ -57,12 +57,15 @@ LaunchFn o_launch{};
 void (*g_sink)(const Launch&) = nullptr;
 bool g_installed = false, g_failed = false;
 std::uint64_t g_captured = 0, g_replayed = 0, g_rejected = 0, g_capped = 0;
-constexpr float kReplayLifeSpan = 2.0f; // s; P2 decision (host-side end events would be exact)
+// s; fallback only since P6 (the host's AAbility::Stop is replicated as ActStop); was 2 s in P2
+constexpr float kReplayLifeSpan = 10.0f;
 
 UObject* __fastcall d_launch(UObject* comp, const std::uint8_t* desc, const std::uint8_t* offset) {
     if (g_sink && desc && offset && ue::on_game_thread() && layout().ok) {
         auto* cls = *g_l.cls.at<UObject*>(desc);
         if (ue::alive(cls)) {
+            // fields are read before the call (v1 net-facts: the description must be read pre-call); the
+            // sink runs after it with the launched ability (ActStop mapping)
             Launch l;
             l.owner = comp ? comp->GetOuterPrivate() : nullptr;
             // path per class cached (GetPathName walks outers + builds strings); entry valid while the
@@ -78,8 +81,10 @@ UObject* __fastcall d_launch(UObject* comp, const std::uint8_t* desc, const std:
             l.custom_spawn = ue::utf8(*g_l.custom_spawn.at<ue::FName>(desc));
             l.custom_attach = ue::utf8(*g_l.custom_attach.at<ue::FName>(desc));
             l.act.flags = (g_l.follow_spawn.read_bool(desc) ? 1 : 0) | (g_l.follow_attach.read_bool(desc) ? 2 : 0) | (g_l.ffa.read_bool(desc) ? 4 : 0);
+            l.spawned = o_launch(comp, desc, offset);
             ++g_captured;
-            g_sink(l);
+            if (g_sink) g_sink(l);
+            return l.spawned;
         }
     }
     return o_launch(comp, desc, offset);
@@ -99,7 +104,8 @@ bool host_enable(void (*sink)(const Launch&)) {
 void host_disable() { g_sink = nullptr; }
 
 bool replay(ue::UObject* enemy, const net::proto::Act& act, const std::string& cls_path, const std::string& custom_spawn, const std::string& custom_attach,
-            std::string* why) {
+            std::string* why, ue::UObject** spawned_out) {
+    if (spawned_out) *spawned_out = nullptr;
     auto fail = [&](const char* w) {
         ++g_rejected;
         if (why) *why = w;
@@ -152,6 +158,7 @@ bool replay(ue::UObject* enemy, const net::proto::Act& act, const std::string& c
         lf.arg(0, kReplayLifeSpan);
         lf.invoke(spawned);
         ++g_capped;
+        if (spawned_out) *spawned_out = spawned;
     }
     ++g_replayed;
     return true;

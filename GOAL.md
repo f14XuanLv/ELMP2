@@ -5,7 +5,7 @@
 > 只有在全部完成、或某阶段门槛经充分尝试仍无法达成（写明尝试、证据、剩余选项）时才报告 goal 完成或 blocked。需要我决定的产品问题：先按需求树已有定案与 fail closed 默认继续其他工作，把问题集中列出，不要停下等。
 > **进度以 §7 的勾选表为准**：每完成一项就在该行打勾并补「日期 · 证据（kb 节 / 截图 / 命令输出）· commit」；下面「当前进行中」一行同步更新。goal 完成 = §7 全部打勾。
 
-**当前进行中**：无 —— §7 全部打勾（2026-10-27），发布包 `dist\ELMP-0.3.0-shipping.zip`（零 .lua）与 `-dev.zip` 已生成；最终报告见 docs/kb/net-facts.md「最终报告」。
+**当前进行中**：无 —— P6 远程表现补全（2026-10-27 追加）已全部打勾，协议升到 3（发布包未重打）；P1–P5 已于 2026-10-27 全部打勾。
 **需要用户**：①若要补测 G3 门 / 宝箱 / Boss 窗口专项，请提供一个入口图里有未开门 / 宝箱、可进入未打 Boss 的存档放到 Host2/Client2（当前按同通路代证 + Boss fail closed 继续）；（P2 自行定案已记 net-facts：本地 P1 预测 + >150 UU 回拉；Client 离开会话回标题；可破坏物 Client 只隐藏不回放破坏）
 
 ## 0. 恢复上下文（每轮先读）
@@ -60,6 +60,21 @@
 - README（安装 / 使用 / 功能 / 控制台命令 / 已知限制 / 架构）、INSTALL.txt、`docs/adr/0005-cpp-rewrite.md` 定稿（采纳状态与实际偏差）。
 - `build.bat package` 产出 `-shipping.zip`（`main.dll` + `data/` + `elmp.json` + INSTALL；无 `.lua` / `.pdb` / 义肢）与 `-dev.zip`；`elmp.json` 版本升到 ≥ 0.3.0。
 - 最后用 Shipping 构建在三实例上冒烟一遍（本地多人 + 同图联机 + 后台图），结果进 kb。
+
+## 5b. P6 远程表现补全（2026-10-27 追加）
+缺口盘点（Host2/Client2 实测 + IDA，2026-10-27）：
+- 莉莉的攻击由精灵（`AZenithSpirit`，Owner = 座位 PC，池化隐藏）发动；Host P1 点按 ATTACK → Host 出现 `BP_s5060_Assassin` + `AbilityHitbox_s5060_Projectile`，Client 上 Host P1 副本**什么都没有**（精灵不呈现；动作通道 `send_acts` 只发 spawn-point 敌人，精灵 / 莉莉 / 动态敌人的技能全部丢弃）。
+- `UCommandAction` 每帧依次采样 State / Ability(`0xCBABE0`) / Move / **FX(`0xD24380`)** / **Sound(`0xD24B50`)** 五条时间线；Client 上被冻结的敌人与副本不跑命令 → FX 时间线特效与音效时间线音效全部缺失。FX 一律经 `UBaseFXComponent::SpawnFX`（BlueprintNativeEvent，实现 `0x7D0600`；FX 时间线、Spine 动画通知、技能 VisualCue、蓝图都走它）。
+- 技能结束不同步（Client 重放体 2 s 寿命上限，长技能被截断、短技能残留）。
+- 受击表现（`UHPComponent::DoDamage` `0xCA0380` 广播 `OnReceiveDamage` 等委托）在 Client 不发生（HP 直写）。
+实现：
+- 通用对象引用 `Ref{kind: enemy / dyn / lily / spirit, id, sub}`，动作 / 特效 / 音效 / 结束事件共用。
+- 精灵呈现：快照新段（座位 + 精灵类 + 位置 / 朝向 / 动画 / 可见）；Client 生成呈现用精灵 Actor（白名单冻结、无碰撞），精灵 / 莉莉 / 动态敌人的技能经同一入口重放。
+- 特效通道：Host 钩 `SpawnFX` 实现，网络对象拥有的特效可靠下发；Client 对呈现对象只放行重放的 `SpawnFX`（本地自发的一律拦截，避免重复）；时间线的 `DeactivateSystem` 同步为结束事件。
+- 音效通道：Host 钩音效时间线，跨过 From 的条目下发；Client 以 FMOD 原版入口在呈现对象处播放（距离过滤）。
+- 技能结束：Host 钩技能停止，按 (Ref, seq) 下发；Client 停掉对应重放体；寿命上限保留为兜底并放宽。
+- 受击表现：按 IDA / 实测选原版入口（委托广播或蓝图事件），只做表现、不结算。
+门槛：Host P1 / 其他客人的精灵攻击在 Client 可见（截图 + 计数）；敌人 FX 时间线特效、音效在 Client 出现（Host / Client 计数对账）；技能结束同步后 Client 残留重放体 ≈ Host；受击闪白 / 火花可见；Client / Host 帧时间 P99 仍 < 1.0 ms；kb + 需求树 §7.20 + README 已知限制更新。
 
 ## 6. 全程硬规则
 - 拿走知识不照搬代码（`D:\CodeT\ELMP`、`D:\CodeT\LilyInEM` 只读）；Shipping 零 Lua；游戏线程入口只有 `RegisterEngineTickPreCallback`；缓存优先且每个缓存有失效源与审计计数；无座位无会话时 `g0.reflect_calls` 保持 0。
@@ -140,3 +155,13 @@
 - [x] `elmp.json` 版本 ≥ 0.3.0；`build.bat package` 产出 `-shipping.zip`（零 `.lua` / `.pdb` / 义肢）与 `-dev.zip` —— 2026-10-27 · 证据：`dist\ELMP-0.3.0-shipping.zip` 79 项（0 个 .lua、0 个 .pdb；非 data 项只有 main.dll / elmp.json / sdk/elmp_sdk.h / INSTALL.txt）、`dist\ELMP-0.3.0-dev.zip` 84 项 · commit 本提交
 - [x] Shipping 构建三实例冒烟（本地多人 + 同图联机 + 后台图），结果进 kb —— 2026-10-27 · 证据：net-facts「P5 实测 / Shipping 构建三实例冒烟」 · commit 本提交
 - [x] 最终报告（全部阶段汇总、遗留清单、实例最终状态） —— 2026-10-27 · 证据：net-facts「最终报告」 · commit 本提交
+
+### P6 远程表现补全（2026-10-27 追加）
+- [x] 缺口盘点 + IDA 入口（SpawnFX 实现、FX / 音效时间线、技能停止、受击委托）写入 EL.json / kb —— 2026-10-27 · 证据：net-facts「P6 远程表现补全」「缺口盘点」（音效改钩 FMOD PlayEventAtLocation：时间线钩子 0 命中）、EL.json 5 项预检 ok · commit 本提交
+- [x] 通用 Ref + 动作通道扩展到精灵 / 莉莉 / 动态敌人 —— 2026-10-27 · 证据：net-facts「P6 远程表现补全」（技能 67/67，rejected 0） · commit 本提交
+- [x] 精灵呈现（快照段 + Client 呈现 Actor） —— 2026-10-27 · 证据：net-facts「P6 远程表现补全」（BP_s5060_Assassin 位置全等） · commit 本提交
+- [x] 特效通道（SpawnFX 捕获 / 重放 / 本地拦截 / 结束） —— 2026-10-27 · 证据：net-facts「P6 远程表现补全」（163/163、停用对账、本地抑制 18） · commit 本提交
+- [x] 音效通道（FMOD PlayEventAtLocation；时间线也经此） —— 2026-10-27 · 证据：net-facts「P6 远程表现补全」（91/92，距离过滤 0） · commit 本提交
+- [x] 技能结束同步 —— 2026-10-27 · 证据：net-facts「P6 远程表现补全」（ActStop 66/66、stopMissed 0；寿命上限 10 s 兜底） · commit 本提交
+- [x] 受击表现 —— 2026-10-27 · 证据：net-facts「P6 远程表现补全」（OnReceiveDamage 处理函数 28 次） · commit 本提交
+- [x] 门槛实测（截图 + 计数对账 + 帧时间）+ kb + 需求树 §7.20 + README —— 2026-10-27 · 证据：net-facts「P6 远程表现补全」（fx2-client/host.png；Host P99 428 µs / Client 277 µs）、需求树 §7.20、README 已知限制 · commit 本提交

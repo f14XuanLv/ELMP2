@@ -27,7 +27,7 @@
 ## 已知限制
 
 - 后台图（客人所在、Host P1 不在的图）只加载 GEO / DESIGN / GAMEPLAY：无音效、剧情事件与 Boss 战 fail closed；后台图对象收到的切图 / 就绪事件按前台语义（前台切图时后台正在放的技能会被清）。后台槽 3 个。
-- 客人端技能结束事件不同步（重放的技能 Actor 2 s 寿命上限）；敌人 VisualPivot 竖直偏移未同步。
+- 远程表现（P6，协议 3）：Host / 其他客人的精灵、技能、特效、音效、技能结束与受击动画在 Client 重放；附着式 / 循环音效（`PlayEventAttached`）与蓝图直接调用 `SpawnEmitter*` 的特效尚未复制；敌人 VisualPivot 竖直偏移未同步。
 - G3 门 / 宝箱 / Boss 窗口专项未在真实对象上实测（测试存档无可用对象，按同一原版通路代证）。
 - SDK：第三方对象不参与联机同步；Lua 事件用 `ELMP_PollEvents` 轮询；最多 16 个 SDK Mod。
 - 只支持 `elmp.json` 列出的游戏 EXE 版本。

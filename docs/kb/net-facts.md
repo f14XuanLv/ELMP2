@@ -130,3 +130,15 @@
 - **需要用户**：如需补测 G3 门 / 宝箱 / Boss 窗口，请提供含未开门 / 宝箱 / 未打 Boss 的存档。
 - **实例最终状态**：Dev2 / Host2 / Client2 / Client3 全部已停止，均部署 Dev 构建 0.3.0；Dev2 的三个 SDK 示例 Mod 已删除；Host2 存档已从 `%TEMP%\elmp_bak_host_p2` 还原（GameSlot_0 哈希 2CA5…）；Client2 / Client3 存档未被写入（guard 存档保护）。
 
+
+## P6 远程表现补全（v2 2026-10-27，用户追加；Host2 / Client2，church_08 → church_07）
+- **缺口盘点** `[E-实测][E-IDA]`：Host P1 点按 ATTACK → Host 出现 `BP_s5060_Assassin`（Owner = PC_Base，池化隐藏的精灵）+ `AbilityHitbox_s5060_Projectile`；修前 Client 上 Host P1 副本无精灵、无技能（`send_acts` 只发 spawn-point 敌人）。`UCommandAction` 采样 `0xD24FB0 / 0xD250E0` 依次跑 State `0xD24CA0` / Ability `0xCBABE0` / Move `0xD24590` / FX `0xD24380` / Sound `0xD24B50` 五条时间线，Client 冻结的对象一条也不跑。特效一律经 `UBaseFXComponent::SpawnFX`（BlueprintNativeEvent，exec `0x7D5540` → vtable +1024 → 实现 `0x7D0600`；FX 时间线、Spine 动画通知 `0x7D0E60 / 0x7D1380`、VisualCue 都经 thunk `0x7D4A50` → ProcessEvent）。音效时间线钩子实测 0 次命中：声音汇点是 FMOD `PlayEventAtLocation` `0x78D570`（`PlayEvent2D` `0x78D520` 以单位变换转发；时间线、技能 `0xCA5FE0 / 0xCB2430`、FMODAnimNotifyPlay、蓝图 exec 都调它）。技能结束汇点 `AAbility::Stop` `0xCBDB80`（状态 +552）。受击：`UHPComponent::DoDamage` `0xCA0380` 广播 OnReceiveDamage，BP_Character_SpineBase 绑定的处理函数调 `SpineAnimationComponent:PlayAdditiveDamage`。
+- **独立精灵可呈现** `[E-实测]`：Client 上 `SpawnActor(BP_s5060_Assassin_C)` + `SetActorHiddenInGame(false)` + Spine `SetAnimation` 正常渲染（截图 `client\…\shots\spirit1-client.png`），销毁无副作用。
+- **实现**：见需求树 §7.20（Ref、快照段 sp、SpawnFX / FMOD / Stop / DeactivateSystem 四个 Host 钩子 + Client 本地抑制、ActStop、受击处理函数、300 ms 乱序重试；协议 3；`EL.json` 新增 SpawnFXImpl / PSCDeactivateSystem / FMODPlayEventAtLocation / FMODPlayEventAttached / AbilityStop，Host2 预检全部 prefix ok）。CTest `test_net_codec` 增 Fx / ActStop / Snd 往返、截断与值域。
+- **门槛实测** `[E-实测]`（church_07，Host P1 贴近史莱姆群连按 ATTACK，敌人反击直至 Host P1 被打死回椅子）：
+  - 精灵：church_08 第一击 Client 生成 `BP_s5060_Assassin` 呈现体，位置与 Host 全等（Y −1932 / Z 452），技能 / 特效 / 结束各 1/1；本地动画通知自发的 `PS_S5060_A_01` 被抑制 1 次（Host 的同一特效经通道到达，无重影）。
+  - 首轮 14 击：Host 捕获技能 51（精灵 + 史莱姆）/ 特效 145 / 音效 92 / 结束 50；Client 重放技能 51（rejected 0）/ 特效 145（fail 0）/ 停用 145 / 音效 91 / 结束 50；受击动画 27；本地抑制 6；retry 0、absent 0、stopMissed 0。截图 `fx2-client.png` / `fx2-host.png`。
+  - 复测 16 击：技能 67/67、特效 163/163、结束 66/66、受击 28；guard `damage blocked=0`（Client 不结算）、aiLeaks 0。
+  - 帧时间（资产已缓存后的 16 击窗口，`elmp perf`）：Host `frame.elmp_us` P99 428 µs（capture P99 376）；Client P99 277 µs（apply P99 134，replay P50 131 µs）。首次加载窗口（首次 LoadObject 精灵类 / 粒子 / 音效）Client P99 1.2 ms、单帧最大 135 ms（类加载），属一次性。
+  - `PlayEventAttached` 0 次（church_07 未触发附着式音效）。
+- **遗留**：附着 / 循环音效与蓝图直接 `SpawnEmitter*` 不复制；精灵位置无插值（每快照直放）；首次资产加载的一次性卡顿；敌人 VisualPivot 竖直偏移。

@@ -445,6 +445,15 @@ unner <方向> <距离>，异图
 unner in <mapId>；客人经 Control code 10 横幅显示。
 4. **SDK 身份**：调用方 = Mod 目录名，须带 elmp.json（elmpApi 1 + slots）；最多 16 个 SDK Mod；Lua 事件用 `ELMP_PollEvents` 轮询（JSON），C++ 用 `subscribe` 回调（帧泵末尾派发）。
 
+### 7.20 P6 远程表现补全决定（2026-10-27，用户追加）→ **[定，可复议]**
+1. **事件归属 Ref**：动作 / 特效 / 音效 / 技能结束一律带所属对象 `{kind: enemy(出生点名) / dyn(动态 id) / lily(座位) / spirit(座位<<8|序号), id}`；只发给座位与所属对象同图的对端，不回发给产生它的座位（该客人本机的莉莉与精灵自己跑）。协议版本升到 3。
+2. **精灵呈现**：快照新段 `sp`（只含已召唤 = 未隐藏、Owner 为座位 PC 的精灵）；Client 按行的类生成呈现用精灵（白名单冻结、无碰撞、guard 标记），行消失则隐藏复用；位置每快照直放（同莉莉副本）。
+3. **特效**：Host 钩 `UBaseFXComponent::SpawnFX` 实现捕获所属网络对象的特效（FX 时间线 / Spine 动画通知 / VisualCue / 蓝图都经此）；`DeactivateSystem` 同步为 FxStop；Client 对 guard 标记的呈现对象，非重放的本地 SpawnFX 立即隐藏 + 停用（不回 null，原版调用方会解引用）。
+4. **音效**：Host 钩 FMOD `PlayEventAtLocation`（`PlayEvent2D` 转发到它；音效时间线、技能、动画通知、蓝图都经此），上下文为 Actor 或其组件、且不是技能的才发；Client 在呈现对象处以同一入口播放（单位变换 = 2D），距本地莉莉 > 4000 UU 不播；呈现对象的本地音效抑制。`PlayEventAttached` 只计数。
+5. **技能结束**：Host 钩 `AAbility::Stop`，已下发的发射按 (Ref, seq) 发 ActStop；Client 对仍在运行的重放体调同一 `Stop`；重放寿命上限从 2 s 放宽为 10 s 兜底。
+6. **受击表现**：Client 呈现的敌人 / 莉莉副本 HP 下降时，调用其蓝图 `OnReceiveDamage` 处理函数（BP_Character_SpineBase 的 `BndEvt__HPComponent_…_HPDamageEvent`：附加受击动画），只表现不结算。
+7. **乱序**：所属对象尚未呈现的事件（如精灵首个技能先于召唤它的快照到达）按序重试 ≤ 300 ms。
+
 ---
 
 ## 8. 验收口径（继承并细化）

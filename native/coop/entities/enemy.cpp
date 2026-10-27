@@ -27,7 +27,23 @@ public:
     void apply_client(const ClientCtx& c) override { client::present_lily_rows(c); }
 };
 
+// spirit (P6) — host: visible (summoned) spirits whose Owner is a seat's controller (P1 or a seat), keyed
+// seat << 8 | index, class / position / facing / Spine pose; client: presentation spirit actors (spawned per
+// key and class, frozen like enemies, marked, no collision) for the other seats; hidden when the row goes.
+class Spirit final : public IEntityAdapter {
+public:
+    const char* name() const override { return "spirit"; }
+    void write_host(HostCtx& c) override { host::write_spirits(c); }
+    void apply_client(const ClientCtx& c) override { client::present_spirits(c); }
+    void reset() override { host::reset_spirits(), client::reset_spirits(); }
+};
+
 } // namespace
+
+IEntityAdapter& spirit() {
+    static Spirit a;
+    return a;
+}
 
 IEntityAdapter& enemy() {
     static Enemy a;

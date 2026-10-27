@@ -17,6 +17,7 @@ namespace elmp::coop::ability {
 
 struct Launch {
     ue::UObject* owner = nullptr; // the actor whose AbilityComponent launched
+    ue::UObject* spawned = nullptr; // the launched AAbility (pooled; may be null when the launch failed)
     std::string cls;              // class path
     net::proto::Act act;          // net_id / ability / custom names filled by the caller (name ids)
     std::string custom_spawn, custom_attach;
@@ -26,9 +27,10 @@ struct Launch {
 bool host_enable(void (*sink)(const Launch&));
 void host_disable();
 
-// Client: replay on `enemy` (false + reason in *why on any validation failure).
-bool replay(ue::UObject* enemy, const net::proto::Act& act, const std::string& cls, const std::string& custom_spawn, const std::string& custom_attach,
-            std::string* why);
+// Client: replay on `owner` (enemy / lily copy / spirit copy; false + reason in *why on any validation
+// failure); *spawned_out = the replayed ability (ActStop target).
+bool replay(ue::UObject* owner, const net::proto::Act& act, const std::string& cls, const std::string& custom_spawn, const std::string& custom_attach,
+            std::string* why, ue::UObject** spawned_out = nullptr);
 
 std::string describe();
 

@@ -60,6 +60,11 @@ public:
 
     void apply_client(const ClientCtx& c) override { client::present_dynamic(c); }
     void reset() override { ids_.clear(); }
+    std::uint16_t id_of(const ObjHandle& h) const {
+        const auto key = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(h.index)) << 32) | static_cast<std::uint32_t>(h.serial);
+        auto it = ids_.find(key);
+        return it == ids_.end() ? 0 : it->second;
+    }
     std::string describe() const override { return std::format("enemy_dyn: hostIds={}\n", ids_.size()) + client::describe_dynamic(); }
 
 private:
@@ -70,17 +75,21 @@ private:
 
 } // namespace
 
-IEntityAdapter& enemy_dyn() {
+EnemyDyn& dyn_singleton() {
     static EnemyDyn a;
     return a;
 }
+
+IEntityAdapter& enemy_dyn() { return dyn_singleton(); }
+
+std::uint16_t dyn_id_of(const ObjHandle& h) { return dyn_singleton().id_of(h); }
 
 } // namespace elmp::coop::entities
 
 namespace elmp::coop {
 
 std::span<IEntityAdapter* const> adapters() {
-    static IEntityAdapter* const list[] = {&entities::lily(), &entities::enemy(), &entities::worldobj(), &entities::story(), &entities::pickup(), &entities::enemy_dyn()};
+    static IEntityAdapter* const list[] = {&entities::lily(), &entities::enemy(), &entities::worldobj(), &entities::story(), &entities::pickup(), &entities::enemy_dyn(), &entities::spirit()};
     return list;
 }
 

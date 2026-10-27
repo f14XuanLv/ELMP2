@@ -11,6 +11,8 @@ namespace elmp::coop::host {
 // adapter halves (coop/entities/{lily,enemy}.cpp)
 void write_lilies(HostCtx& c);
 void write_enemies(HostCtx& c);
+void write_spirits(HostCtx& c);
+void reset_spirits();
 
 void install(); // registers the Host handlers with coop/session
 // mode status line to the peer seated at only_seat (0 = every peer); shown as the client's banner

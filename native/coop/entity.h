@@ -9,6 +9,8 @@
 
 #include "net/snapshot.h"
 
+#include "engine/handle.h"
+
 #include <cstdint>
 #include <span>
 #include <string>
@@ -47,6 +49,8 @@ IEntityAdapter& worldobj();
 IEntityAdapter& story();
 IEntityAdapter& pickup();
 IEntityAdapter& enemy_dyn();
+IEntityAdapter& spirit(); // P6: summoned spirits (section sp)
+std::uint16_t dyn_id_of(const ObjHandle& enemy); // host: ed key of a dynamic enemy (0 = none)
 } // namespace entities
 
 } // namespace elmp::coop
