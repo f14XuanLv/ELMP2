@@ -259,3 +259,9 @@ P7 的方向（复制决策、让原版执行层产生表现）对“完全由�
 - 机制 ①（P6 worldobj 快照行：可破坏 / 交互物 / 触发器 / 椅子状态；掉落按 pickup 行）+ `elmp lan sync world` 两侧对账（键 `w:<名>` 可见 / HP，掉落按类计数 `pk:<类>`）。
 - 实测（world-objects 复跑）：church_07 两朵花经 Host 原版 `DoDamage` 破坏 → Host 销毁、Client 隐藏（`sync_diff world` 视为一致）、其余可破坏件状态一致；连击期间掉落 / 经验球两侧出现，Client 不结算拾取（guard）；休息点交互 Host 打开休息菜单、Client 无本地结算；正确性行绿，变化沿 120/120。蓝图直接粒子（`BP_Breakable_Base` / `BP_Door` / `BP_Interactable_Treasure` 的 `SpawnEmitter*`）所属对象不在同步集合里 → 由 worldobj 状态在 Client 本地呈现，不另复制。`[E-实测]`
 - **未在真对象上实测**：门、宝箱、机关 / 触发结果（church_07 / 08 存档里没有未开的门 / 宝箱）——按 G3 同通路代证（worldobj 行 + guard），用户请求 ① 保持打开。
+
+## P7 重启 · 客人自身 HUD / 受伤 / 死亡复活 / 暂停（v2 2026-10-28）
+- HUD：客人 HUD HP 取 Host 座位行（本地 P1 HP 写 `max(row.hp, alive?1:0)`），guest-fight / death-respawn 中两侧 HP 序列一致。
+- 受伤 / 击退：客人座位 `l:2`（Host 座位 vs 客人本地 P1）在 death-respawn 33/33、guest-fight 93–99%；本地预测体的空中召唤 / 攀墙段会有差异（预测体由本地输入驱动，Host 座位为准，偏差 > 150 UU 时 reconcile 拉回）。
+- 死亡复活：缺陷 ② 修复后客人死亡段 3/3（`death` 姿态），复活后一致。
+- 暂停语义：客人本地暂停（测试辅助：Client eval `GameplayStatics:SetGamePaused(true)`）不影响 Host；暂停期间 Client 继续收快照（2 s 内 `latest` +130、`applied` +117），恢复后无积压。Host 不因客人暂停而暂停（Host 权威，需求树 F1.10 只暂停本机世界）。`[E-实测]`
