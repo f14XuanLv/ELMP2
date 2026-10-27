@@ -58,6 +58,9 @@ void lan_cmd(Args a, std::string& out) {
         const std::string cat = a.size() > 1 ? a[1] : "all";
         if (coop::role() == coop::Role::Client) out += coop::client::sync_report(cat);
         else out += coop::host::sync_report(cat); // also without a session: the host-side view of this world
+    } else if (sub == "evmask" && a.size() > 1) { // Dev bisect of client event replays
+        coop::client::set_ev_mask(static_cast<std::uint32_t>(std::atoi(a[1].c_str())));
+        out += "evmask " + a[1] + "\n";
     } else if (sub == "rec") { // Dev: per-frame edge recorder (start [frames] | dump)
         const std::string what = a.size() > 1 ? a[1] : "dump";
         const int frames = a.size() > 2 ? std::atoi(a[2].c_str()) : 900;

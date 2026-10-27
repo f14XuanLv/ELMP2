@@ -490,7 +490,16 @@ bool world_ready() {
 
 std::uint64_t ab_key(std::uint8_t kind, std::uint16_t id, std::uint32_t seq) { return static_cast<std::uint64_t>(kind) << 48 | static_cast<std::uint64_t>(id) << 32 | seq; }
 
+// Dev bisect (`elmp lan evmask <bits>`): bit per event type skipped on the client (1 Act, 2 Fx, 4 FxStop,
+// 8 Snd, 16 ActStop). 0 = replay everything (default).
+std::uint32_t g_ev_mask = 0;
+
 EvResult handle_event(std::span<const std::uint8_t> msg) {
+    if (g_ev_mask) {
+        const auto t = proto::type_of(msg);
+        const std::uint32_t bit = t == proto::Msg::Act ? 1 : t == proto::Msg::Fx ? 2 : t == proto::Msg::FxStop ? 4 : t == proto::Msg::Snd ? 8 : t == proto::Msg::ActStop ? 16 : 0;
+        if (g_ev_mask & bit) return EvResult::Done;
+    }
     switch (proto::type_of(msg)) {
     case proto::Msg::Act: {
         proto::Act a;
@@ -1149,6 +1158,8 @@ std::vector<sync::Ent> sync_entities() {
     return v;
 }
 } // namespace
+
+void set_ev_mask(std::uint32_t mask) { g_ev_mask = mask; }
 
 std::string rec(const std::string& sub, int frames) { return sub == "start" ? sync::rec_start(sync_entities, frames) : sync::rec_dump(); }
 
