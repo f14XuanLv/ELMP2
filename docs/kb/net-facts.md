@@ -208,3 +208,4 @@ P7 的方向（复制决策、让原版执行层产生表现）对“完全由�
 - **基线缺陷 ② 修复**（2026-10-28）：客人座位死亡只在 Host 结算，本地 P1 不跑死亡；Host 座位行 `alive=0` 期间把行轨道 0（death / 复活姿态）套到本地 P1。death-respawn 复测：客人死亡段 `l:2` 3/3（基线 1/3 缺 `death`），正确性行绿。`[E-实测]`
 - **基线缺陷 ⑤ 修复**（2026-10-28）：入座前（Welcome 未到）不呈现任何副本，且跳过 `me` 行；slime-fight 复测日志只有 `presenting host P1 as local slot 51`（基线曾出现自身座位 slot 52），变化沿 178/210（85%），正确性行绿。`[E-实测]`
 - **基线缺陷 ④ 判定**（2026-10-28）：lmp lan sync fx 增 cls（技能类名）后看清：Host 每只交战史莱姆常驻 1 个自有的池化 AbilityHitbox_e2010_Default_C（原版复用、不可见），Client 重放命中盒按 2 s 寿命结束，Owner 为 - 的是寿命内的重放体。命中盒不可见、Client 不结算，差异无呈现后果，不改；SetOwner 试验无效已撤回。[E-实测]
+- **基线缺陷 ③ 复核**（2026-10-28）：①（看门狗）与 set_track0（Host 行 <empty> 用 SetEmptyAnimation）之后 death-respawn 四个检查点 anim 差 0（基线 Slime10/11 静止卡 idle_turn），变化沿 162/165（98%）、客人死亡段 3/3；判定已修。[E-实测]
