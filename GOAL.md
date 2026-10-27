@@ -4,7 +4,7 @@
 > **进度以 §7 的勾选表为准**：每完成一项就在该行打勾并补「日期 · 证据（kb 节 / 截图 / 命令输出）· commit」；「当前进行中」同步更新。goal 完成 = §7 全部打勾。
 > 只有在全部完成、或某项经充分尝试仍无法达成（写明尝试、证据、剩余选项）且再无其他可做项时才报告 goal 完成或 blocked。需要我决定的问题：先按需求树已有定案与 fail closed 默认继续其他工作，记到顶部「需要用户」与阶段报告，不要停下等。
 
-**当前进行中**：§4 —— 正确性基线缺陷 ①–⑥ 逐条修复（2026-10-28）；① 已修（979eb9a，轨道 0 看门狗，guest-fight 多余 <empty> 16→0）；基线缺陷 ①–⑦ 全部处理（④ 判定不可见差异）；下一步 §7.4 附着 / 循环音效；缺陷 ⑦（Client 崩溃 AV 0x130）已符号化 = ability::replay → AActor::AttachToComponent，修复 166b192（重放前校验根组件），待长时浸泡复测后打勾
+**当前进行中**：§4 —— 基线缺陷 ①–⑦ 已处理（2026-10-28）；下一步 §7.4 附着 / 循环音效（PlayEventAttached）
 **需要用户**：（无新增）①G3 / 覆盖矩阵里门 / 宝箱 / Boss 行需要一个入口图里有未开门、宝箱、可进入未打 Boss 的存档放到 Host2 / Client2（没有就按同通路代证并在矩阵标「未在真对象上实测」）。
 
 ## 背景与本阶段目标
@@ -84,7 +84,7 @@ P7 失败的一个直接原因是没有能复跑的回归基线。先补：
 - [x] `tools/scenario.py` 六个剧本（slime-fight / guest-fight / world-objects / death-respawn / map-change / join-reconnect）在 P6 基线跑通，截图成对入 kb —— 2026-10-28 · 证据：net-facts「P7 重启 · P6 基线六剧本」（六剧本正确性行全绿、rec 79–99%）、截图 `<剧本>-<步>-{host,client}.png` · commit 见本行提交
 
 ### 7.4 点位（每行 = 矩阵一行或一组；实现时按实际点位增删行，新增行不删旧行）
-- [ ] 正确性基线缺陷（基线实测中发现的，逐条列出并修复）
+- [x] 正确性基线缺陷（基线实测中发现的，逐条列出并修复） —— 2026-10-28 · 证据：net-facts「P7 重启 · P6 基线六剧本」缺陷 ①–⑦ 及各自修复节（① 看门狗 979eb9a / ② 客人死亡姿态 6f8e931 / ③ 复核 / ④ 判定不可见差异 / ⑤ 入座前无副本 / ⑥ 重放预算 03dc683 / ⑦ 重放根组件校验 166b192）；复跑 guest-fight / death-respawn / slime-fight 正确性行全绿、变化沿 93–100%，截图 guest-fight-attack / death-respawn-guest-dead -{host,client}.png · commit 03dc683
 - [ ] 附着 / 循环音效（`PlayEventAttached` 等）
 - [ ] 蓝图直生特效（`SpawnEmitter*` / 非 `SpawnFX` 路径）
 - [ ] 敌人 VisualPivot 竖直偏移
