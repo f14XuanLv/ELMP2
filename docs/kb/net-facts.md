@@ -230,3 +230,7 @@ P7 的方向（复制决策、让原版执行层产生表现）对“完全由�
 - `[E-CUE --imports K2_SetRelativeLocation]` 写入者：`BP_Character_Base`（`ResetVisualPivotLocation(duration)`：时间线 `ResetVisualPivotTimeline` 把当前偏移 VLerp 回 0，duration 0 时直接设 0）、`BP_p0000_Lily` 与 `CA_LedgeClimb_Base`（莉莉攀爬边缘）、`BP_IKBones`、`BP_Trigger_Ability_Stalactite`、`BP_CustomPhysicsVolume_Water`（只移它自己的音频快照触发盒）。敌人蓝图没有把偏移设成非 0 的写入者。
 - `[E-实测]` Host2 church_07：24 个敌人 `VisualPivot.RelativeLocation` 逐帧采样，史莱姆群战 300 帧 + 士兵 600 帧，全部恒为 (0,0,0)。
 - 结论：敌人的 VisualPivot 偏移恒为 0，Client 冻结后同为 0，**无差异，不需要通道**（矩阵 E05 标“已同步（无写入者）”）。莉莉的攀爬偏移归入“莉莉非战斗状态”一项。
+
+## P7 重启 · 精灵位置插值（v2 2026-10-28）
+- P6：精灵副本每个快照直接定位。改为与敌人同一套 Host 时间 100 ms 缓冲插值（`interp()` 共用，样本环 16；>500 ms 间隔跳到新样本；重新召唤时直接定位不滑行），每帧由 `present_spirit_motion` 呈现。
+- 实测（测试辅助 `%TEMP%\elmp_spirit_trace.ps1`，登记：两侧逐帧采样所有 ZenithSpirit 的 Y，Host P1 `SUMMON_1 / SUMMON_2` ×4）：Host 移动 72 帧、停顿 0、最大步 169.6、总位移 339；Client 移动 72 帧、停顿 0、最大步 153.2、总位移 306（同段运动更平、无停顿）。slime-fight 精灵变化沿 4/5，正确性行绿；`sync_diff ent` pos>5 = 0。截图 `spirit-motion-{host,client}.png`。`[E-实测]`
