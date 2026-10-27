@@ -44,6 +44,7 @@ void hashes(std::string& out);
 using EntList = std::function<std::vector<Ent>()>;
 std::string rec_start(EntList list, int frames);
 void rec_tick(); // from the role's tick (no-op unless armed)
+void rec_note(const std::string& key, const std::string& text); // Dev: annotate the recording (events)
 std::string rec_dump(); // JSON lines {"cat":"rec","f","k","anim","hp","vis"} + {"cat":"rech",...}
 
 } // namespace elmp::coop::sync

@@ -308,6 +308,7 @@ void present_enemy(const std::string& key, ue::UObject* enemy, const snap::Enemy
         if (auto* spine = t.spine.get(); spine && anim) {
             if (set_track0(spine, *anim, row.loop != 0, row.t, *s)) ++g_anim_sets;
             else ++g_anim_fail;
+            sync::rec_note(key.starts_with("dyn:") ? "d:" + key.substr(4) : "e:" + key, "set " + *anim);
             t.anim = row.anim;
         }
     }
@@ -510,6 +511,7 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
         h_replay.add(static_cast<double>(clock::now_us() - r0));
         if (!ok && ++g_act_bad <= 5) log::warn("coop: act {} on kind {} id {} rejected: {}", *cls, a.kind, a.net_id, why);
         if (spawned) g_ab_live[ab_key(a.kind, a.net_id, a.seq)] = ObjHandle::of(spawned);
+        if (a.kind == static_cast<std::uint8_t>(proto::RefKind::Enemy) && g_names.text(a.net_id)) sync::rec_note("e:" + *g_names.text(a.net_id), "act " + *cls);
         if (g_ab_live.size() > 512) std::erase_if(g_ab_live, [](const auto& kv) { return !kv.second.get(); });
         return EvResult::Done;
     }
@@ -562,6 +564,8 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
         }
         fx::stop_ability(it->second.get(), m.reason);
         g_ab_live.erase(it);
+        if (m.kind == static_cast<std::uint8_t>(proto::RefKind::Enemy))
+            if (const auto* nm = g_names.text(m.net_id)) sync::rec_note("e:" + *nm, "stop");
         return EvResult::Done;
     }
     default: return EvResult::Done;

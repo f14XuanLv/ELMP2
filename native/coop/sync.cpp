@@ -275,6 +275,16 @@ void rec_tick() {
     }
 }
 
+void rec_note(const std::string& key, const std::string& text) {
+    if (g_rec.left <= 0 || g_rec.lines.size() >= 20000) return;
+    json::Value v = json::Value::object();
+    v.set("cat", "recn");
+    v.set("f", g_rec.n);
+    v.set("k", key);
+    v.set("note", text);
+    g_rec.lines.push_back(json::dump(v, 0));
+}
+
 std::string rec_dump() {
     std::string out = std::format("{{\"cat\":\"rech\",\"frames\":{},\"done\":{},\"recorded\":{},\"entities\":{},\"dropped\":{}}}\n", g_rec.frames, g_rec.left <= 0, g_rec.n,
                                   g_rec.ents.size(), g_rec.dropped);
