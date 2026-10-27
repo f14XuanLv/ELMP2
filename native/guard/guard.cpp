@@ -4,9 +4,14 @@
 #include "base/log.h"
 #include "base/metrics.h"
 
+#include "engine/reflect.h"
+
+#include <Unreal/UClass.hpp>
 #include <Unreal/UObject.hpp>
 
+#include <array>
 #include <format>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace elmp::guard {
@@ -16,7 +21,7 @@ namespace {
 using RC::Unreal::UObject;
 
 bool g_installed = false, g_install_failed = false, g_armed = false;
-std::unordered_set<UObject*> g_marked, g_not_player, g_replay;
+std::unordered_set<UObject*> g_marked, g_not_player, g_replay, g_decision, g_exec;
 Counters g_c{};
 
 using DoDamageFn = void(__fastcall*)(UObject*, UObject*, int, bool, bool);
@@ -34,6 +39,44 @@ SaveFn o_save{};
 SaveAsyncFn o_save_async{};
 VoidFn o_ai_activate{}, o_char_activate{};
 BoolSetFn o_collision{}, o_tick{};
+using EffectFn = void(__fastcall*)(UObject*, UObject*, UObject*, void*);
+EffectFn o_effect_apply{}, o_effect_finalize{};
+VoidFn o_death_start{};
+
+// Hit-effect classification (ADR 0006 settlement boundary): presentation classes pass, everything else —
+// including effect classes this build does not know — is a settlement and is not applied on the client.
+std::unordered_map<RC::Unreal::UClass*, bool> g_effect_presentation; // class → passes
+bool effect_is_presentation(UObject* effect) {
+    auto* cls = effect ? effect->GetClassPrivate() : nullptr;
+    if (!cls) return false;
+    if (auto it = g_effect_presentation.find(cls); it != g_effect_presentation.end()) return it->second;
+    static const std::array<RC::Unreal::UClass*, 4> kPresentation = {
+        reflect::find_class(L"/Script/Zenith.AE_HitStopComponent"), reflect::find_class(L"/Script/Zenith.AE_CameraShakeComponent"),
+        reflect::find_class(L"/Script/Zenith.AE_ShakeTargetComponent"), reflect::find_class(L"/Script/Zenith.AE_ForceFeedbackComponent")};
+    bool pass = false;
+    for (auto* p : kPresentation)
+        if (p && cls->IsChildOf(p)) pass = true;
+    g_effect_presentation.emplace(cls, pass);
+    return pass;
+}
+
+void __fastcall d_effect_apply(UObject* effect, UObject* from, UObject* to, void* infos) {
+    if (g_armed) {
+        if (!effect_is_presentation(effect)) return void(++g_c.effect_blocked);
+        ++g_c.effect_passed;
+    }
+    o_effect_apply(effect, from, to, infos);
+}
+
+void __fastcall d_effect_finalize(UObject* effect, UObject* from, UObject* to, void* infos) {
+    if (g_armed && !effect_is_presentation(effect)) return;
+    o_effect_finalize(effect, from, to, infos);
+}
+
+void __fastcall d_death_start(UObject* death) {
+    if (g_armed && death && g_marked.count(death->GetOuterPrivate())) return void(++g_c.death_blocked);
+    o_death_start(death);
+}
 
 UObject* owner_of(UObject* component) { return component ? component->GetOuterPrivate() : nullptr; }
 
@@ -95,12 +138,15 @@ void __fastcall d_char_activate(UObject* pawn) {
 }
 
 void __fastcall d_collision(UObject* actor, bool on) {
-    if (g_armed && on && g_marked.count(actor)) return void(++g_c.collision_blocked);
+    if (g_armed && on && (g_decision.count(actor) || (g_marked.count(actor) && !g_exec.count(actor)))) return void(++g_c.collision_blocked);
     o_collision(actor, on);
 }
 
 void __fastcall d_tick(UObject* actor, bool on) {
-    if (g_armed && on && g_marked.count(actor)) return void(++g_c.tick_blocked);
+    if (g_armed) {
+        if (on && (g_decision.count(actor) || (g_marked.count(actor) && !g_exec.count(actor)))) return void(++g_c.tick_blocked);
+        if (!on && g_exec.count(actor)) return void(++g_c.tick_kept); // vanilla SetPaused would stop sampling host commands
+    }
     o_tick(actor, on);
 }
 
@@ -117,6 +163,9 @@ bool install() {
     ok &= hook::install_manifest("GuardEnemyCharacterActivate", reinterpret_cast<void*>(&d_char_activate), reinterpret_cast<void**>(&o_char_activate));
     ok &= hook::install_manifest("GuardActorSetCollision", reinterpret_cast<void*>(&d_collision), reinterpret_cast<void**>(&o_collision));
     ok &= hook::install_manifest("GuardActorSetTick", reinterpret_cast<void*>(&d_tick), reinterpret_cast<void**>(&o_tick));
+    ok &= hook::install_manifest("GuardEffectApply", reinterpret_cast<void*>(&d_effect_apply), reinterpret_cast<void**>(&o_effect_apply));
+    ok &= hook::install_manifest("GuardEffectFinalize", reinterpret_cast<void*>(&d_effect_finalize), reinterpret_cast<void**>(&o_effect_finalize));
+    ok &= hook::install_manifest("GuardDeathStart", reinterpret_cast<void*>(&d_death_start), reinterpret_cast<void**>(&o_death_start));
     if (!ok) {
         g_install_failed = true;
         log::error("guard: a detour could not be installed; client presentation fails closed");
@@ -142,11 +191,28 @@ bool armed() { return g_armed; }
 void mark(ue::UObject* a) {
     if (a) g_marked.insert(a);
 }
-void unmark(ue::UObject* a) { g_marked.erase(a); }
+void unmark(ue::UObject* a) {
+    g_marked.erase(a);
+    g_decision.erase(a);
+    g_exec.erase(a);
+}
 void unmark_all() {
     g_marked.clear();
     g_not_player.clear();
     g_replay.clear();
+    g_decision.clear();
+    g_exec.clear();
+    g_effect_presentation.clear();
+}
+void mark_decision(ue::UObject* a, bool on) {
+    if (!a) return;
+    if (on) g_decision.insert(a);
+    else g_decision.erase(a);
+}
+void mark_exec(ue::UObject* a, bool on) {
+    if (!a) return;
+    if (on) g_exec.insert(a);
+    else g_exec.erase(a);
 }
 bool marked(ue::UObject* a) { return g_marked.count(a) != 0; }
 void mark_not_player(ue::UObject* a, bool on) {
@@ -162,9 +228,10 @@ Counters counters() { return g_c; }
 
 std::string describe() {
     return std::format("guard: installed={} armed={} marked={} notPlayer={} replay={} | damage blocked={} replayed={} skill blocked={} replayed={} isPlayerFalse={} saveBlocked={} "
-                       "aiActivateBlocked={} charActivateBlocked={} collisionBlocked={} tickBlocked={}\n",
+                       "aiActivateBlocked={} charActivateBlocked={} collisionBlocked={} tickBlocked={} tickKept={} | effect blocked={} passed={} deathBlocked={}\n",
                        g_installed, g_armed, g_marked.size(), g_not_player.size(), g_replay.size(), g_c.damage_blocked, g_c.damage_replayed, g_c.skill_blocked, g_c.skill_replayed,
-                       g_c.isplayer_false, g_c.save_blocked, g_c.ai_activate_blocked, g_c.char_activate_blocked, g_c.collision_blocked, g_c.tick_blocked);
+                       g_c.isplayer_false, g_c.save_blocked, g_c.ai_activate_blocked, g_c.char_activate_blocked, g_c.collision_blocked, g_c.tick_blocked, g_c.tick_kept, g_c.effect_blocked,
+                       g_c.effect_passed, g_c.death_blocked);
 }
 
 } // namespace elmp::guard

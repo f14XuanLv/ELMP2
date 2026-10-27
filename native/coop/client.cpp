@@ -7,6 +7,7 @@
 #include "coop/client.h"
 
 #include "coop/ability.h"
+#include "coop/commands.h"
 #include "coop/fx.h"
 #include "overlay/render.h"
 #include "coop/entities/clearable.h"
@@ -29,6 +30,7 @@
 #include "engine/world.h"
 
 #include "input/pad_state.h"
+#include "input/virtual_pad.h"
 
 #include "net/protocol.h"
 #include "net/snapshot.h"
@@ -60,6 +62,9 @@ namespace proto = net::proto;
 
 constexpr std::size_t kRing = 32;
 constexpr float kReconcileUU = 150.0f; // local P1 vs host seat drift before a snap (decision P2: prediction + snap)
+constexpr float kCmdCorrectUU = 300.0f; // enemy running a replayed command: vanilla Move owns position below this error
+constexpr float kCopySnapUU = 240.0f, kCopyBlendUU = 40.0f; // lily copy vs host seat (v1 values, to be re-measured)
+std::uint64_t g_copy_snaps = 0, g_copy_blends = 0;
 std::uint64_t g_reconciles = 0;
 
 void note_host_time(std::uint32_t host_ms, std::int64_t now_us);
@@ -77,6 +82,9 @@ struct Taken {
     std::int8_t facing = 0;
     std::uint32_t frame = 0; // last snapshot that carried the row
     std::int32_t hp = -1;    // last presented HP (hit reaction on a drop)
+    ObjHandle queue, move;   // CommandQueueComponent / CharacterMovement (ADR 0006 position ownership)
+    float lx = 0, ly = 0, lz = 0; // last written position (velocity feed)
+    std::int64_t lus = 0;
 };
 
 // Hit reaction (P6): the vanilla OnReceiveDamage handler of BP_Character_SpineBase (additive damage
@@ -116,6 +124,8 @@ reflect::FuncRef g_set_tick, g_set_collision, g_set_rotation;
 bool g_resolved = false;
 std::uint64_t g_unknown_names = 0, g_bad_snaps = 0, g_applied = 0, g_anim_sets = 0, g_anim_fail = 0, g_kills = 0, g_act_bad = 0, g_act_absent = 0, g_rechecks = 0, g_leaks = 0, g_pawn_activated = 0;
 std::unordered_map<std::uint32_t, std::uint32_t> g_act_last; // kind << 16 | owner id → last act seq
+std::unordered_map<std::uint32_t, std::uint32_t> g_cmd_last; // kind << 16 | owner id → last cmd seq
+std::uint64_t g_cmd_bad = 0;
 metrics::Histogram& h_apply = metrics::histogram("coop.client.apply_us");
 metrics::Histogram& h_motion = metrics::histogram("coop.client.motion_us");
 metrics::Histogram& h_replay = metrics::histogram("coop.client.replay_us");
@@ -220,11 +230,49 @@ void freeze(ue::UObject* enemy) {
     }
 }
 
+// ADR 0006 takeover: stop the decision source only. The AI controller stays gated (guard: no Activate, no
+// behaviour tree); the pawn's execution layer runs vanilla — actor + every component ticking, world
+// collision on — so a replayed command plays its State / Ability / Move / FX / Sound timelines. The guard
+// keeps the pawn ticking (the disabling direction of SetActorTickEnabled is refused for marked pawns: a
+// dormant enemy would not sample the host's command) and the settlement boundary stops every result.
+void run_exec(ue::UObject* enemy) {
+    static reflect::FuncRef set_comp_tick;
+    static ObjHandle comp_cls;
+    if (!set_comp_tick.ok()) {
+        set_comp_tick = reflect::Resolver("ActorComponent", reflect::find_class(L"/Script/Engine.ActorComponent")).func(L"SetComponentTickEnabled", 1);
+        comp_cls = ObjHandle::of(reflect::find_object(L"/Script/Engine.ActorComponent"));
+    }
+    if (!g_set_collision.ok()) g_set_collision = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).func(L"SetActorEnableCollision", 1);
+    const auto* s = core::schema::script();
+    if (s && set_comp_tick.ok()) {
+        reflect::Frame f(s->actor_components_by_class);
+        f.arg(0, comp_cls.get());
+        if (f.invoke(enemy))
+            if (const auto* arr = static_cast<const reflect::RawArray*>(f.raw(s->actor_components_by_class.ret)); arr && arr->num >= 0 && arr->num <= 128) {
+                const auto* items = reinterpret_cast<ue::UObject* const*>(arr->data);
+                for (int i = 0; i < arr->num; ++i) {
+                    if (!ue::alive(items[i])) continue;
+                    reflect::Frame on(set_comp_tick);
+                    on.arg_bool(0, true);
+                    on.invoke(items[i]);
+                }
+            }
+    }
+    for (auto* fn : {&g_set_tick, &g_set_collision})
+        if (fn->ok()) {
+            reflect::Frame f(*fn);
+            f.arg_bool(0, true);
+            f.invoke(enemy);
+        }
+}
+
 void take(const std::string& name, ue::UObject* enemy) {
     auto* controller = core::schema::script() ? core::schema::script()->pawn_controller.object(enemy) : nullptr;
     guard::mark(enemy);
     guard::mark(controller);
-    freeze(enemy);
+    guard::mark_decision(controller);
+    run_exec(enemy);
+    guard::mark_exec(enemy);
     Taken t;
     t.enemy = ObjHandle::of(enemy);
     t.controller = ObjHandle::of(controller);
@@ -264,10 +312,19 @@ void present_enemy(const std::string& key, ue::UObject* enemy, const snap::Enemy
         *s->hp_curr.at<std::int32_t>(hp) = row.hp;
         if (t.hp >= 0 && row.hp < t.hp && !t.killed) hit_react(enemy, t.hp - row.hp);
         t.hp = row.hp;
-        if ((row.flags & 4) && !t.killed) t.killed = true, ++g_kills;
+        if ((row.flags & 4) && !t.killed) {
+            // the vanilla death process is a settlement (drops, spawn point clear) and is never run here: the
+            // corpse stops its execution layer and shows the host's death pose from the rows
+            t.killed = true, ++g_kills;
+            guard::mark_exec(enemy, false);
+            freeze(enemy);
+            t.anim = 0;
+        }
     }
     t.frame = g_latest;
-    if (row.anim && row.anim != t.anim) { // pose: switch track 0 only on an animation change (§16)
+    // ADR 0006: the vanilla execution layer animates a live enemy (commands, locomotion state machine); the
+    // host pose is applied only to a dead one
+    if (t.killed && row.anim && row.anim != t.anim) { // pose: switch track 0 only on an animation change (§16)
         const auto* anim = g_names.text(row.anim);
         if (!t.spine.get()) {
             static ObjHandle cls = ObjHandle::of(reflect::find_object(L"/Script/SpineExtensionPlugin.SpineSkeletonAnimationExComponent"));
@@ -354,7 +411,7 @@ std::map<std::uint16_t, Copy> g_copies;
 void drop_copy(std::uint16_t key) {
     auto it = g_copies.find(key);
     if (it == g_copies.end()) return;
-    if (auto* p = core::pawn(it->second.slot)) guard::unmark(p), guard::mark_not_player(p, false);
+    if (auto* p = core::pawn(it->second.slot)) guard::unmark(p), guard::mark_not_player(p, false), commands::suppress_input_commands(p, false);
     core::spawn::despawn(it->second.slot, false);
     core::leases().release({"ELMP", slots::OwnerKind::Elmp}, it->second.slot);
     g_copies.erase(it);
@@ -402,24 +459,34 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
                 continue;
             }
             auto* p = core::pawn(slot);
-            if (g_set_collision.ok()) {
-                reflect::Frame fc(g_set_collision);
-                fc.arg_bool(0, false);
-                fc.invoke(p);
-            }
             resolve();
-            freeze(p);
+            // ADR 0006: the copy runs the vanilla pipeline (nothing frozen, world collision on); its input is the
+            // host seat's (virtual pad, below), its commands come only from the host (input-made ones suppressed)
             guard::mark(p);
             guard::mark_not_player(p, true);
+            guard::mark_exec(p);
+            if (!commands::suppress_input_commands(p, true)) log::warn("coop: copy P{}: input command suppression unavailable", row.key);
+            if (g_set_collision.ok()) {
+                reflect::Frame fc(g_set_collision);
+                fc.arg_bool(0, true);
+                fc.invoke(p);
+            }
             c.anim = 0, c.facing = 0;
             log::info("coop: presenting host P{} as local slot {}", row.key, slot);
         }
         auto* p = core::pawn(c.slot);
         if (!p) continue;
-        if (auto at = core::location(p); at && (std::fabs(at->x - row.x) + std::fabs(at->y - row.y) + std::fabs(at->z - row.z)) > 0.5f) {
-            reflect::Frame tp(s.actor_teleport);
-            tp.arg(0, core::Vec3{row.x, row.y, row.z}).arg_bool(1, false).arg_bool(3, true);
-            tp.invoke(p);
+        input::pad::set(c.slot, row.ix / 100.0, row.iy / 100.0, row.iraw);
+        // position correction (ADR 0006 §7.21-5): > 240 UU jump, 40–240 converge 15 % per snapshot, below: vanilla
+        if (auto at = core::location(p)) {
+            const float dx = row.x - at->x, dy = row.y - at->y, dz = row.z - at->z;
+            const float err = std::fabs(dy) + std::fabs(dz);
+            if (err > kCopySnapUU || err > kCopyBlendUU) {
+                const float k = err > kCopySnapUU ? 1.0f : 0.15f;
+                reflect::Frame tp(s.actor_teleport);
+                tp.arg(0, core::Vec3{at->x + dx * k, at->y + dy * k, at->z + dz * k}).arg_bool(1, false).arg_bool(3, false);
+                if (tp.invoke(p)) ++(k == 1.0f ? g_copy_snaps : g_copy_blends);
+            }
         }
         if (auto* hp = s.zc_hp.object(p)) { // presented vitals (host values; the copy never settles)
             *s.hp_max.at<std::int32_t>(hp) = row.mhp;
@@ -431,18 +498,22 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
             *s.mp_max.at<std::int32_t>(mp) = row.mmp;
             *s.mp_curr.at<std::int32_t>(mp) = row.mp;
         }
-        if (row.facing && row.facing != c.facing && g_set_rotation.ok()) {
-            reflect::Frame fr(g_set_rotation);
-            fr.arg(0, core::Vec3{0, row.facing > 0 ? 90.0f : -90.0f, 0}).arg_bool(1, false);
-            if (fr.invoke(p)) c.facing = row.facing;
-        }
-        if (row.anim && row.anim != c.anim && bp)
-            if (const auto* anim = g_names.text(row.anim))
-                if (auto* spine = bp->lily_spine.object(p)) {
-                    reflect::Frame fa(s.sp_set_animation);
-                    fa.arg(0, 0).arg_string(1, log::wide(*anim)).arg_bool(2, row.loop != 0);
-                    if (fa.invoke(spine)) c.anim = row.anim;
+        // facing / animation come from the copy's own vanilla pipeline (input + host commands); the host facing
+        // is applied only while the copy stands still and disagrees (e.g. a turn made by a command)
+        if (row.facing && row.ix == 0 && g_set_rotation.ok() && s.zc_locomotion.ok())
+            if (auto* loco = s.zc_locomotion.object(p)) {
+                reflect::Frame ff(s.loco_facing_right);
+                if (ff.invoke(loco) && (ff.ret_bool() ? 1 : -1) != row.facing) {
+                    static reflect::FuncRef set_facing =
+                        reflect::Resolver("LocomotionComponent", reflect::find_class(L"/Script/Zenith.LocomotionComponent")).func(L"SetFacing", 1);
+                    if (set_facing.ok()) {
+                        reflect::Frame sf(set_facing);
+                        sf.arg_bool(0, row.facing > 0);
+                        sf.invoke(loco);
+                    }
                 }
+            }
+        (void)bp;
     }
     std::vector<std::uint16_t> gone;
     for (auto& [k, c] : g_copies)
@@ -547,7 +618,49 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
         g_ab_live.erase(it);
         return EvResult::Done;
     }
+    case proto::Msg::Cmd: { // ADR 0006: the host's decision, run through the vanilla command queue
+        proto::Cmd m;
+        if (!proto::decode(msg, m)) return ++g_cmd_bad, EvResult::Done;
+        auto& last = g_cmd_last[static_cast<std::uint32_t>(m.kind) << 16 | m.net_id];
+        if (m.seq <= last) return EvResult::Done; // idempotent per owner
+        const auto* cls = g_names.text(m.cls);
+        if (!cls) return ++g_cmd_bad, EvResult::Done;
+        auto* owner = actor_of(m.kind, m.net_id);
+        if (!owner) return EvResult::Retry;
+        last = m.seq;
+        std::string why;
+        const auto r0 = clock::now_us();
+        const bool ok = commands::replay(owner, *cls, m.dir, m.cmd, &why);
+        h_replay.add(static_cast<double>(clock::now_us() - r0));
+        if (!ok && ++g_cmd_bad <= 5) log::warn("coop: cmd {} on kind {} id {} rejected: {}", *cls, m.kind, m.net_id, why);
+        return EvResult::Done;
+    }
     default: return EvResult::Done;
+    }
+}
+
+void queue_event(std::span<const std::uint8_t> msg) {
+    if (handle_event(msg) == EvResult::Retry) {
+        if (g_ev_retry.size() < 64) g_ev_retry.push_back({clock::now_us() + kRetryUs, std::vector<std::uint8_t>(msg.begin(), msg.end())});
+        else ++g_ev_absent;
+    }
+}
+
+// Enemy commands run on the interpolation timeline (host time − 100 ms, the same time the presented
+// position shows) so the vanilla action starts where the enemy is drawn; lily copies run live (they are
+// driven by live input, P7-4).
+struct DueCmd {
+    std::uint32_t t_ms = 0;
+    std::vector<std::uint8_t> msg;
+};
+std::deque<DueCmd> g_cmd_due;
+double render_host_ms(std::int64_t now_us);
+
+void run_due_cmds(std::int64_t now_us) {
+    const double render = render_host_ms(now_us);
+    while (!g_cmd_due.empty() && (render >= g_cmd_due.front().t_ms || g_cmd_due.size() > 192)) {
+        queue_event(g_cmd_due.front().msg);
+        g_cmd_due.pop_front();
     }
 }
 
@@ -590,7 +703,6 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         g_seat_placed = false;
         if (!guard::arm()) coop::leave("guard unavailable (fail closed)");
         core::permission::p1_presentation(true);
-        if (!fx::client_enable()) log::warn("coop: local FX suppression unavailable (SpawnFX hook)");
         log::info("coop: seated as P{} on the host (epoch {})", g_seat, g_epoch);
         break;
     }
@@ -619,9 +731,19 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         // the local world is loading / tearing down (an act replayed while the client went back to the title
         // crashed inside LaunchAbilityFromDescription: AV 0x130)
         if (!world_ready()) return void(++g_act_absent);
-        if (handle_event(msg) == EvResult::Retry) {
-            if (g_ev_retry.size() < 64) g_ev_retry.push_back({clock::now_us() + kRetryUs, std::vector<std::uint8_t>(msg.begin(), msg.end())});
+        queue_event(msg);
+        break;
+    }
+    case proto::Msg::Cmd: {
+        if (!g_seat || !world_ready()) return void(++g_act_absent);
+        proto::Cmd m;
+        if (!proto::decode(msg, m)) return void(++g_cmd_bad);
+        const auto kind = static_cast<proto::RefKind>(m.kind);
+        if (kind == proto::RefKind::Enemy || kind == proto::RefKind::Dyn) {
+            if (g_cmd_due.size() < 256) g_cmd_due.push_back({m.t_ms, std::vector<std::uint8_t>(msg.begin(), msg.end())});
             else ++g_ev_absent;
+        } else {
+            queue_event(msg);
         }
         break;
     }
@@ -712,6 +834,7 @@ void recheck(std::int64_t now_us) {
         const bool pawn = e && *(reinterpret_cast<const std::uint8_t*>(e) + *pawn_off) & 1;
         if (ai) {
             ++g_leaks;
+            guard::mark_exec(e, false); // fail closed: an AI that ran is stopped with the whole actor
             freeze(e);
         }
         g_pawn_activated += pawn; // informative: vanilla sets bActivated on spawn (presentation only)
@@ -758,10 +881,12 @@ void note_host_time(std::uint32_t host_ms, std::int64_t now_us) {
     else g_offset_ms -= 0.02; // drift allowance
 }
 
+double render_host_ms(std::int64_t now_us) { return g_offset_known ? static_cast<double>(now_us) / 1000.0 + g_offset_ms - 100.0 : 0.0; }
+
 void present_motion(std::int64_t now_us) {
     const auto* s = core::schema::script();
     if (!s || !g_offset_known) return;
-    const double render = static_cast<double>(now_us) / 1000.0 + g_offset_ms - 100.0;
+    const double render = render_host_ms(now_us);
     // a position write costs ~80 µs (actor + Spine children transform update, net-facts「敌人位置插值」):
     // enemies farther than 3000 UU from the local lily (off-screen) are written at ~10 Hz only
     static std::uint32_t frame = 0;
@@ -793,7 +918,33 @@ void present_motion(std::int64_t now_us) {
             p = {b->x, b->y, b->z};
         }
         if (n == g_trace_name && g_trace.size() < 240) g_trace.push_back(p.y); // Dev: per-frame presented Y
-        if (auto at = core::location(e); at && (std::fabs(at->x - p.x) + std::fabs(at->y - p.y) + std::fabs(at->z - p.z)) > 0.2f) {
+        // ADR 0006 position ownership: while a replayed command runs, its vanilla Move timeline moves the enemy
+        // and the snapshot only corrects a large error; otherwise the interpolated position is written and its
+        // velocity is fed to CharacterMovement (the vanilla animation state machine picks idle / walk / turn)
+        static reflect::PropRef zc_queue, cq_array, ch_move, mv_velocity;
+        if (!cq_array.ok()) {
+            zc_queue = reflect::Resolver("ZenithCharacter", reflect::find_class(L"/Script/Zenith.ZenithCharacter")).prop(L"CommandQueueComponent", reflect::Kind::Object);
+            cq_array = reflect::Resolver("CommandQueueComponent", reflect::find_class(L"/Script/Zenith.CommandQueueComponent")).prop(L"CommandQueue", reflect::Kind::Array);
+            ch_move = reflect::Resolver("Character", reflect::find_class(L"/Script/Engine.Character")).prop(L"CharacterMovement", reflect::Kind::Object);
+            mv_velocity = reflect::Resolver("MovementComponent", reflect::find_class(L"/Script/Engine.MovementComponent")).prop(L"Velocity", reflect::Kind::Struct, 12);
+        }
+        if (!t.queue.get() && zc_queue.ok()) t.queue = ObjHandle::of(zc_queue.object(e));
+        if (!t.move.get() && ch_move.ok()) t.move = ObjHandle::of(ch_move.object(e));
+        auto* queue = t.queue.get();
+        const bool busy = queue && cq_array.ok() && cq_array.at<reflect::RawArray>(queue)->num > 0;
+        const auto at = core::location(e);
+        if (busy && at && std::fabs(at->y - p.y) + std::fabs(at->z - p.z) <= kCmdCorrectUU) {
+            t.lus = 0;
+            continue;
+        }
+        if (auto* mv = t.move.get(); mv && mv_velocity.ok() && !busy) {
+            const double dt = t.lus ? (now_us - t.lus) / 1e6 : 0.0;
+            core::Vec3 v{0, 0, 0};
+            if (dt > 0.001 && dt < 0.25) v = {static_cast<float>((p.x - t.lx) / dt), static_cast<float>((p.y - t.ly) / dt), static_cast<float>((p.z - t.lz) / dt)};
+            *mv_velocity.at<core::Vec3>(mv) = v;
+        }
+        t.lx = p.x, t.ly = p.y, t.lz = p.z, t.lus = now_us;
+        if (at && (std::fabs(at->x - p.x) + std::fabs(at->y - p.y) + std::fabs(at->z - p.z)) > 0.2f) {
             reflect::Frame tp(s->actor_teleport);
             tp.arg(0, p).arg_bool(1, false).arg_bool(3, false); // TeleportPhysics resets every component's physics state (Spine procedural mesh) → ~80 µs; plain move
             const auto w0 = clock::now_us();
@@ -817,6 +968,7 @@ void tick(std::int64_t now_us) {
     auto t3 = clock::now_us();
     h_input.add(static_cast<double>(t3 - t2));
     recheck(now_us);
+    run_due_cmds(now_us);
     retry_events(now_us);
     if (t2 - t1 + clock::now_us() - t3 > 50) h_slow.add(static_cast<double>(t2 - t1 + clock::now_us() - t3));
 }
@@ -839,6 +991,8 @@ void stop() {
     g_ring.reset();
     g_names.clear();
     g_act_last.clear();
+    g_cmd_last.clear(), g_cmd_due.clear();
+    commands::clear_suppressed();
     g_ev_retry.clear(), g_ab_live.clear(), g_fx_live.clear();
     fx::client_disable();
     reset_spirits();
@@ -948,6 +1102,9 @@ void set_hidden(ue::UObject* a, bool hidden) {
 } // namespace
 
 void present_spirits(const ClientCtx& c) {
+    // ADR 0006: spirits are derived by the lily copies' own replayed summon commands; the P6 spirit copies
+    // (and the sp section) are retired — deleted in P7-5
+    if (constexpr bool kRetired = true; kRetired) return;
     const auto* s = core::schema::script();
     if (!s || !g_seat) return;
     if (!g_set_collision.ok()) {
@@ -1055,7 +1212,9 @@ ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id) {
 }
 
 std::string describe_events() {
-    return std::format("events(client): hitReacts={} spirits={} spawned={} failed={} retryQueue={} retried={} absent={} fxBad={} soundBad={} soundFar={} stopMissed={} live abilities={} fx={}\n",
+    return std::format("cmds(client): due={} bad={} owners={} copySnaps={} copyBlends={}\n", g_cmd_due.size(), g_cmd_bad, g_cmd_last.size(), g_copy_snaps, g_copy_blends) +
+           commands::describe() +
+           std::format("events(client): hitReacts={} spirits={} spawned={} failed={} retryQueue={} retried={} absent={} fxBad={} soundBad={} soundFar={} stopMissed={} live abilities={} fx={}\n",
                        g_hit_reacts, g_spirits.size(), g_spirit_spawned, g_spirit_failed, g_ev_retry.size(), g_ev_retried, g_ev_absent, g_fx_bad, g_snd_bad, g_snd_far, g_stop_missed, g_ab_live.size(),
                        g_fx_live.size());
 }

@@ -220,6 +220,29 @@ bool decode(std::span<const std::uint8_t> in, ActStop& m) {
     m.reason = r.u8();
     return r.done() && kind_ok(m.kind) && m.reason < 16;
 }
+std::size_t encode(const Cmd& m, std::span<std::uint8_t> out) {
+    auto w = start(out, Msg::Cmd);
+    w.u8(m.kind);
+    w.u16(m.net_id);
+    w.u32(m.seq);
+    w.u32(m.t_ms);
+    w.u16(m.cls);
+    w.u8(m.dir);
+    w.u8(m.cmd);
+    return done(w);
+}
+bool decode(std::span<const std::uint8_t> in, Cmd& m) {
+    Reader r(in);
+    if (!open(r, Msg::Cmd)) return false;
+    m.kind = r.u8();
+    m.net_id = r.u16();
+    m.seq = r.u32();
+    m.t_ms = r.u32();
+    m.cls = r.u16();
+    m.dir = r.u8();
+    m.cmd = r.u8();
+    return r.done() && kind_ok(m.kind) && m.cls != 0 && m.dir <= kCmdDirMax && m.cmd <= kCmdTypeMax;
+}
 bool decode(std::span<const std::uint8_t> in, Json& m) {
     Reader r(in);
     const auto t = r.u8();

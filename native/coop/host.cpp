@@ -7,6 +7,7 @@
 #include "coop/host.h"
 
 #include "coop/ability.h"
+#include "coop/commands.h"
 #include "coop/fx.h"
 #include "coop/entity.h"
 #include "coop/maps.h"
@@ -25,7 +26,10 @@
 #include "engine/registry.h"
 #include "engine/world.h"
 
+#include "input/pad_state.h"
 #include "input/virtual_pad.h"
+
+#include "engine/binary_checks.h"
 
 #include "net/protocol.h"
 #include "net/snapshot.h"
@@ -137,6 +141,14 @@ void lily_row(std::uint16_t key, ue::UObject* pawn, const core::schema::Script& 
     }
     row->skin = static_cast<std::uint16_t>(std::max(0, core::skin::current(pawn)));
     if (const auto* bp = core::schema::blueprint()) track0(bp->lily_spine.object(pawn), *row, s);
+    // ADR 0006: the seat's live input drives the client copies' vanilla pipeline (locomotion, holds)
+    static const auto off = binary_checks::offset("ZenithInputComponent.InputSnapshot");
+    if (auto* ic = off ? s.zc_input.object(pawn) : nullptr) {
+        const auto& in = *reinterpret_cast<const input::InputSnapshot*>(reinterpret_cast<const std::uint8_t*>(ic) + *off);
+        row->ix = static_cast<std::int8_t>(std::clamp(std::lround(in.input_x * 100), -100l, 100l));
+        row->iy = static_cast<std::int8_t>(std::clamp(std::lround(in.input_y * 100), -100l, 100l));
+        row->iraw = static_cast<std::uint16_t>(in.raw & input::kCommandMask);
+    }
 }
 
 // the enemy spine component is cached per enemy handle — invalidated when the handle dies
@@ -358,6 +370,41 @@ void send_acts() {
         send_to(*r, act, g_acts_sent);
     }
     g_pending.clear();
+}
+
+// Command channel (ADR 0006): command starts of replicated actors, flushed before the snapshot of the frame.
+// Spirit commands are not sent: the client's copy derives them from the summoner's replayed command.
+struct CmdEv {
+    ObjHandle owner, cls;
+    commands::Start s;
+    std::uint32_t t_ms = 0;
+};
+std::vector<CmdEv> g_cmd_pending;
+std::unordered_map<std::uint32_t, std::uint32_t> g_cmd_seq; // ref key → last cmd seq
+std::uint64_t g_cmds_sent = 0, g_cmds_dropped = 0, g_cmds_noref = 0, g_cmds_spirit = 0;
+
+void on_cmd(const commands::Start& s) {
+    if (g_peers.empty()) return;
+    if (g_cmd_pending.size() >= 128) return void(++g_cmds_dropped);
+    g_cmd_pending.push_back({ObjHandle::of(s.owner), ObjHandle::of(s.cls), s, static_cast<std::uint32_t>(clock::now_us() / 1000)});
+}
+
+void send_cmds() {
+    for (auto& e : g_cmd_pending) {
+        const auto r = e.cls.get() ? ref_of(e.owner.get()) : std::nullopt;
+        if (!r) {
+            ++g_cmds_noref;
+            continue;
+        }
+        if (r->kind == proto::RefKind::Spirit) {
+            ++g_cmds_spirit;
+            continue;
+        }
+        proto::Cmd m{static_cast<std::uint8_t>(r->kind), r->id, ++g_cmd_seq[ref_key(*r)], e.t_ms, name(e.s.path), e.s.dir, e.s.cmd};
+        if (!m.cls || m.cmd > proto::kCmdTypeMax || m.dir > proto::kCmdDirMax) continue;
+        send_to(*r, m, g_cmds_sent);
+    }
+    g_cmd_pending.clear();
 }
 
 // FX / sound / ability-stop events (coop/fx detours, game thread) queued per frame, flushed after the acts
@@ -611,13 +658,11 @@ void tick(std::int64_t now_us) {
             p.stalled = true;
         }
     capture(now_us);
-    ability::host_enable(on_launch);
-    fx::host_enable({on_fx, on_deactivate, on_sound, on_ability_stop});
+    commands::host_enable(on_cmd); // ADR 0006: decisions only; the P6 product channels (act / fx / sound / stop) are off
     refresh_lily_pawns();
     party::transit::set_stay([](std::int64_t seat) { return maps::slot_of_seat(seat) > 0; });
     maps::tick(now_us);
-    send_acts();
-    send_events();
+    send_cmds();
     send_snapshots();
 }
 
@@ -627,6 +672,8 @@ void stop() {
     for (auto& [k, slot] : g_parked) party::leave(slot);
     ability::host_disable();
     fx::host_disable();
+    commands::host_disable();
+    g_cmd_pending.clear(), g_cmd_seq.clear();
     reset_spirits();
     g_fx_pending.clear(), g_snd_pending.clear(), g_stop_pending.clear(), g_deact_pending.clear(), g_fx_live.clear(), g_ab_live.clear();
     party::transit::set_stay(nullptr);
@@ -657,7 +704,7 @@ std::string describe() {
     std::string out = std::format("host: peers={} parked={} names={} epoch={} actsSent={} actsDropped={}\n", g_peers.size(), g_parked.size(), g_names.size(), g_epoch,
                                   g_acts_sent, g_acts_dropped) +
                       std::format("events: fx={} fxStops={} sounds={} abilityStops={} dropped={} noOwner={} live fx={} abilities={}\n", g_fx_sent, g_fx_stops_sent, g_snd_sent, g_ab_stops_sent, g_ev_dropped, g_ev_noref, g_fx_live.size(), g_ab_live.size()) +
-                      ability::describe() + fx::describe();
+                      std::format("cmds: sent={} dropped={} noOwner={} spiritSkipped={}\n", g_cmds_sent, g_cmds_dropped, g_cmds_noref, g_cmds_spirit) + commands::describe();
     for (auto* a : adapters()) out += a->describe();
     out += maps::describe();
     for (const auto& [id, p] : g_peers)

@@ -143,6 +143,20 @@ TEST_MAIN({
         n = encode(as, mb);
         ActStop as2;
         CHECK(n && decode(std::span(mb.data(), n), as2) && as2.seq == 12 && as2.kind == 3);
+        Cmd cm{3, 2, 41, 123456, 17, 0, 3};
+        n = encode(cm, mb);
+        Cmd cm2;
+        CHECK(n && decode(std::span(mb.data(), n), cm2) && cm2.seq == 41 && cm2.t_ms == 123456 && cm2.cls == 17 && cm2.cmd == 3 && cm2.kind == 3);
+        for (std::size_t k = 0; k < n; ++k) CHECK(!decode(std::span(mb.data(), k), cm2));
+        cm.cmd = 9; // INTERACT never travels
+        n = encode(cm, mb);
+        CHECK(!decode(std::span(mb.data(), n), cm2));
+        cm.cmd = 3, cm.cls = 0; // no class
+        n = encode(cm, mb);
+        CHECK(!decode(std::span(mb.data(), n), cm2));
+        cm.cls = 17, cm.kind = 9; // unknown owner kind
+        n = encode(cm, mb);
+        CHECK(!decode(std::span(mb.data(), n), cm2));
         Snd sd{1, 4, 8, 1};
         n = encode(sd, mb);
         Snd sd2;

@@ -123,6 +123,30 @@
       "source": "[E-IDA] v1 data/RVA.json（IDA 2026-10-14）",
       "note": "actor tick 写入原语汇点"
     },
+    "GuardEffectApply": {
+      "rva": "0x00D3BCB0",
+      "prefix": "4053565741564881EC68010000",
+      "signature": "void UAbilityEffectComponent::OnApplyEffect(this, AActor* From, AActor* To, const FHitInfos& HitInfos) [BlueprintNativeEvent thunk → ProcessEvent]",
+      "owner": "guard",
+      "source": "[E-IDA] v2 2026-10-28：FindFunctionChecked(qword_144466F20) + ProcessEvent 的 thunk；唯一代码调用者 = 命中条目效果队列 AAbility::AdvanceEffectQueue 0xCBB110（阵营 / 目标类型过滤 + 可施加判定 0xC9DEE0 之后）",
+      "note": "ADR 0006 结算边界：Client 上只放行表现类效果（AE_HitStop / CameraShake / ShakeTarget / ForceFeedback 及其子类），其余（伤害 / 击退 / 硬直 / 治疗 / 回 MP / 体力）不施加；fail closed：未知效果类按结算类拦截"
+    },
+    "GuardEffectFinalize": {
+      "rva": "0x00D3BD40",
+      "prefix": "4053565741564881EC68010000",
+      "signature": "void UAbilityEffectComponent::OnFinalizeEffect(this, AActor* From, AActor* To, const FHitInfos& HitInfos) [BlueprintNativeEvent thunk → ProcessEvent]",
+      "owner": "guard",
+      "source": "[E-IDA] v2 2026-10-28：FindFunctionChecked(qword_144466F28) 的 thunk，与 OnApplyEffect thunk 同形；唯一代码调用者 0xCA6E40（效果收尾循环）",
+      "note": "与 GuardEffectApply 同一分类规则"
+    },
+    "GuardDeathStart": {
+      "rva": "0x00CBD9A0",
+      "prefix": "40574883EC2080B99002000000488BF9",
+      "signature": "void UDeathComponent::StartDeathProcess(this)",
+      "owner": "guard",
+      "source": "[E-IDA] v2 2026-10-28：守卫 +656（已死）→ 黑板 / 效用 / 导航收尾 → 按死亡样式 +176 分派（0xCA6410 / 0xCA6980 / 0xCA5FE0 / 0xCA5AD0）→ OnStartDeath 广播 +624；调用者 = ForceDeath（exec 0xD54C70 → thunk 0xCA76E0；另 0xDA0660）与 OnReceiveDeadEvent 实现 0xCB2740（HP 死亡委托，exec 0xD56100）",
+      "note": "Client：guard 标记的呈现对象（敌人 / 动态敌人 / 莉莉副本）不跑原版死亡（掉落、出生点清除、销毁都在其后），死亡只由快照呈现"
+    },
     "AbilityLaunchFromDesc": {
       "rva": "0x00CAD0C0",
       "prefix": "48895C2408488974241048897C241855488D6C24B04881EC",
@@ -130,6 +154,22 @@
       "owner": "coop/host/events",
       "source": "[E-IDA][E-实测] v1 data/RVA.json（IDA 2026-10-14）",
       "note": "FAbilityTimeline::Tick(0xCBABE0) 直调，不经 ProcessEvent；pre 取参"
+    },
+    "CommandProcessStart": {
+      "rva": "0x00CB4F00",
+      "prefix": "488BC4555657488BEC4881EC800000000F2970B8",
+      "signature": "char UCommandQueueComponent::ProcessCommand(this, ?, UCommand*)",
+      "owner": "coop/commands",
+      "source": "[E-IDA] v2 2026-10-28：队列处理 0xCC2BA0 与自身（覆盖分支）调用；首次处理（UCommand.CurrentResult == NONE）记日志 \"START command : \"、广播 OnStartCommand(+416)、移除同 FrameID 命令，再经 0xD24D70 推进。UpdateCommands exec 0xD513D0 → 0xCC3970 → 0xCC2BA0；AddNewImmediateCommand exec 0xD4FC80 → 0xC97C60",
+      "note": "ADR 0006 决策入口：Host 在启动沿捕获网络对象的命令（类 / Dir / Cmd），Client 以原版 AddNewImmediateCommand 重放"
+    },
+    "CommandTryAddFromInput": {
+      "rva": "0x00CC2520",
+      "prefix": "48896C2418488974242041564883EC208BB140010000",
+      "signature": "int32 UCommandQueueComponent::TryAddCommands(this, const FInputSnapshot&, const UCommandSet*)",
+      "owner": "coop/commands",
+      "source": "[E-IDA] v2 2026-10-28：FrameID (+320 + 1) % 10000 → 对 CommandSet 每条 FCommandSettings（136 B）调 TryAddCommandsFromSettings 实现 0xCC2840；代码调用者 = ZenithCharacter::Tick 0xCF3740、另一 Pawn Tick 0xCEF190、exec 0xD50F60",
+      "note": "ADR 0006：Client 上莉莉副本的“输入 → 命令”在此被抑制（返回 −1），命令只来自 Host 的 Cmd；输入仍驱动移动与进行中命令的按住语义"
     },
     "SpawnFXImpl": {
       "rva": "0x007D0600",

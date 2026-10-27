@@ -5,7 +5,7 @@
 > 只有在全部完成、或某阶段门槛经充分尝试仍无法达成（写明尝试、证据、剩余选项）时才报告 goal 完成或 blocked。需要我决定的产品问题：先按需求树已有定案与 fail closed 默认继续其他工作，把问题集中列出，不要停下等。
 > **进度以 §7 的勾选表为准**：每完成一项就在该行打勾并补「日期 · 证据（kb 节 / 截图 / 命令输出）· commit」；下面「当前进行中」一行同步更新。goal 完成 = §7 全部打勾。
 
-**当前进行中**：P7 Client 呈现方法论重构（2026-10-28 追加，ADR 0006 / 需求树 §7.21）—— P7-0 调研定案已完成，下一步 P7-1 结算边界枚举与补全。发布包暂不重打（P6 协议 3 未发布；P7 完成后协议 4 一并出包）。
+**当前进行中**：P7 Client 呈现方法论重构（2026-10-28 追加，ADR 0006 / 需求树 §7.21）—— P7-0 ～ P7-4 已完成，下一步 P7-5 删除 P6 加法通道。发布包暂不重打（P6 协议 3 未发布；P7 完成后协议 4 一并出包）。
 **需要用户**：①若要补测 G3 门 / 宝箱 / Boss 窗口专项，请提供一个入口图里有未开门 / 宝箱、可进入未打 Boss 的存档放到 Host2/Client2（当前按同通路代证 + Boss fail closed 继续）；（P2 自行定案已记 net-facts：本地 P1 预测 + >150 UU 回拉；Client 离开会话回标题；可破坏物 Client 只隐藏不回放破坏）
 
 ## 0. 恢复上下文（每轮先读）
@@ -178,10 +178,10 @@
 
 ### P7 Client 呈现方法论重构（2026-10-28 追加）
 - [x] P7-0 调研定案：IDA 定位 CommandQueue 决策管线、单实例 spike（放开执行层后注入命令得到完整原版表现）、ADR 0006 + 需求树 §7.21 + 架构 §7.5 / §8 + engine-facts / net-facts —— 2026-10-28 · 证据：engine-facts「CommandQueue 决策管线」、net-facts「P7 调研 spike」、docs/adr/0006-client-vanilla-execution.md · commit 本提交
-- [ ] P7-1 结算边界枚举（IDA 表）+ 命中效果按类拦截 + EL.json + 实测计数
-- [ ] P7-2 命令通道（Host 启动沿捕获 → Cmd → Client 原版 AddNewImmediateCommand 重放；协议 4；CTest）
-- [ ] P7-3 敌人接管改为只停决策源（组件不冻结、原语闸只拦 AI、位置归属、动画兜底、enemy_dyn）
-- [ ] P7-4 莉莉副本走原版管线（回带输入 + 本地命令抑制 + Host 命令 + 精灵派生 + 位置纠正）
+- [x] P7-1 结算边界枚举（IDA 表）+ 命中效果按类拦截 + EL.json + 实测计数 —— 2026-10-28 · 证据：net-facts「P7 实施」（汇点表；effect blocked 35 / passed 20、deathBlocked 0、预检 5 项 ok） · commit 本提交
+- [x] P7-2 命令通道（Host 启动沿捕获 → Cmd → Client 原版 AddNewImmediateCommand 重放；协议 4；CTest） —— 2026-10-28 · 证据：net-facts「P7 实施」（cmds 162/162、rejected 0；test_net_codec Cmd） · commit 本提交
+- [x] P7-3 敌人接管改为只停决策源（组件不冻结、原语闸只拦 AI、位置归属、动画兜底、enemy_dyn） —— 2026-10-28 · 证据：net-facts「P7 实施」（aiLeaks 0、tickKept；enemy_dyn 共用 present_enemy / take） · commit 本提交
+- [x] P7-4 莉莉副本走原版管线（回带输入 + 本地命令抑制 + Host 命令 + 精灵派生 + 位置纠正） —— 2026-10-28 · 证据：net-facts「P7 实施」（p7b 截图；copySnaps 3 / blends 275；suppressed 9534） · commit 本提交
 - [ ] P7-5 删除加法通道（Act / Fx / FxStop / Snd / ActStop、对应钩子与 EL.json、本地抑制、精灵副本、寿命上限）
 - [ ] P7 门槛：Host2/Client2(+Client3) 并排对照 + 计数对账 + 结算泄漏 0 + G1 + 帧时间，写入 net-facts
 - [ ] P7 收尾：README 已知限制 + 需求树 + 版本升级 + 重打 Shipping / Dev 包（零 .lua）

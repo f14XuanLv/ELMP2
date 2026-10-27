@@ -152,3 +152,23 @@
 - **轮询观察**：P1 连按 ATTACK 时 P1 的 `CommandQueue` 依次出现 `CACS_s5060_Combo_LV3_C/3`（按一次出现一次，约 44 帧后清空）；同期 24 只敌人中未进入战斗的（`idle` / `idle_peace`）队列始终为空。
 - **测试辅助（已登记、已清理）**：UEBridge eval 轮询 / 注入脚本（`%TEMP%\elmp_cmdprobe.lua`、`elmp_cmdinject.lua`、`elmp_lilyinject.lua`、`elmp_velprobe*.lua`）；`elmp spawn 101` 已 `despawn`；对 Slime18 的 tick 改写只在本次运行内。Host P1 中途在 church_07 死亡回椅子，`GameSlot_0.sav` / `GameSlot_backup_0_2.sav` / `save_index.json` 被改写，已从测试前备份还原并逐文件哈希一致。
 - **踩坑**：窗口最小化期间 Host2 曾处于 `IsGamePaused=true`（P1 站在 church_07 门盒里也不切图），eval `GameplayStatics:SetGamePaused(world, false)` 后立即切图。原因未查（疑似失焦暂停或死亡流程界面），以后门盒不触发时先查暂停态。
+
+## P7 实施（v2 2026-10-28；ADR 0006；Host2 / Client2，church_07）
+- **结算边界（P7-1）** `[E-IDA]`：命中效果唯一施加点 = `UAbilityEffectComponent::OnApplyEffect` 的 thunk `0xD3BCB0`（FindFunctionChecked + ProcessEvent），唯一代码调用者是命中条目效果队列 `0xCBB110`（阵营 / 目标类型过滤与可施加判定 `0xC9DEE0` 之后）；收尾 `OnFinalizeEffect` thunk `0xD3BD40`（调用者 `0xCA6E40`）。死亡唯一起点 `UDeathComponent::StartDeathProcess` `0xCBD9A0`（守卫 +656；调用者 = ForceDeath thunk `0xCA76E0` 与 HP 死亡委托处理 `0xCB2740`），掉落 `DropComponent::OnDeath` / 出生点清除都在其后。guard 新增：效果只放行 `AE_HitStop / CameraShake / ShakeTarget / ForceFeedback` 及子类，其余（含未知类）不施加并计数；guard 标记对象不跑死亡。`EL.json` 新增 `GuardEffectApply / GuardEffectFinalize / GuardDeathStart / CommandProcessStart / CommandTryAddFromInput`，Host2 预检全部 prefix ok。
+- **结算汇点表**（Client 放开执行层后可达）：
+  | 汇点 | 证据 | Client 处理 | 计数 |
+  |---|---|---|---|
+  | 命中效果（伤害 / 击退 / 硬直 / 治疗 / 回 MP / 体力） | `0xD3BCB0` / `0xD3BD40` `[E-IDA]` | 非表现类不施加 | `effect blocked / passed` |
+  | 直接伤害（接触伤害、陷阱） | `DoDamage` `0xCA0380` | 拦截（已有） | `damage blocked` |
+  | 技能伤害写 HP | `0xCB07E0`（AE_Damage 内部） | 拦截（已有，现被上一行先挡） | `skill blocked` |
+  | 死亡 → 掉落 / 清除 / 销毁 | `0xCBD9A0` `[E-IDA]` | 标记对象不跑 | `deathBlocked` |
+  | 存档 | `SaveGame / SaveGameAsync` | 拒绝（已有） | `saveBlocked` |
+  | 交互 / 休息 / 菜单类命令 | Cmd 类型 9–12 | 不下发、不重放；副本本地命令生成被抑制 | 解码拒绝 |
+  | AI 决策 | `0xCCD8F0` | 拦截（已有）+ tick / 碰撞原语闸只拦 AI 控制器 | `aiActivateBlocked`、`aiLeaks` |
+- **命令通道（P7-2）**：Host 原生 detour 单命令处理 `0xCB4F00` 的启动沿（`UCommand.CurrentResult == NONE`），按 Ref 发 `Cmd{kind, id, seq, t_ms, 类, dir, cmd}`（协议 4），精灵命令不发；Client 敌人按插值时刻（Host 时间 − 100 ms）、莉莉副本到达即执行原版 `AddNewImmediateCommand`。CTest `test_net_codec` 增 Cmd 往返 / 截断 / INTERACT 拒绝 / 空类 / 未知 kind。快照位掩码改为变长（行字段可到 31 个）。
+- **敌人接管（P7-3）**：不再逐组件关 tick；接管时开 Actor + 全部组件 tick 与世界碰撞，guard 拒绝标记执行体的“关 tick”（原版 SetPaused 会让休眠敌人采样不到命令，`tickKept`）；有进行中命令时原版 Move 移动、偏差 > 300 UU 才校正，否则写插值位置并把速度写进 `CharacterMovement.Velocity`；活敌人的动画由原版产生，死后才冻结并套 Host 死亡姿态。
+- **莉莉副本（P7-4）**：快照莉莉行带座位实时输入（`ix / iy / iraw`），Client 副本经虚拟手柄喂原版管线；`TryAddCommands`（`0xCC2520`）对副本返回 −1（`suppressed`）；位置 >240 直跳、40–240 收拢 15%；精灵由副本自己的召唤命令派生（P6 精灵副本停用）；P6 本地特效抑制停用。
+- **实测** `[E-实测]`（Host P1 在史莱姆群旁连按 ATTACK，客人座位站在旁边）：
+  - 首轮：Host `cmds sent=34 spiritSkipped=10`，Client `replayed=34 rejected=0`；截图 `p7b-client.png` / `p7b-host.png`：Client 上 Host P1 副本走原版 `summon` 动作并出现精灵粉色攻击特效，与 Host 同步。
+  - 12 击窗口：`cmds sent=162`，Client `replayed=162 rejected=0`、`due=0 bad=0`、命令所属对象 8 个；guard `effect blocked=35 passed=20`、`damage blocked=18`、`deathBlocked=0`、`aiLeaks=0`、`saveBlocked=0`；副本位置 `copySnaps=3 copyBlends=275`；副本输入命令抑制 9534 次调用。
+  - 帧时间（`elmp perf`，60 FPS）：Host `frame.elmp_us` P99 469 µs；Client P99 344 µs（motion P99 102、单次位置写 P99 161）；两侧 `frame.interval_us` P99 16.8 ms（放开执行层后游戏整体帧仍满 60）。`replay_us` P99 3.7 ms 为首次加载 CommandAction 类（之后按路径缓存）。

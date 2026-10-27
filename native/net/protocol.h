@@ -44,6 +44,7 @@ enum class Msg : std::uint8_t {
     FxStop = 11,    // host → client: DeactivateSystem of a replicated SpawnFX result
     Snd = 12,       // host → client: sound timeline event on a replicated actor
     ActStop = 13,   // host → client: AAbility::Stop of a replicated launch
+    Cmd = 14,       // host → client: CommandQueue command start of a replicated actor (ADR 0006)
 };
 
 // Owner of a replicated event (P6): which presented actor on the client it belongs to.
@@ -95,6 +96,19 @@ struct ActStop {
     std::uint32_t seq = 0; // the Act.seq of that owner
     std::uint8_t reason = 0; // EAbilityStopReason
 };
+// ADR 0006 decision replication: the host's command start, replayed on the client through the vanilla
+// AddNewImmediateCommand(dir, cmd, class). Combat / movement command types only (ECommandInputTypes 0..8;
+// INTERACT / MAINMENU / PAUSE / MINIMAP never travel).
+inline constexpr std::uint8_t kCmdTypeMax = 8, kCmdDirMax = 31;
+struct Cmd {
+    std::uint8_t kind = 1;   // RefKind
+    std::uint16_t net_id = 0;
+    std::uint32_t seq = 0;   // per owner, monotonic
+    std::uint32_t t_ms = 0;  // host clock at the start (snapshot time base)
+    std::uint16_t cls = 0;   // CommandAction class path name id
+    std::uint8_t dir = 0;    // EDirectionInputTypes
+    std::uint8_t cmd = 0;    // ECommandInputTypes
+};
 struct Json { std::string text; };
 struct Control { std::uint8_t code = 0; std::string text; };
 inline constexpr std::uint8_t kControlBanner = 10; // host → client: mode status line (empty = clear)
@@ -114,6 +128,8 @@ bool decode(std::span<const std::uint8_t> in, Fx& m);
 bool decode(std::span<const std::uint8_t> in, FxStop& m);
 bool decode(std::span<const std::uint8_t> in, Snd& m);
 bool decode(std::span<const std::uint8_t> in, ActStop& m);
+std::size_t encode(const Cmd& m, std::span<std::uint8_t> out);
+bool decode(std::span<const std::uint8_t> in, Cmd& m);
 
 Msg type_of(std::span<const std::uint8_t> in); // 0 cast when empty
 bool decode(std::span<const std::uint8_t> in, Welcome& m);

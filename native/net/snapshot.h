@@ -27,9 +27,12 @@ struct LilyRow { // key = seat slot (1 = host P1)
     std::uint8_t loop = 0;
     std::uint16_t skin = 0;
     std::uint16_t map = 0; // name id of the map the seat is in
+    std::int8_t ix = 0, iy = 0; // ADR 0006: the seat's live input (axes −100..100, held command bits) for the
+    std::uint16_t iraw = 0;     // client copies' vanilla pipeline (commands themselves travel as Cmd)
     static constexpr auto fields() {
         return std::make_tuple(&LilyRow::x, &LilyRow::y, &LilyRow::z, &LilyRow::facing, &LilyRow::alive, &LilyRow::hp, &LilyRow::mhp, &LilyRow::mp, &LilyRow::mmp,
-                               &LilyRow::heals, &LilyRow::mheals, &LilyRow::anim, &LilyRow::t, &LilyRow::loop, &LilyRow::skin, &LilyRow::map);
+                               &LilyRow::heals, &LilyRow::mheals, &LilyRow::anim, &LilyRow::t, &LilyRow::loop, &LilyRow::skin, &LilyRow::map, &LilyRow::ix,
+                               &LilyRow::iy, &LilyRow::iraw);
     }
 };
 

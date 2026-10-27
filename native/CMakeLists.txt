@@ -84,6 +84,7 @@ set(ELMP_MOD_SOURCES
     sdk/sdk.cpp
     coop/client.cpp
     coop/ability.cpp
+    coop/commands.cpp
     coop/fx.cpp
     coop/entities/clearable.cpp
     coop/entities/enemy.cpp
