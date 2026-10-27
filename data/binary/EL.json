@@ -161,7 +161,23 @@
       "signature": "UFMODAudioComponent* UFMODBlueprintStatics::PlayEventAttached(UFMODEvent*, USceneComponent*, FName, FVector, EAttachLocation, bool bStopWhenAttachedToDestroyed, bool bAutoPlay, bool bAutoDestroy)",
       "owner": "coop/fx",
       "source": "[E-IDA] v2 2026-10-27：execPlayEventAttached 0x79AE70 直调",
-      "note": "只计数（附着 / 循环音效暂不复制）"
+      "note": "P7 重启：Host 同步对象的附着声音经 Snd（is2d=2）发出；Client 拦截呈现对象的本地附着声音"
+    },
+    "SpawnEmitterAttached": {
+      "rva": "0x025463A0",
+      "prefix": "4055535657415441554157488D6C24F0",
+      "signature": "UParticleSystemComponent* UGameplayStatics::SpawnEmitterAttached(UParticleSystem*, USceneComponent*, FName, FVector, FRotator, FVector Scale, EAttachLocation, bool bAutoDestroy, EPSCPoolMethod, bool bAutoActivate)",
+      "owner": "coop/fx",
+      "source": "[E-IDA] v2 2026-10-28：execSpawnEmitterAttached 0x29E08E0 直调",
+      "note": "P7 重启：蓝图直接粒子；Host 同步对象的经 FX 通道（flags bit3）发出，Client 隐藏呈现对象的本地发射"
+    },
+    "SpawnEmitterAtLocation": {
+      "rva": "0x02546230",
+      "prefix": "48895C241048896C24185648",
+      "signature": "UParticleSystemComponent* UGameplayStatics::SpawnEmitterAtLocation(const UObject* WorldContext, UParticleSystem*, FVector, FRotator, FVector Scale, bool bAutoDestroy, EPSCPoolMethod, bool bAutoActivate)",
+      "owner": "coop/fx",
+      "source": "[E-IDA] v2 2026-10-28：execSpawnEmitterAtLocation 0x29E0660 直调",
+      "note": "同上（位置换算为相对所属对象）"
     },
     "AbilityStop": {
       "rva": "0x00CBDB80",

@@ -48,6 +48,7 @@
 #include <memory>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace elmp::coop::client {
 
@@ -150,6 +151,8 @@ std::unordered_map<std::uint32_t, std::uint32_t> g_act_last; // kind << 16 | own
 metrics::Histogram& h_apply = metrics::histogram("coop.client.apply_us");
 metrics::Histogram& h_motion = metrics::histogram("coop.client.motion_us");
 metrics::Histogram& h_replay = metrics::histogram("coop.client.replay_us");
+metrics::Histogram& h_fx = metrics::histogram("coop.client.fx_us");
+metrics::Histogram& h_fx_emitter = metrics::histogram("coop.client.fx_emitter_us");
 std::int64_t g_replay_frame_us = 0; // replay time spent in the current frame (reset each tick)
 std::uint64_t g_replay_deferred = 0;
 metrics::Histogram& h_write = metrics::histogram("coop.client.motion_write_us");
@@ -499,6 +502,7 @@ struct RetryEv {
 std::deque<RetryEv> g_ev_retry;
 std::unordered_map<std::uint64_t, ObjHandle> g_ab_live;  // kind << 48 | id << 32 | act seq → replayed ability
 std::unordered_map<std::uint32_t, ObjHandle> g_fx_live;  // host FX seq → replayed PSC
+std::unordered_set<std::uint32_t> g_fx_deferred;         // FX seqs waiting for the next frame's replay budget
 std::string g_snd_last_bad; // last rejected sound (diagnostics)
 std::uint64_t g_ev_absent = 0, g_ev_retried = 0, g_snd_far = 0, g_fx_bad = 0, g_snd_bad = 0, g_stop_missed = 0;
 
@@ -558,8 +562,15 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
         if (!ps) return ++g_fx_bad, EvResult::Done;
         auto* owner = actor_of(m.kind, m.net_id);
         if (!owner) return EvResult::Retry;
+        // same per-frame replay budget as acts (defect ⑥); a stop for a deferred FX waits for it (g_fx_deferred)
+        if (g_replay_frame_us >= 400) return g_fx_deferred.insert(m.seq), ++g_replay_deferred, EvResult::Retry;
+        g_fx_deferred.erase(m.seq);
         std::string why;
-        if (auto* psc = fx::replay_spawn(owner, m, *ps, bone ? *bone : "", &why)) g_fx_live[m.seq] = ObjHandle::of(psc);
+        const auto f0 = clock::now_us();
+        auto* psc = fx::replay_spawn(owner, m, *ps, bone ? *bone : "", &why);
+        g_replay_frame_us += clock::now_us() - f0;
+        ((m.flags & 8) ? h_fx_emitter : h_fx).add(static_cast<double>(clock::now_us() - f0));
+        if (psc) g_fx_live[m.seq] = ObjHandle::of(psc);
         else if (++g_fx_bad <= 5) log::warn("coop: fx {} rejected: {}", *ps, why);
         if (g_fx_live.size() > 512) std::erase_if(g_fx_live, [](const auto& kv) { return !kv.second.get(); });
         return EvResult::Done;
@@ -568,7 +579,7 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
         proto::FxStop m;
         if (!proto::decode(msg, m)) return EvResult::Done;
         auto it = g_fx_live.find(m.seq);
-        if (it == g_fx_live.end()) return EvResult::Done; // never replayed here (other map / own seat / dropped)
+        if (it == g_fx_live.end()) return g_fx_deferred.count(m.seq) ? EvResult::Retry : EvResult::Done; // never replayed here (other map / own seat / dropped)
         fx::deactivate(it->second.get());
         g_fx_live.erase(it);
         return EvResult::Done;

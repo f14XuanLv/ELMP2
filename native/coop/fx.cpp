@@ -1,5 +1,6 @@
 #include "coop/fx.h"
 
+#include "core/player.h"
 #include "guard/guard.h"
 
 #include "engine/handle.h"
@@ -8,6 +9,7 @@
 #include "base/hook.h"
 #include "base/log.h"
 
+#include <cmath>
 #include <cstring>
 #include <format>
 #include <unordered_map>
@@ -152,6 +154,92 @@ UObject* __fastcall d_attached(UObject* ev, UObject* parent, std::uint64_t socke
     return o_attached(ev, parent, socket, at, rule, stop, play, destroy);
 }
 
+// ---- Blueprint particles outside SpawnFX: UGameplayStatics::SpawnEmitterAttached (0x25463A0) /
+// SpawnEmitterAtLocation (0x2546230) [E-IDA]. Callers [E-CUE --imports]: Lily command actions (CA_Guard,
+// CA_UseHeal), summon command actions (CAS_Dash, CAS_PileAttack, CACSummonEntry_Charge_Base, CA_s5060_Hook),
+// BP_SpiritCharacterBase, BP_CompanionFX_Base, anim notifies (PlayStep, SimulateLanding), world objects
+// (BP_Door, BP_Breakable_Base, BP_Interactable_Treasure, BP_SwitchHitbox, BP_HookPoint), ability hitboxes.
+// Sent through the FX channel with flags bit3 (emitter): xf = owner-relative location, rotation (quat),
+// scale; `sort` carries EAttachLocation; custom bone = AttachPointName. Ability-owned ones are skipped (the
+// client's replayed ability spawns its own).
+using EmAttachedFn = UObject*(__fastcall*)(UObject*, UObject*, std::uint64_t, const float*, const float*, const float*, std::uint8_t, bool, std::uint8_t, bool);
+using EmAtFn = UObject*(__fastcall*)(UObject*, UObject*, const float*, const float*, const float*, bool, std::uint8_t, bool);
+EmAttachedFn o_em_attached{};
+EmAtFn o_em_at{};
+bool g_em_ok = false;
+std::uint64_t g_cap_emitter = 0, g_local_emitter_blocked = 0;
+std::unordered_map<std::string, std::uint64_t> g_em_kinds; // Dev: captured emitters per particle @ owner class
+
+// the actor a world context / component belongs to (outer chain), nullptr for abilities and non-actors
+UObject* actor_owner(UObject* o) {
+    static ue::UClass* actor = reflect::find_class(L"/Script/Engine.Actor");
+    static ue::UClass* ability = reflect::find_class(L"/Script/Zenith.Ability");
+    for (int i = 0; o && actor && i < 8; ++i, o = o->GetOuterPrivate())
+        if (o->GetClassPrivate()->IsChildOf(actor)) return ability && o->GetClassPrivate()->IsChildOf(ability) ? nullptr : o;
+    return nullptr;
+}
+
+constexpr float kDeg = 3.14159265358979f / 180.0f;
+void rot_to_quat(const float* r, float* q) { // FRotator (pitch, yaw, roll) → FQuat (UE4.26 FRotator::Quaternion)
+    const float sp = std::sin(r[0] * kDeg / 2), cp = std::cos(r[0] * kDeg / 2), sy = std::sin(r[1] * kDeg / 2), cy = std::cos(r[1] * kDeg / 2),
+                sr = std::sin(r[2] * kDeg / 2), cr = std::cos(r[2] * kDeg / 2);
+    q[0] = cr * sp * sy - sr * cp * cy;
+    q[1] = -cr * sp * cy - sr * cp * sy;
+    q[2] = cr * cp * sy - sr * sp * cy;
+    q[3] = cr * cp * cy + sr * sp * sy;
+}
+void quat_to_rot(const float* q, float* r) { // FQuat::Rotator
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    const float test = z * x - w * y;
+    const float yaw = std::atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)) / kDeg;
+    if (test < -0.4999995f) r[0] = -90, r[1] = yaw, r[2] = -yaw - 2 * std::atan2(x, w) / kDeg;
+    else if (test > 0.4999995f) r[0] = 90, r[1] = yaw, r[2] = yaw - 2 * std::atan2(x, w) / kDeg;
+    else r[0] = std::asin(2 * test) / kDeg, r[1] = yaw, r[2] = std::atan2(-2 * (w * x + y * z), 1 - 2 * (x * x + y * y)) / kDeg;
+}
+
+void emitter_captured(UObject* owner, UObject* ps, UObject* psc, std::uint64_t point, const float* loc, const float* rot, const float* scale, std::uint8_t loc_type,
+                      std::uint8_t pool, bool attached) {
+    if (!ue::on_game_thread() || !owner || !ps) return;
+    if (g_host && g_sinks.spawn) {
+        Spawn s;
+        s.owner = owner;
+        s.ps = ps;
+        s.psc = psc;
+        float rel[3]{loc ? loc[0] : 0, loc ? loc[1] : 0, loc ? loc[2] : 0};
+        if (!attached || loc_type == 1) // world position → relative to the owner (map slots differ per process)
+            if (const auto at = core::location(owner)) rel[0] -= at->x, rel[1] -= at->y, rel[2] -= at->z;
+        if (rot) rot_to_quat(rot, &s.msg.xf[0]);
+        std::memcpy(&s.msg.xf[4], rel, 12);
+        if (scale) std::memcpy(&s.msg.xf[7], scale, 12);
+        s.msg.flags = 8 | (attached ? 1 : 0);
+        s.msg.sort = loc_type;
+        s.msg.pool = pool;
+        ue::FName n;
+        std::memcpy(&n, &point, sizeof(n));
+        s.custom_bone = attached ? ue::utf8(n) : std::string("None");
+        ++g_cap_emitter;
+        if (g_em_kinds.size() < 48) ++g_em_kinds[path_of(ps) + " @ " + log::utf8(ue::class_name_of(owner))];
+        g_sinks.spawn(s);
+    } else if (g_client && g_block && !g_replaying && guard::marked(owner) && ue::alive(psc)) {
+        ++g_local_emitter_blocked;
+        if (g_blocked_ps.size() < 32) ++g_blocked_ps[path_of(ps)];
+        hide_now(psc);
+    }
+}
+
+UObject* __fastcall d_em_attached(UObject* ps, UObject* comp, std::uint64_t point, const float* loc, const float* rot, const float* scale, std::uint8_t loc_type, bool destroy,
+                                  std::uint8_t pool, bool activate) {
+    auto* psc = o_em_attached(ps, comp, point, loc, rot, scale, loc_type, destroy, pool, activate);
+    if (comp) emitter_captured(actor_owner(comp), ps, psc, point, loc, rot, scale, loc_type, pool, true);
+    return psc;
+}
+
+UObject* __fastcall d_em_at(UObject* ctx, UObject* ps, const float* loc, const float* rot, const float* scale, bool destroy, std::uint8_t pool, bool activate) {
+    auto* psc = o_em_at(ctx, ps, loc, rot, scale, destroy, pool, activate);
+    emitter_captured(actor_owner(ctx), ps, psc, 0, loc, rot, scale, 0, pool, false);
+    return psc;
+}
+
 void __fastcall d_stop(UObject* ability, std::uint8_t reason) {
     if (g_host && g_sinks.ability_stop && ability && ue::on_game_thread()) ++g_cap_stop, g_sinks.ability_stop(ability, reason);
     o_stop(ability, reason);
@@ -164,6 +252,8 @@ void install() {
     g_deact_ok = hook::install_manifest("PSCDeactivateSystem", reinterpret_cast<void*>(&d_deactivate), reinterpret_cast<void**>(&o_deactivate));
     g_sound_ok = hook::install_manifest("FMODPlayEventAtLocation", reinterpret_cast<void*>(&d_sound), reinterpret_cast<void**>(&o_sound));
     hook::install_manifest("FMODPlayEventAttached", reinterpret_cast<void*>(&d_attached), reinterpret_cast<void**>(&o_attached));
+    g_em_ok = hook::install_manifest("SpawnEmitterAttached", reinterpret_cast<void*>(&d_em_attached), reinterpret_cast<void**>(&o_em_attached)) &
+              hook::install_manifest("SpawnEmitterAtLocation", reinterpret_cast<void*>(&d_em_at), reinterpret_cast<void**>(&o_em_at));
     g_stop_ok = hook::install_manifest("AbilityStop", reinterpret_cast<void*>(&d_stop), reinterpret_cast<void**>(&o_stop));
 }
 
@@ -221,6 +311,52 @@ ue::UObject* replay_spawn(ue::UObject* actor, const net::proto::Fx& m, const std
     static ue::UClass* ps_cls = reflect::find_class(L"/Script/Engine.ParticleSystem");
     auto* ps = asset(ps_path);
     if (!ps || !ps_cls || !ps->GetClassPrivate()->IsChildOf(ps_cls)) return fail("not a ParticleSystem");
+    if (m.flags & 8) { // blueprint emitter (SpawnEmitterAttached / AtLocation on the host)
+        static reflect::Resolver gs("GameplayStatics", reflect::find_class(L"/Script/Engine.GameplayStatics"));
+        static reflect::FuncRef em_attached = gs.func(L"SpawnEmitterAttached", 10), em_at = gs.func(L"SpawnEmitterAtLocation", 8);
+        static reflect::FuncRef root = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).func(L"K2_GetRootComponent", 0);
+        auto* cdo = reflect::find_object(L"/Script/Engine.Default__GameplayStatics");
+        if (!cdo || !em_attached.ok() || !em_at.ok() || !root.ok()) return fail("GameplayStatics emitters");
+        float rot[3];
+        quat_to_rot(&m.xf[0], rot);
+        float loc[3]{m.xf[4], m.xf[5], m.xf[6]};
+        const bool world_pos = !(m.flags & 1) || m.sort == 1;
+        if (world_pos) {
+            const auto at = core::location(actor);
+            if (!at) return fail("owner has no location");
+            loc[0] += at->x, loc[1] += at->y, loc[2] += at->z;
+        }
+        // a fresh component per spawn costs ~0.7 ms (measured: fx_emitter_us p50 701 vs SpawnFX 72); the world PSC pool
+        // (EPSCPoolMethod::AutoRelease) reuses finished ones — same lifetime as bAutoDestroy for a fire-and-forget emitter
+        const std::uint8_t pool = m.pool ? m.pool : std::uint8_t{1};
+        ue::UObject* psc = nullptr;
+        g_replaying = true;
+        if (m.flags & 1) {
+            reflect::Frame rc(root);
+            auto* rootc = rc.invoke(actor) ? rc.ret<ue::UObject*>() : nullptr;
+            if (ue::alive(rootc)) {
+                reflect::Frame f(em_attached);
+                f.arg(0, ps).arg(1, rootc).arg_name(2, custom_bone.empty() || custom_bone == "None" ? ue::FName() : ue::FName(log::wide(custom_bone).c_str(), RC::Unreal::FNAME_Add));
+                if (void* d = f.raw(3)) std::memcpy(d, loc, 12);
+                if (void* d = f.raw(4)) std::memcpy(d, rot, 12);
+                if (void* d = f.raw(5)) std::memcpy(d, &m.xf[7], 12);
+                f.arg(6, static_cast<std::uint8_t>(m.sort)).arg_bool(7, true).arg(8, pool).arg_bool(9, true);
+                if (f.invoke(cdo)) psc = f.ret<ue::UObject*>();
+            }
+        } else {
+            reflect::Frame f(em_at);
+            f.arg(0, actor).arg(1, ps);
+            if (void* d = f.raw(2)) std::memcpy(d, loc, 12);
+            if (void* d = f.raw(3)) std::memcpy(d, rot, 12);
+            if (void* d = f.raw(4)) std::memcpy(d, &m.xf[7], 12);
+            f.arg_bool(5, true).arg(6, pool).arg_bool(7, true);
+            if (f.invoke(cdo)) psc = f.ret<ue::UObject*>();
+        }
+        g_replaying = false;
+        if (!ue::alive(psc)) return fail("emitter invoke");
+        ++g_rep_spawn;
+        return psc;
+    }
     auto* comp = component_of(actor, L"/Script/SpineExtensionPlugin.BaseFXComponent");
     if (!ue::alive(comp)) return fail("no FX component");
     static reflect::FuncRef spawn = reflect::Resolver("BaseFXComponent", reflect::find_class(L"/Script/SpineExtensionPlugin.BaseFXComponent")).func(L"SpawnFX", 9);
@@ -310,10 +446,11 @@ bool stop_ability(ue::UObject* ability, std::uint8_t reason) {
 }
 
 std::string describe() {
-    std::string out = std::format("fx: hooks spawn={} deact={} sound={} stop={} | host captured spawn={} deact={} sound={} stop={} | client replayed spawn={} fail={} deact={} sound={} stop={} localBlocked fx={} sound={} | attachedSounds={}{}\n",
+    std::string out = std::format("fx: hooks spawn={} deact={} sound={} stop={} | host captured spawn={} deact={} sound={} stop={} | client replayed spawn={} fail={} deact={} sound={} stop={} localBlocked fx={} sound={} | attachedSounds={} | emitters hook={} captured={} localBlocked={}{}\n",
                                   g_spawn_ok, g_deact_ok, g_sound_ok, g_stop_ok, g_cap_spawn, g_cap_deact, g_cap_sound, g_cap_stop, g_rep_spawn, g_rep_fail, g_rep_deact, g_rep_sound,
-                                  g_rep_stop, g_local_blocked, g_local_sound_blocked, g_attached, g_block ? "" : " (blocking off)");
+                                  g_rep_stop, g_local_blocked, g_local_sound_blocked, g_attached, g_em_ok, g_cap_emitter, g_local_emitter_blocked, g_block ? "" : " (blocking off)");
     for (const auto& [p, n] : g_blocked_ps) out += std::format("  local {} x{}\n", p.substr(p.rfind('/') + 1), n);
+    for (const auto& [k, n] : g_em_kinds) out += std::format("  emitter {} x{}\n", k.substr(k.rfind('/') + 1), n);
     for (const auto& [k, n] : g_attached_kinds) out += std::format("  attached {} x{}\n", k.substr(k.rfind('/') + 1), n);
     return out;
 }
