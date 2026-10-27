@@ -418,7 +418,7 @@ ELMP 包零 Lua；对 Lua Mod 注入 C 函数；语法糖随 SDK 仓库。`elmp.
 5. **§7.2 远程座位 / Client 副本两列**随 P2 联机实现后补做；P1 签收只含本地 PX 列。（P2 已补，见 net-facts「§7.2 …」各节。）
 
 ### 7.17 P2 实施决定（2026-10-27）→ **[定，可复议]**
-1. **Client 本地 P1 = 预测体 + 回拉**：本地 P1 跑原版移动（手感零延迟），与 Host 座位偏差 > 150 UU 时传回 Host 位置；HP / MP / 治疗次数取 Host 值（属性直写，原版 HUD 显示）。
+1. **Client 本地 P1 = 预测体 + 回拉**：本地 P1 跑原版移动（手感零延迟），入座（Welcome）后与每次跟图就绪后的首个快照无条件传到 Host 座位一次（初始摆位，不受阈值限制），此后与 Host 座位偏差 > 150 UU 时传回 Host 位置；HP / MP / 治疗次数取 Host 值（属性直写，原版 HUD 显示）。
 2. **客人进程 P1 呈现模式**：P1 忽略全部闸门目标（门 / 椅子 / 交互物 / 触发器）并关拾取球；世界变化只来自 Host（worldobj / story / pickup / enemy_dyn 适配器）。
 3. **Client 离开会话回标题**（fail closed：本地世界是呈现态，不在其上继续单机）；从未落座的被拒绝 join 不回标题。
 4. **可破坏物 Client 只隐藏**，不回放原版破坏（会本地生成掉落）。
@@ -440,7 +440,9 @@ ELMP 包零 Lua；对 Lua Mod 注入 C 函数；语法糖随 SDK 仓库。`elmp.
 ### 7.19 P4 实施决定（2026-10-27）→ **[定，可复议]**
 1. **猎人选项**：`elmp hunter start [kills N] [time S] [grace S] [respawn S] [target boss|<mapId>] [progress mirror|preset]`，默认 kills 1 / time 0 / grace 15 / respawn 8 / target boss / mirror；猎人 = 开局时的全部座位（≤4），rest 闸门关、travel 开。
 2. **Boss 目标**：开局（及每次前台换图）记下前台图未清除的 Boss 出生点，任一变为已清除 → 速通胜。
-3. **指南针**：同图 unner <方向> <距离>，异图 unner in <mapId>；客人经 Control code 10 横幅显示。
+3. **指南针**：同图 
+unner <方向> <距离>，异图 
+unner in <mapId>；客人经 Control code 10 横幅显示。
 4. **SDK 身份**：调用方 = Mod 目录名，须带 elmp.json（elmpApi 1 + slots）；最多 16 个 SDK Mod；Lua 事件用 `ELMP_PollEvents` 轮询（JSON），C++ 用 `subscribe` 回调（帧泵末尾派发）。
 
 ---

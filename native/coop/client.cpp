@@ -74,6 +74,7 @@ struct Taken {
 };
 
 std::uint8_t g_seat = 0;
+bool g_seat_placed = false;
 std::uint16_t g_epoch = 0, g_host_map = 0;
 std::uint32_t g_latest = 0;
 std::string g_follow_tag;
@@ -347,12 +348,13 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
     for (auto& [k, c] : g_copies) c.seen = false;
     const auto* bp = core::schema::blueprint();
     for (const auto& row : f.l.view()) {
-        if (row.key == g_seat) { // own seat: the local P1 predicts; snap back when it drifts from the host seat
+        if (row.key == g_seat) { // own seat: the local P1 predicts; snap on first placement or when it drifts from the host seat
             auto* p1 = world::p1_pawn();
-            if (auto at = p1 ? core::location(p1) : std::nullopt; at && std::hypot(at->y - row.y, at->z - row.z) > kReconcileUU) {
+            if (auto at = p1 ? core::location(p1) : std::nullopt;
+                at && (!g_seat_placed || std::hypot(at->y - row.y, at->z - row.z) > kReconcileUU)) {
                 reflect::Frame tp(s.actor_teleport);
                 tp.arg(0, core::Vec3{row.x, row.y, row.z}).arg_bool(1, false).arg_bool(3, true);
-                if (tp.invoke(p1)) ++g_reconciles;
+                if (tp.invoke(p1)) g_seat_placed = true, ++g_reconciles;
             }
             if (auto* hp = p1 ? s.zc_hp.object(p1) : nullptr) { // own vitals are the host seat's (HUD shows them)
                 *s.hp_max.at<std::int32_t>(hp) = row.mhp;
@@ -444,6 +446,7 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         proto::Welcome w;
         if (!proto::decode(msg, w)) return;
         g_seat = w.seat, g_epoch = w.epoch, g_host_map = w.map;
+        g_seat_placed = false;
         if (!guard::arm()) coop::leave("guard unavailable (fail closed)");
         core::permission::p1_presentation(true);
         log::info("coop: seated as P{} on the host (epoch {})", g_seat, g_epoch);
@@ -542,6 +545,7 @@ void follow(std::int64_t now_us) {
     if (*host_map == ue::utf8(world::current_map_id())) {
         coop::send_reliable(0, std::span(g_buf.data(), proto::encode(proto::MapReady{g_host_map}, g_buf)));
         g_follow_pending = false;
+        g_seat_placed = false;
         g_taken.clear(); // the previous map's enemies are gone (unload ≠ death)
         for (auto* a : adapters()) a->reset();
         return;
@@ -706,7 +710,7 @@ void stop() {
     guard::disarm();
     core::permission::p1_presentation(false);
     overlay::set_banner({});
-    g_seat = 0, g_epoch = 0, g_latest = 0;
+    g_seat = 0, g_seat_placed = false, g_epoch = 0, g_latest = 0;
     g_ring.reset();
     g_names.clear();
     g_act_last.clear();
