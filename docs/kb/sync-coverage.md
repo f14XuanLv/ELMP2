@@ -17,10 +17,10 @@
 | L05 | 攻击各段（`summon_DEFAULT_A/B/C`、`summon_air_*`） | 轨道 0 名；技能 `LaunchAbilityFromDescription` `0xCAD0C0` `[E-IDA]` | 部分 | ①② | rec、cnt（acts） | 2026-10-28 基线：slime-fight / r7-p6 `summon_DEFAULT_C`、`summon_air_*` 一致；段 A/B 未出现 | 段号 A/B 未覆盖（本剧本只出 C） |
 | L06 | 其他召唤（SUMMON_1 / SUMMON_2 不同精灵）、HOOK | 同上 | 待测 | ①② | rec | — | |
 | L07 | 祈祷（HEAL） | 轨道 0 名、`UseHeal` | 待测 | ① | rec | — | |
-| L08 | 受伤（`damage_start / damage_loop`） | 轨道 0 名；HP 下降 | 部分 | ① + 受击表现 | rec、shot | 2026-10-28 基线：slime-fight Host P1 受击 21 次，Client 副本受击动画与 HP 序列一致（HP 序列晚开始 4 项为记录窗口差） | P7 实测缺（net-facts「P7 复盘」） |
-| L09 | 击退 / 击飞（`damage_launch_*`） | 轨道 0 名；位置 | 部分 | ① | rec、diff | 2026-10-28 基线：`damage_launch_*` 出现在副本（slime-fight start sync） | |
-| L10 | 死亡 | 轨道 0 名、`alive` | 部分 | ① | rec、scn:death-respawn | 2026-10-28 基线：death-respawn Host P1 死亡 l:1 34/35；客人自己的死亡见 G03 | |
-| L11 | 复活 | 同上 | 部分 | ① | scn:death-respawn | 2026-10-28 基线：death-respawn 回椅子两侧一致（church_08 2/2） | |
+| L08 | 受伤（`damage_start / damage_loop`） | 轨道 0 名；HP 下降 | 已同步 | ① + 受击表现 | rec、shot | 2026-10-28 复跑：受击 / 击退段 29/31 | P7 实测缺（net-facts「P7 复盘」） |
+| L09 | 击退 / 击飞（`damage_launch_*`） | 轨道 0 名；位置 | 已同步 | ① | rec、diff | 2026-10-28 复跑：击退 damage_launch_* 按序一致 | |
+| L10 | 死亡 | 轨道 0 名、`alive` | 已同步 | ① | rec、scn:death-respawn | 2026-10-28：Host P1 死亡 29/31、客人死亡 3/3（缺陷 ②修复） | |
+| L11 | 复活 | 同上 | 已同步 | ① | scn:death-respawn | 2026-10-28：回椅子复活两侧一致 | |
 | L12 | 坐椅休息（`rest_*`） | 轨道 0 名 | 待测 | ① | rec、shot | 2026-10-28 基线：world-objects `OnInteract` 打开休息菜单，两侧 P1 均站立，未出现 `rest_loop`；需原版坐下路径复测 | INTERACT 结算只在 Host |
 | L13 | 交互动画（取物等） | 轨道 0 名 | 待测 | ① | rec | — | |
 | L14 | 爬梯 / 抓墙 / 钩索 | 轨道 0 名；`OnWallgrabStarted / OnHookStarted` `[E-SDK]` | 待测 | ① | rec | — | church_07 无此地形，需选图 |

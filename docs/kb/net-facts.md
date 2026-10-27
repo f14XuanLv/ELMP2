@@ -245,3 +245,8 @@ P7 的方向（复制决策、让原版执行层产生表现）对“完全由�
 - 史莱姆：slime-fight 变化沿 98–100%（无记录器窗口外的 Host 死亡段除外）、guest-fight 93–99%，多余 `<empty>` 0，静止卡 `idle_turn` 0（缺陷 ①③ 修复后）。
 - 士兵（新敌种）：Host P1 对 `e2020_Soldier` 群连击 20 次，`e2020_Soldier` 11/11、`e2021_Soldier2` 2/2、`e2021_Soldier3` 5/5 按序一致，总 54/57（95%，差的 3 条在 Host P1 副本的受击段）。截图 `soldier-fight-{host,client}.png`。`[E-实测]`
 - 结论：两种敌人的动画全状态与受击呈现与 Host 按序一致；更多敌种 / Boss 的阶段动画在 Boss 一项复测。
+
+## P7 重启 · 莉莉非战斗状态（v2 2026-10-28）
+- 机制 ①：Host 座位行轨道 0（名 + 时间）→ Client 副本 `set_track0`（`<empty>` 用 SetEmptyAnimation，副本也对齐轨道时间）；客人自己座位死亡期间本地 P1 呈现 Host 死亡姿态（缺陷 ②）。
+- 实测（death-respawn / world-objects 复跑）：Host P1 受击 / 击退 / 死亡段 `l:1` 29/31 按序一致、客人座位 `l:2` 33/33；客人死亡段 3/3；回椅子复活后两侧 church_08 一致；world-objects 破坏段 `l:1` 17/17；休息点交互（`BP_Interactable_RestingPoint_C:OnInteract`）两侧 2/2、Host 打开休息菜单（`WBP_RestMenu`）。`[E-实测]`
+- **未在真对象上实测**：梯子 / 攀爬边缘（church_07 / 08 没有梯子；攀爬时 `CA_LedgeClimb_Base` 写 VisualPivot 偏移，副本不跑该命令 → 偏移缺失的可能性记为已知限制，需要有梯子 / 边缘的图复测）、祈祷动画（原版坐下路径未触发 `rest_loop`）。矩阵 L12 / L13 保持“待测（未在真对象上实测）”。
