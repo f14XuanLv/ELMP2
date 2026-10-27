@@ -224,3 +224,9 @@ P7 的方向（复制决策、让原版执行层产生表现）对“完全由�
 - **实例**（Host 捕获按粒子@所属类）：一次 slime-fight 里 `PS_Gloweye @ BP_e2010_Slime_C` ×100（史莱姆发现 / 攻击前眼光）、`PS_FindEnemy @ Slime` ×8、`PS_Appear_M / PS_Return_M @ BP_s5060_Assassin_C` ×25 / ×14（精灵出现 / 返回）、`PS_Damage10 / PS_Dodge10 / PS_LvUp @ Lily`、`PS_Spirit @ BP_Companion_*`；P6 Client 上这些全部没有（冻结 AI / 精灵副本不跑命令）`[E-实测]`。
 - **机制 ②（复用 FX 通道）**：Host 侧所属演员（世界上下文 / 父组件的 Outer 链，技能体除外，与声音同规则）若是同步对象，发 `Fx`，`flags` bit3 = 发射器，`xf` = 相对所属对象的位置 + 旋转四元数 + 缩放，`sort` = EAttachLocation，自定义骨骼 = AttachPointName；停用沿用 `FxStop`。Client 用同名 GameplayStatics 函数在呈现对象上重放（附着到根组件；世界位置 = 本进程所属对象位置 + 相对量，背景图槽位无关），呈现对象自己的本地发射隐藏。协议 Fx `flags` 解码放宽到 bit3（版本不变）。
 - **代价**：发射器重放每次约 0.7 ms（`coop.client.fx_emitter_us` p50 695 µs，SpawnFX 72 µs；改用 PSC 池无改善），纳入缺陷 ⑥ 的每帧 400 µs 重放预算（FX 延期时其 FxStop 等待，`g_fx_deferred`）。复测：guest-fight 全程 Client `frame.elmp_us` p99 453 µs，无记录器窗口 p99 159–397 µs；slime-fight / guest-fight 正确性行绿，`fxBad=0`。截图 `emitter-slime-{host,client}.png`、`slime-fight-combo-*`。
+
+## P7 重启 · 敌人 VisualPivot 竖直偏移（v2 2026-10-28）
+- `[E-IDA]` Shipping 里没有 "VisualPivot" 字面量（UTF-16 / ASCII 都 0 处）→ 原生代码不碰这个组件，只有蓝图写它。
+- `[E-CUE --imports K2_SetRelativeLocation]` 写入者：`BP_Character_Base`（`ResetVisualPivotLocation(duration)`：时间线 `ResetVisualPivotTimeline` 把当前偏移 VLerp 回 0，duration 0 时直接设 0）、`BP_p0000_Lily` 与 `CA_LedgeClimb_Base`（莉莉攀爬边缘）、`BP_IKBones`、`BP_Trigger_Ability_Stalactite`、`BP_CustomPhysicsVolume_Water`（只移它自己的音频快照触发盒）。敌人蓝图没有把偏移设成非 0 的写入者。
+- `[E-实测]` Host2 church_07：24 个敌人 `VisualPivot.RelativeLocation` 逐帧采样，史莱姆群战 300 帧 + 士兵 600 帧，全部恒为 (0,0,0)。
+- 结论：敌人的 VisualPivot 偏移恒为 0，Client 冻结后同为 0，**无差异，不需要通道**（矩阵 E05 标“已同步（无写入者）”）。莉莉的攀爬偏移归入“莉莉非战斗状态”一项。

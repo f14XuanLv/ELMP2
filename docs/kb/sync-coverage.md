@@ -49,7 +49,7 @@
 | E02 | 动态生成敌人 | `ed` 段（enemy_dyn） | 待测 | ① | diff | — | |
 | E03 | 死亡 / 消失 | `flags` bit2 dead、行消失 → 隐藏 | 部分 | ① | diff、rec | 2026-10-28 基线：Host 击杀 Slime21 → Client 隐藏（world-objects）；Host 死亡 Client 活 = 0 次 | Client 不跑原版死亡（v1 缺陷 1） |
 | E04 | 位置 / 朝向 | `e` 行；Client 100 ms 缓冲插值、`SetFacing` | 部分 | ① | diff、trace | 2026-10-28 基线：静止一致；移动中差 36–200 UU = 100 ms 插值缓冲（预期） | |
-| E05 | VisualPivot 竖直偏移 | 待调研 | 缺失 | — | shot、diff | P6 已知限制 | |
+| E05 | VisualPivot 竖直偏移 | 蓝图 ResetVisualPivotLocation（原生无引用 [E-IDA]） | 已同步 | 无需（敌人无非 0 写入者） | shot、diff | 2026-10-28：24 敌逐帧采样恒 0（史莱姆 300 帧 + 士兵 600 帧）；CUE 写入者只有重置与莉莉攀爬（net-facts「敌人 VisualPivot」） | |
 | E06 | 动画全状态（idle / walk / idle_turn / attack_* / fall / landing …） | 轨道 0 名 + 时间 | 部分 | ① | rec | 2026-10-28 基线：slime-fight / world-objects 序列 99%；**缺陷**：Client 插入 Host 没有的 `<empty>` 轨道（guest-fight / death-respawn 每只 4–10 次）、静止时卡 `idle_turn`（Host `idle`） | 其他敌种待测 |
 | E07 | 技能 / 弹体 | `Act`（`0xCAD0C0`）、`ActStop` | 部分 | ② | cnt | 2026-10-28 基线：acts 45 / Client act_bad 0 | |
 | E08 | 特效 | `SpawnFX` | 部分 | ② | cnt | 2026-10-28 基线：同 L21 | |
