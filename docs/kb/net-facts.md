@@ -254,3 +254,8 @@ P7 的方向（复制决策、让原版执行层产生表现）对“完全由�
 ## P7 重启 · 莉莉战斗全状态（v2 2026-10-28）
 - 测试辅助 `%TEMP%\elmp_lily_combat.ps1`（登记）：Host P1 在史莱姆群连击 ×4、`SUMMON_1 / SUMMON_2`（地面 + 空中）、跳跃攻击、闪避、`HEAL`、再连击 ×3，两侧记录 1500 帧。
 - 结果：Host 座位副本 `l:1` 63/65 按序一致（差 2 条为记录窗口首尾）、精灵 `s:1:BP_s5060_Assassin_C` 7/7，总 190/196（97%）；技能结束沿用 ActStop + 2 s 寿命兜底，Client `stopMissed` 只计晚到的停止。截图 `lily-combat-{host,client}.png`。`[E-实测]`
+
+## P7 重启 · 世界对象（v2 2026-10-28）
+- 机制 ①（P6 worldobj 快照行：可破坏 / 交互物 / 触发器 / 椅子状态；掉落按 pickup 行）+ `elmp lan sync world` 两侧对账（键 `w:<名>` 可见 / HP，掉落按类计数 `pk:<类>`）。
+- 实测（world-objects 复跑）：church_07 两朵花经 Host 原版 `DoDamage` 破坏 → Host 销毁、Client 隐藏（`sync_diff world` 视为一致）、其余可破坏件状态一致；连击期间掉落 / 经验球两侧出现，Client 不结算拾取（guard）；休息点交互 Host 打开休息菜单、Client 无本地结算；正确性行绿，变化沿 120/120。蓝图直接粒子（`BP_Breakable_Base` / `BP_Door` / `BP_Interactable_Treasure` 的 `SpawnEmitter*`）所属对象不在同步集合里 → 由 worldobj 状态在 Client 本地呈现，不另复制。`[E-实测]`
+- **未在真对象上实测**：门、宝箱、机关 / 触发结果（church_07 / 08 存档里没有未开的门 / 宝箱）——按 G3 同通路代证（worldobj 行 + guard），用户请求 ① 保持打开。
