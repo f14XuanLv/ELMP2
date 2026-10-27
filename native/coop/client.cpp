@@ -96,6 +96,35 @@ void hit_react(ue::UObject* actor, std::int32_t damage) {
     if (f.invoke(actor)) ++g_hit_reacts;
 }
 
+// Track 0 from a host row (enemies, lily copies, spirit copies). The host's track 0 is "<empty>" between
+// animations at times (spine-cpp empty animation; P7 baseline defect ①/③): SetAnimation("<empty>") finds no
+// animation, returns null and left the previous pose standing — use SetEmptyAnimation for it. A null entry is
+// a failure (counted), not a success.
+std::uint64_t g_empty_sets = 0;
+ue::UObject* set_track0(ue::UObject* spine, const std::string& anim, bool loop, float t, const core::schema::Script& s) {
+    static reflect::FuncRef set_empty =
+        reflect::Resolver("SpineSkeletonAnimationComponent", reflect::find_class(L"/Script/SpinePlugin.SpineSkeletonAnimationComponent")).func(L"SetEmptyAnimation", 2);
+    static reflect::FuncRef set_time = reflect::Resolver("TrackEntry", reflect::find_class(L"/Script/SpinePlugin.TrackEntry")).func(L"SetTrackTime", 1);
+    ue::UObject* entry = nullptr;
+    if (anim == "<empty>") {
+        if (!set_empty.ok()) return nullptr;
+        reflect::Frame f(set_empty);
+        f.arg(0, 0).arg(1, 0.0f);
+        if (f.invoke(spine)) entry = f.ret<ue::UObject*>(), ++g_empty_sets;
+        return ue::alive(entry) ? entry : nullptr;
+    }
+    reflect::Frame f(s.sp_set_animation);
+    f.arg(0, 0).arg_string(1, log::wide(anim)).arg_bool(2, loop);
+    if (f.invoke(spine)) entry = f.ret<ue::UObject*>();
+    if (!ue::alive(entry)) return nullptr;
+    if (set_time.ok() && t > 0) { // align to the host's playback time (no restart-from-zero phase lag)
+        reflect::Frame st(set_time);
+        st.arg(0, t);
+        st.invoke(entry);
+    }
+    return entry;
+}
+
 std::uint8_t g_seat = 0;
 bool g_seat_placed = false;
 std::uint16_t g_epoch = 0, g_host_map = 0;
@@ -277,21 +306,8 @@ void present_enemy(const std::string& key, ue::UObject* enemy, const snap::Enemy
             if (f.invoke(enemy)) t.spine = ObjHandle::of(f.ret<ue::UObject*>());
         }
         if (auto* spine = t.spine.get(); spine && anim) {
-            reflect::Frame f(s->sp_set_animation);
-            f.arg(0, 0).arg_string(1, log::wide(*anim)).arg_bool(2, row.loop != 0);
-            if (f.invoke(spine)) {
-                ++g_anim_sets;
-                // align the new track to the host's playback time (no restart-from-zero phase lag)
-                static reflect::FuncRef set_time =
-                    reflect::Resolver("TrackEntry", reflect::find_class(L"/Script/SpinePlugin.TrackEntry")).func(L"SetTrackTime", 1);
-                if (auto* entry = f.ret<ue::UObject*>(); set_time.ok() && ue::alive(entry) && row.t > 0) {
-                    reflect::Frame st(set_time);
-                    st.arg(0, row.t);
-                    st.invoke(entry);
-                }
-            } else {
-                ++g_anim_fail;
-            }
+            if (set_track0(spine, *anim, row.loop != 0, row.t, *s)) ++g_anim_sets;
+            else ++g_anim_fail;
             t.anim = row.anim;
         }
     }
@@ -440,9 +456,9 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
         if (row.anim && row.anim != c.anim && bp)
             if (const auto* anim = g_names.text(row.anim))
                 if (auto* spine = bp->lily_spine.object(p)) {
-                    reflect::Frame fa(s.sp_set_animation);
-                    fa.arg(0, 0).arg_string(1, log::wide(*anim)).arg_bool(2, row.loop != 0);
-                    if (fa.invoke(spine)) c.anim = row.anim;
+                    if (set_track0(spine, *anim, row.loop != 0, row.t, s)) ++g_anim_sets;
+                    else ++g_anim_fail;
+                    c.anim = row.anim;
                 }
     }
     std::vector<std::uint16_t> gone;
@@ -1008,16 +1024,9 @@ void present_spirits(const ClientCtx& c) {
             }
         if (row.anim && row.anim != sc.anim)
             if (const auto* anim = g_names.text(row.anim); anim && sc.spine.get()) {
-                reflect::Frame f(s->sp_set_animation);
-                f.arg(0, 0).arg_string(1, log::wide(*anim)).arg_bool(2, row.loop != 0);
-                if (f.invoke(sc.spine.get())) {
-                    if (auto* entry = f.ret<ue::UObject*>(); set_time.ok() && ue::alive(entry) && row.t > 0) {
-                        reflect::Frame st(set_time);
-                        st.arg(0, row.t);
-                        st.invoke(entry);
-                    }
-                    sc.anim = row.anim;
-                }
+                if (set_track0(sc.spine.get(), *anim, row.loop != 0, row.t, *s)) ++g_anim_sets;
+                else ++g_anim_fail;
+                sc.anim = row.anim;
             }
     }
     for (auto& [k, sc] : g_spirits)
@@ -1151,7 +1160,7 @@ std::string sync_report(const std::string& cat) {
                            "\"reconciles\":{},\"anim_sets\":{},\"anim_fail\":{},\"act_bad\":{},\"act_absent\":{},\"hit_reacts\":{},\"ev_retried\":{},\"ev_absent\":{},"
                            "\"fx_bad\":{},\"sound_bad\":{},\"sound_far\":{},\"stop_missed\":{},\"ai_leaks\":{},\"dyn_bound\":{}}}\n",
                            g_applied, g_bad_snaps, g_unknown_names, g_taken.size(), g_kills, g_copies.size(), g_spirits.size(), g_reconciles, g_anim_sets, g_anim_fail, g_act_bad,
-                           g_act_absent, g_hit_reacts, g_ev_retried, g_ev_absent, g_fx_bad, g_snd_bad, g_snd_far, g_stop_missed, g_leaks, g_dyn.size());
+                           g_act_absent, g_hit_reacts, g_ev_retried, g_ev_absent, g_fx_bad, g_snd_bad, g_snd_far, g_stop_missed, g_leaks, g_dyn.size(), g_empty_sets);
     }
     if (sync::wants(cat, "world")) sync::world_objects(out);
     if (sync::wants(cat, "hash")) sync::hashes(out);
