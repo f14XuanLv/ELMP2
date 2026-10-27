@@ -828,6 +828,29 @@ void note_host_time(std::uint32_t host_ms, std::int64_t now_us) {
     else g_offset_ms -= 0.02; // drift allowance
 }
 
+// Host-time-buffered position at `render` (ms): interpolated between the samples around it; gaps > 500 ms
+// (teleport / respawn) jump to the newer sample instead of sliding.
+core::Vec3 interp(const Sample* s, int head, int n, double render) {
+    const Sample* a = &s[head];
+    const Sample* b = a;
+    for (int i = 1; i < n; ++i) {
+        const auto& c = s[(head + i) % 16];
+        if (c.t <= render) a = &c;
+        b = &c;
+        if (c.t > render) break;
+    }
+    core::Vec3 p{a->x, a->y, a->z};
+    if (b != a && b->t > a->t && b->t - a->t <= 500 && render > a->t) {
+        const float k = static_cast<float>(std::min(1.0, (render - a->t) / static_cast<double>(b->t - a->t)));
+        p = {a->x + (b->x - a->x) * k, a->y + (b->y - a->y) * k, a->z + (b->z - a->z) * k};
+    } else if (b != a && b->t - a->t > 500 && render >= a->t) {
+        p = {b->x, b->y, b->z};
+    }
+    return p;
+}
+
+void present_spirit_motion(double render);
+
 void present_motion(std::int64_t now_us) {
     const auto* s = core::schema::script();
     if (!s || !g_offset_known) return;
@@ -847,21 +870,7 @@ void present_motion(std::int64_t now_us) {
             const auto& last = t.s[(t.head + t.n - 1) % 16];
             if (std::fabs(last.y - me->y) + std::fabs(last.z - me->z) > 3000.0f && (frame + idx) % 6) continue;
         }
-        const Sample* a = &t.s[t.head];
-        const Sample* b = a;
-        for (int i = 1; i < t.n; ++i) {
-            const auto& c = t.s[(t.head + i) % 16];
-            if (c.t <= render) a = &c;
-            b = &c;
-            if (c.t > render) break;
-        }
-        core::Vec3 p{a->x, a->y, a->z};
-        if (b != a && b->t > a->t && b->t - a->t <= 500 && render > a->t) {
-            const float k = static_cast<float>(std::min(1.0, (render - a->t) / static_cast<double>(b->t - a->t)));
-            p = {a->x + (b->x - a->x) * k, a->y + (b->y - a->y) * k, a->z + (b->z - a->z) * k};
-        } else if (b != a && b->t - a->t > 500 && render >= a->t) {
-            p = {b->x, b->y, b->z};
-        }
+        const auto p = interp(t.s.data(), t.head, t.n, render);
         if (n == g_trace_name && g_trace.size() < 240) g_trace.push_back(p.y); // Dev: per-frame presented Y
         if (auto at = core::location(e); at && (std::fabs(at->x - p.x) + std::fabs(at->y - p.y) + std::fabs(at->z - p.z)) > 0.2f) {
             reflect::Frame tp(s->actor_teleport);
@@ -872,6 +881,7 @@ void present_motion(std::int64_t now_us) {
             ++g_motion_writes;
         }
     }
+    present_spirit_motion(render);
 }
 
 // Track-0 watchdog (P7 restart baseline defect ①): while the guest's local P1 acts near presented enemies,
@@ -1041,11 +1051,28 @@ struct SpiritCopy {
     std::uint16_t cls = 0, anim = 0;
     std::int8_t facing = 0;
     bool seen = false, visible = false;
+    Sample s[16]{}; // host-time position samples (interpolated like enemies; P7 restart §7.4 spirit motion)
+    int head = 0, n = 0;
 };
 std::map<std::uint16_t, SpiritCopy> g_spirits;
 std::uint64_t g_spirit_spawned = 0, g_spirit_failed = 0;
 
 namespace {
+void present_spirit_motion(double render) {
+    const auto* s = core::schema::script();
+    if (!s) return;
+    for (auto& [k, sc] : g_spirits) {
+        auto* a = sc.actor.get();
+        if (!a || !sc.visible || !sc.n) continue;
+        const auto p = interp(sc.s, sc.head, sc.n, render);
+        if (auto at = core::location(a); at && (std::fabs(at->x - p.x) + std::fabs(at->y - p.y) + std::fabs(at->z - p.z)) > 0.2f) {
+            reflect::Frame tp(s->actor_teleport);
+            tp.arg(0, p).arg_bool(1, false).arg_bool(3, false);
+            tp.invoke(a);
+        }
+    }
+}
+
 void set_hidden(ue::UObject* a, bool hidden) {
     static reflect::FuncRef hide = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).func(L"SetActorHiddenInGame", 1);
     if (!a || !hide.ok()) return;
@@ -1100,11 +1127,17 @@ void present_spirits(const ClientCtx& c) {
             sf.arg(0, spine_cls.get());
             if (sf.invoke(a)) sc.spine = ObjHandle::of(sf.ret<ue::UObject*>());
         }
-        if (!sc.visible) set_hidden(a, false), sc.visible = true;
-        if (auto at = core::location(a); at && (std::fabs(at->x - row.x) + std::fabs(at->y - row.y) + std::fabs(at->z - row.z)) > 0.5f) {
+        if (!sc.visible) {
+            set_hidden(a, false), sc.visible = true;
+            sc.n = sc.head = 0; // re-summoned: start from the new position, no slide from the old one
             reflect::Frame tp(s->actor_teleport);
             tp.arg(0, core::Vec3{row.x, row.y, row.z}).arg_bool(1, false).arg_bool(3, false);
             tp.invoke(a);
+        }
+        if (!sc.n || c.frame.t_ms != sc.s[(sc.head + sc.n - 1) % 16].t) { // presented every frame by present_spirit_motion
+            sc.s[(sc.head + sc.n) % 16] = {c.frame.t_ms, row.x, row.y, row.z};
+            if (sc.n < 16) ++sc.n;
+            else sc.head = (sc.head + 1) % 16;
         }
         if (row.facing && row.facing != sc.facing)
             if (auto* loco = loco_prop.ok() ? loco_prop.object(a) : nullptr; loco && set_facing.ok()) {
