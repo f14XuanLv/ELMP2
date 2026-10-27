@@ -205,3 +205,4 @@ P7 的方向（复制决策、让原版执行层产生表现）对“完全由�
 - 测试辅助（登记）：`elmp tp / kill / press / vitals / perm`；eval `Breakable.HPComponent:DoDamage`、`Lily.HPComponent:DoDamage(99999)`、`BP_Interactable_RestingPoint_C:OnInteract(PC)`、`WBP_RestMenu_C:RemoveFromParent`、`OpenLevel TitleMap` + `OnSaveSlotSelected`；`instance.py stop/start client`（断线）。
 
 - **基线缺陷 ① 修复**（2026-10-28）：二分（`elmp lan evmask` 关掉全部重放事件仍出现；Host P1 攻击时 0 次；命中效果 thunk `0xD3BCB0` 闸无效；冻结敌人上孤立设置 / 非循环动画播完都不会清空）→ 写入方未定位，按机制 ① 修：Client 每帧对本地 P1 3000 UU 内的接管敌人检查轨道 0，为空而 Host 行非空时重设行动画（`pose_watchdog` 计数）。guest-fight 复测：变化沿 199/215（93%，基线 92% 且多 16 次 `<empty>`）→ `<empty>` 多余边 0；死亡阶段 126/128（基线 4/7）；正确性行绿；Client P99 1053 µs（缺陷 ⑥ 另修）。`[E-实测]`
+- **基线缺陷 ② 修复**（2026-10-28）：客人座位死亡只在 Host 结算，本地 P1 不跑死亡；Host 座位行 `alive=0` 期间把行轨道 0（death / 复活姿态）套到本地 P1。death-respawn 复测：客人死亡段 `l:2` 3/3（基线 1/3 缺 `death`），正确性行绿。`[E-实测]`

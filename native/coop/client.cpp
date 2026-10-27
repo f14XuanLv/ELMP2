@@ -404,6 +404,16 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
                 *s.hp_max.at<std::int32_t>(hp) = row.mhp;
                 *s.hp_curr.at<std::int32_t>(hp) = std::max<std::int32_t>(row.hp, row.alive ? 1 : 0);
             }
+            // P7 restart baseline defect ②: the seat's death runs only on the host (the local P1 never settles),
+            // so while the host seat is dead its track 0 (death / revive pose) is presented on the local P1
+            static std::uint16_t own_anim = 0;
+            if (!row.alive && row.anim && row.anim != own_anim && bp && p1)
+                if (const auto* anim = g_names.text(row.anim))
+                    if (auto* spine = bp->lily_spine.object(p1)) {
+                        if (set_track0(spine, *anim, row.loop != 0, row.t, s)) ++g_anim_sets;
+                        own_anim = row.anim;
+                    }
+            if (row.alive) own_anim = 0;
             continue;
         }
         if (row.key == 0 || row.key > 8) continue;
