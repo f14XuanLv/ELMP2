@@ -1108,7 +1108,8 @@ void present_spirits(const ClientCtx& c) {
             const auto* path = c.text(row.cls);
             auto* cls = path ? entities::class_by_path(*path) : nullptr;
             static ue::UClass* spirit_base = reflect::find_class(L"/Script/Zenith.ZenithSpirit");
-            if (!cls || !spirit_base || !cls->IsChildOf(spirit_base)) continue;
+            static ue::UClass* companion_base = reflect::find_class(L"/Script/Zenith.ZenithCompanionCharacter");
+            if (!cls || !((spirit_base && cls->IsChildOf(spirit_base)) || (companion_base && cls->IsChildOf(companion_base)))) continue;
             if (!(a = entities::spawn_copy(cls, row.x, row.y, row.z))) {
                 ++g_spirit_failed;
                 continue;
@@ -1139,7 +1140,8 @@ void present_spirits(const ClientCtx& c) {
             if (sc.n < 16) ++sc.n;
             else sc.head = (sc.head + 1) % 16;
         }
-        if (row.facing && row.facing != sc.facing)
+        static ue::UClass* spirit_cls = reflect::find_class(L"/Script/Zenith.ZenithSpirit");
+        if (row.facing && row.facing != sc.facing && spirit_cls && a->GetClassPrivate()->IsChildOf(spirit_cls)) // companions have no LocomotionComponent
             if (auto* loco = loco_prop.ok() ? loco_prop.object(a) : nullptr; loco && set_facing.ok()) {
                 reflect::Frame ff(set_facing);
                 ff.arg_bool(0, row.facing > 0);

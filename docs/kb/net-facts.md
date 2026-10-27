@@ -234,3 +234,8 @@ P7 的方向（复制决策、让原版执行层产生表现）对“完全由�
 ## P7 重启 · 精灵位置插值（v2 2026-10-28）
 - P6：精灵副本每个快照直接定位。改为与敌人同一套 Host 时间 100 ms 缓冲插值（`interp()` 共用，样本环 16；>500 ms 间隔跳到新样本；重新召唤时直接定位不滑行），每帧由 `present_spirit_motion` 呈现。
 - 实测（测试辅助 `%TEMP%\elmp_spirit_trace.ps1`，登记：两侧逐帧采样所有 ZenithSpirit 的 Y，Host P1 `SUMMON_1 / SUMMON_2` ×4）：Host 移动 72 帧、停顿 0、最大步 169.6、总位移 339；Client 移动 72 帧、停顿 0、最大步 153.2、总位移 306（同段运动更平、无停顿）。slime-fight 精灵变化沿 4/5，正确性行绿；`sync_diff ent` pos>5 = 0。截图 `spirit-motion-{host,client}.png`。`[E-实测]`
+
+## P7 重启 · 伴随精灵（BP_Companion_*，v2 2026-10-28）
+- 类链 `[E-实测 / E-SDK]`：`BP_Companion_sXXXX_C < BP_CompanionFX_Base_C < ZenithCompanionCharacter < Character`，控制器 `AIC_Companion_C < ZenithAICompanionController`（`GetLeaderPawn()` 给出跟随的莉莉）。P6 Client 上远端座位的副本没有伴随精灵（world-objects 截图：Host 3 个、Client 0）。
+- 机制 ①（快照行）：registry 新类别 `Companion`（ZenithCompanionCharacter）；Host 把可见伴随精灵按 leader 莉莉的座位编入精灵行（键空间 `seat << 8 | n` 与精灵共用，类路径 / 位置 / 轨道 0），Client 照精灵副本生成冻结副本并插值呈现（伴随精灵无 LocomotionComponent，朝向写入只对 ZenithSpirit 做）。自己座位的伴随精灵本地生成，不复制。
+- 实测：map-change 剧本后 Host 可见伴随精灵 12（自己 6 + P2 6），Client 可见 12（自己 6 + Host P1 的 6），`spirits=6` 副本、`failed=0`；四个检查点实体全等、正确性行绿。截图 `companions-{host,client}.png`。`[E-实测]`

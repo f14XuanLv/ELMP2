@@ -25,10 +25,10 @@
 | L13 | 交互动画（取物等） | 轨道 0 名 | 待测 | ① | rec | — | |
 | L14 | 爬梯 / 抓墙 / 钩索 | 轨道 0 名；`OnWallgrabStarted / OnHookStarted` `[E-SDK]` | 待测 | ① | rec | — | church_07 无此地形，需选图 |
 | L15 | 水中（若有） | `OnBreakWaterSurfaceDelegate` `[E-SDK]` | 待测 | ① | rec | — | 先确认测试存档可达的水域 |
-| L16 | 精灵出现 / 消失 | 快照 `sp` 段（Owner = 座位 PC、未隐藏）`[E-实测]` | 部分 | ① | rec、shot | 2026-10-28 基线：rec `s:1:BP_s5060_Assassin_C` 11/11、`s:2:…` 7/8 | P6 精灵副本 |
-| L17 | 精灵动作 / 技能 | `sp` 行动画 + `Act`（Ref spirit） | 部分 | ①② | rec、cnt | 2026-10-28 基线：同上（精灵动作序列按序一致） | |
+| L16 | 精灵出现 / 消失 | 快照 `sp` 段（Owner = 座位 PC、未隐藏）`[E-实测]` | 已同步 | ① | rec、shot | 2026-10-28 基线：rec `s:1:BP_s5060_Assassin_C` 11/11、`s:2:…` 7/8；2026-10-28 位置插值：Host / Client 移动 72 帧、停顿 0（net-facts「精灵位置插值」） | P6 精灵副本 |
+| L17 | 精灵动作 / 技能 | `sp` 行动画 + `Act`（Ref spirit） | 已同步 | ①② | rec、cnt | 2026-10-28 基线：同上（精灵动作序列按序一致）；2026-10-28 位置插值：Host / Client 移动 72 帧、停顿 0（net-facts「精灵位置插值」） | |
 | L18 | 精灵位置插值 | `sp` 行位置 | 缺失 | ① | diff、trace | P6 已知：每快照直放 | |
-| L19 | 伴随精灵（`BP_Companion_*`，常驻跟随的被动精灵）出现与粒子 | 待调研 | 缺失 | — | rec（fx 按所属类） | 2026-10-28 基线：world-objects 休息点截图 Host 3 个伴随精灵（骑士 ×2 + 树），Client 0；fx 行 `?BP_Companion_*` Host 1–2 / Client 0 | 新增行（复盘发现） |
+| L19 | 伴随精灵（`BP_Companion_*`，常驻跟随的被动精灵）出现与粒子 | 待调研 | 已同步 | ① | rec（fx 按所属类） | 2026-10-28：伴随精灵编入精灵行（leader 座位），Host 可见 12 / Client 可见 12；截图 companions-*（net-facts「伴随精灵」） | 新增行（复盘发现） |
 | L20 | 弹体 / 技能 Actor | `Act` 重放、`ActStop`（`AAbility::Stop` `0xCBDB80`） | 部分 | ② | cnt（acts / stops） | 2026-10-28 基线：guest-fight 结束 Client 6 个无 Owner 技能 Actor vs Host 1（重放体不设 Owner，2 s 寿命） | |
 | L21 | 特效（`SpawnFX`） | `UBaseFXComponent::SpawnFX_Implementation` `0x7D0600` `[E-IDA]` | 部分 | ② | cnt、shot | 2026-10-28 基线：slime-fight Host fx_sent 137 / stops 133，Client fx_bad 0 | |
 | L22 | 蓝图直生特效（`SpawnEmitter*`） | 待调研 | 缺失 | — | rec（fx） | P6 已知限制 | |

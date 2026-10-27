@@ -211,6 +211,36 @@ std::uint16_t seat_of_controller(const ue::UObject* pc) {
 }
 } // namespace
 
+// Companions (BP_Companion_* : ZenithCompanionCharacter, the always-following spirits; P7 restart L19): a
+// remote seat's copy does not spawn them on the client. They ride the spirit rows (same key space
+// seat << 8 | n); the seat is the leader pawn of the companion's AIC_Companion (GetLeaderPawn).
+void write_companions(const core::schema::Script& s) {
+    static reflect::PropRef controller = reflect::Resolver("Pawn", reflect::find_class(L"/Script/Engine.Pawn")).prop(L"Controller", reflect::Kind::Object);
+    static reflect::FuncRef leader =
+        reflect::Resolver("ZenithAICompanionController", reflect::find_class(L"/Script/Zenith.ZenithAICompanionController")).func(L"GetLeaderPawn", 0);
+    static ue::UClass* aic = reflect::find_class(L"/Script/Zenith.ZenithAICompanionController");
+    if (!controller.ok() || !leader.ok() || !aic || registry::size(registry::Kind::Companion) == 0) return;
+    for (const auto& e : registry::bucket(registry::Kind::Companion)) {
+        auto* a = e.handle.get();
+        if (!a || g_hidden.read_bool(a)) continue;
+        auto* c = controller.object(a);
+        if (!c || !c->GetClassPrivate()->IsChildOf(aic)) continue;
+        reflect::Frame lf(leader);
+        auto* lp = lf.invoke(c) ? lf.ret<ue::UObject*>() : nullptr;
+        const auto seat = lp ? seat_of_controller(controller.object(lp)) : std::uint16_t{0};
+        if (!seat || seat > 255) continue;
+        auto [it, fresh] = g_spirit_keys.try_emplace(e.handle, 0);
+        if (fresh) it->second = static_cast<std::uint16_t>(seat << 8 | g_spirit_next[seat]++);
+        auto* row = g_frame->sp.add(it->second);
+        if (!row) break;
+        auto& path = g_spirit_paths[0x8000 | e.class_id];
+        if (path.empty()) path = log::utf8(a->GetClassPrivate()->GetPathName());
+        row->cls = name(path);
+        if (auto at = core::location(a)) row->x = at->x, row->y = at->y, row->z = at->z;
+        pose(a, e.handle, *row, s);
+    }
+}
+
 void write_spirits(HostCtx&) {
     const auto* s = core::schema::script();
     static bool tried = false;
@@ -242,6 +272,7 @@ void write_spirits(HostCtx&) {
         }
         pose(a, e.handle, *row, *s);
     }
+    write_companions(*s);
 }
 
 void reset_spirits() {
