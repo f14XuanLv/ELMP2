@@ -143,6 +143,14 @@
   - `PlayEventAttached` 0 次（church_07 未触发附着式音效）。
 - **遗留**：附着 / 循环音效与蓝图直接 `SpawnEmitter*` 不复制；精灵位置无插值（每快照直放）；首次资产加载的一次性卡顿；敌人 VisualPivot 竖直偏移。
 
+## 命令注入与输入驱动实验（来自 explore 分支 2026-10-28 调研 spike；Host2 单实例、无会话，church_07；事实成立，方法论见「P7 复盘」）
+- **休眠敌人注入命令** `[E-实测]`：`e2010_Slime18`（AI 未运行，45 个组件全部 tick 关，Actor tick 关）调 `CommandQueueComponent:AddNewImmediateCommand(0, 1, CA_e2010_Slime_Attack_C)` → 返回命令 ID 1，动画立即变 `attack_A`（Start 时 State 时间线 t=0），之后 4 s 不再变化、队列一直 1——CommandQueue 不 tick 就不采样。
+- **放开执行层再注入** `[E-实测]`：同一只史莱姆 `SetActorTickEnabled(true)` + 全部组件 `SetComponentTickEnabled(true)`（AI 仍未运行）后注入同一命令：`attack_A`（f0–60）→ `attack_A_fall_loop`（f66–108）→ `attack_A_landing`（f114–162）→ `idle`（f168）；技能 Actor f36 出现 1 个、f66 起为 0（原版自然结束）；位置沿 Move 时间线 Y 3956 → 4578、Z −478 → −1378（跳起后落到下层地面）；命令完成后队列 0。之后原版动画状态机自己出 `idle_turn → walk`。
+- **莉莉副本注入命令** `[E-实测]`：`elmp spawn 101 mirror` 的第二只莉莉调 `AddNewImmediateCommand(0, 3, CACS_s5060_Combo_LV3_C)` → 莉莉 `summon_DEFAULT_C`（f0–42）→ `idle`；精灵 `BP_s5060_Assassin_C`（Owner 为该座位）立即出现并派生执行 `CA_s5060_Ground_01_C`，f54 命令结束、f84 精灵自行消失。
+- **只写位置 + 速度不能驱动莉莉移动动画** `[E-实测]`：第二只莉莉每帧 `K2_SetActorLocation(+400/60 UU)` 并写 `CharacterMovement.Velocity = (0, 400, 0)` 90 帧，动画始终 `idle`；同法作用于放开执行层的史莱姆，状态机出 `idle_turn → walk`。莉莉移动动画由输入驱动，敌人移动动画可由速度驱动。
+- **轮询观察**：P1 连按 ATTACK 时 P1 的 `CommandQueue` 依次出现 `CACS_s5060_Combo_LV3_C/3`（按一次出现一次，约 44 帧后清空）；同期未进入战斗的敌人（`idle` / `idle_peace`）队列始终为空。
+- **踩坑**：窗口最小化期间 Host2 曾处于 `IsGamePaused=true`（P1 站在门盒里也不切图），eval `GameplayStatics:SetGamePaused(world, false)` 后立即切图。门盒不触发时先查暂停态。
+
 ## P7 复盘（v2 2026-10-28，P7 重启 §1；失败分支 `explore/p7-failed-client-vanilla-execution` 只读）
 
 ### P7 改了什么（`git diff 4972eb0 explore/p7-failed-client-vanilla-execution --stat`：31 个文件 +948 / −1259；提交 `a06a320` 调研定案 → `1fdf05d` P7-1..4 → `e4bb032` 坐椅回归修复 → `aecee34` P7-5 删除 P6 通道 → `a4c49cd` SeatBuild 后止步）

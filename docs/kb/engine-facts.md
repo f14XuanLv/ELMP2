@@ -31,6 +31,40 @@
 - 实测（Dev2 槽 0）：church_08 只有 2 个 `ZenithAIController`（精灵侧），`IsActive` 0；P1 传送进 church_07 后 8 s 内 26 个控制器中 **24 个 `IsActive()=true`，对应 24 个敌人 `IsActivated()=true`**（`activationVolume=0`：此图敌人随生成即激活，不靠体积）。激活 ≠ 不暂停：靠近才动的是蓝图 `SetPaused`（tick 开关，`CanBePaused` 守卫，v1 net-facts「Client 敌人冻结与激活」）。`[E-实测]`
 - **v2 激活闸门方案（取代 v1 三闸第一闸）**：Client 对登记敌人 detour `0xCCD8F0`（控制器所控 Pawn 已登记 → 整体跳过：无黑板、无行为树 = 无 AI 决策）+ `0xCCDAA0`（登记 Pawn → 跳过）+ 碰撞 / tick 两原语闸（`0x22C78D0` / `0x22C8540`，登记对象开启方向跳过）+ `CanBePaused=false`（蓝图 SetPaused）+ 1 Hz 两标志复检。G1 用这 4 个 detour 的拦截计数 + 复检计数 + `IsActive()` 抽查作证据（P2）。
 
+## CommandQueue 决策管线（来自 explore 分支 2026-10-28 调研；P7 重启后按证据等级搬入）
+
+所有角色的动作都汇入 `UCommandQueueComponent`。exec 桩由 `elmp native` 取（Host2），本体用 IDA 跟进；IDA 里 Zenith 函数多为无名 `sub_`，部分 StaticClass 名被 COMDAT 张冠李戴（如 `UBaseMarker::StaticClass` 实为 `UCommandAction::StaticClass`）。`[E-IDA]`
+
+| 入口 | exec 桩 | 本体 | 作用 |
+|---|---|---|---|
+| `CommandQueueComponent:AddNewImmediateCommand(Dir, Cmd, Class)` | `0xD4FC80` | **`0xC97C60`** | 校验类为 CommandAction 子类 → 默认 `FCommandSettings`（无 Necessary / Forbidden 约束）→ FrameID `(+320 + 1) % 10000` → 核心 `0xC97660`（插队头）→ 若不在处理中立即 `UpdateCommands` |
+| `CommandQueueComponent:AddNewCommand` 核心 | `0xD4F890` | `0xC97660` | 建 `UCommand`（`0xCA8870`）+ 取 / 建 CommandAction 实例（`0xCA8300`，**按类缓存**）→ `UCommand+144 = CommandAction`、`+156 = FrameID` → 入 `CommandQueue`（`+280` TArray） |
+| `CommandQueueComponent:UpdateCommands(dt)` | `0xD513D0` | **`0xCC3970`** | 每个命令的 CommandAction 先 `SetInputSnapshot(CurrentInputSnapshot +336)`（虚表 +616）→ 队列处理 `0xCC2BA0` → TTL 递减过期移除 → 重入标志 `+324/+325` |
+| 队列处理 | — | `0xCC2BA0` | 找第一个可启动命令（`0xCABB70`：`CanStartCommandAction` `0xD49BD0` + Necessary / Forbidden 状态 + 资质 + 移动模式）提到队头 → 以 ≤ 1/30 s 步长调单命令处理 |
+| 单命令处理 | — | **`0xCB4F00`** | **启动沿**：`UCommand+44`（bStarted）为假时记日志 `START command : <类名>`、广播 `OnStartCommand(CommandAction)`（`+416`）、移除同 FrameID 同输入类型的其他命令；之后 `0xD24D70` 推进；后继命令可启动则 `OverrideByCommandAction`（`0xD1F440`）；结束判定 `0xD148F0` → 移除 |
+| `CommandAction::Start` | （虚表；StartCommandAction exec `0xD4C370` 与他函数折叠） | `0xD29F90` | `OnStartCommandAction`（虚表 +648）→ 五条时间线从 0：State `0xD24CA0`、Ability 起始 `0xCBD310`、Move `0xD24590`、FX `0xD24380`、Sound `0xD24B50` |
+| `CommandAction::Sample(dt)` | `SampleCommandAction` `0xD4BCE0` | `0xD24FB0` | 依次采样 State / Ability(`0xCBABE0`) / Move / FX / Sound；10 个 CommandAction 子类虚表引用 |
+| `ExecuteActionAsync::ExecuteActionAsync(cq, Class)` | `0xD597D0` | **`0xD08AF0`** | 建异步节点 → `AddNewImmediateCommand(cq, Dir=0, Cmd=1, Class)`，记下返回的命令 ID（`+64`） |
+| `UCommandQueueComponent::TryAddCommands(snapshot, set)` | `0xD50F60` | `0xCC2520` | 莉莉“输入 → 命令”：FrameID 递增 → 对 CommandSet 每条 `FCommandSettings`（136 B）调 `0xCC2840`；代码调用者 = `ZenithCharacter::Tick` `0xCF3740`、另一 Pawn Tick `0xCEF190` |
+
+- 敌人决策出口 `[E-CUE][E-IDA]`：`BT_e2010_Slime` 的攻击叶子是 `BTTask_ExecuteActionCustom_C`（父类 `BTTask_ExecuteActionBase_C`），引用 `CA_e2010_Slime_Attack_C` / `CA_e2010_Slime_Attack_long_C`（`/Game/_Zenith/Gameplay/CommandActions/Enemies/e2010_Slime/`）；`BTTask_ExecuteActionBase` 字节码调 `ExecuteActionAsync:ExecuteActionAsync` 与 `CommandQueueComponent:ClearCommandBuffer`。行为树的动作出口是命令队列；但**转身（`idle_turn`）、走动、受击反应不经命令**（由 AI 朝向 / 速度 / 伤害广播驱动，见 net-facts「P7 复盘」A/B）。
+- 莉莉：P1 连按 ATTACK，命令队列依次出现 `CACS_s5060_Combo_LV3_C`（CommandInputType 3 = ATTACK）`[E-实测]`。精灵 `AZenithSpirit` 自带 CommandQueue，命令由召唤者的 `CommandActionSummon`（`SpiritCommandList`）派生；召唤哪只精灵由召唤者自己的配装决定。
+- `ECommandInputTypes`：NONE 0、JUMP 1、DODGE 2、ATTACK 3、SUMMON_1 4、SUMMON_2 5、SUMMON_SET_SWITCH 6、HOOK 7、HEAL 8、INTERACT 9、MAINMENU 10、PAUSE 11、MINIMAP 12、ANY 100 `[E-SDK]`。敌人 BT 统一用 Cmd=1、Dir=0。
+- **注意**：`AddNewImmediateCommand` 用默认 `FCommandSettings` 插队，不检查 Necessary / Forbidden；CommandAction 实例按类缓存在队列组件上（连段 / 计时等状态跟着实例走）。在本地状态与 Host 不同的对象上注入命令，结果可以与 Host 不同（net-facts「P7 复盘」第 2 条）。
+
+## 结算汇点（来自 explore 分支 2026-10-28 调研 `[E-IDA]`；Client 放开任何执行层前必须复核）
+
+| 汇点 | 位置 | 说明 |
+|---|---|---|
+| 命中效果施加 | `UAbilityEffectComponent::OnApplyEffect` thunk `0xD3BCB0`（FindFunctionChecked + ProcessEvent） | 唯一代码调用者 = 命中条目效果队列 `AAbility::AdvanceEffectQueue` `0xCBB110`（阵营 / 目标类型过滤与可施加判定 `0xC9DEE0` 之后） |
+| 命中效果收尾 | `OnFinalizeEffect` thunk `0xD3BD40` | 唯一代码调用者 `0xCA6E40`（效果收尾循环） |
+| 死亡起点 | `UDeathComponent::StartDeathProcess` `0xCBD9A0` | 守卫 +656（已死）→ 黑板 / 效用 / 导航收尾 → 按死亡样式 +176 分派（`0xCA6410 / 0xCA6980 / 0xCA5FE0 / 0xCA5AD0`）→ `OnStartDeath` 广播 +624；调用者 = ForceDeath（exec `0xD54C70` → thunk `0xCA76E0`；另 `0xDA0660`）与 HP 死亡委托处理 `0xCB2740`（exec `0xD56100`）；掉落 `DropComponent::OnDeath`、出生点清除都在其后 |
+| 直接伤害 | `UHPComponent::DoDamage` `0xCA0380` | 已由 guard 拦截（P2） |
+| 技能伤害写 HP | `0xCB07E0`（AE_Damage 内部） | 已由 guard 拦截（P2） |
+| 存档 | `SaveGame / SaveGameAsync` | 已由 guard 拒绝（P2） |
+
+- 命中效果组件类（原生，`[E-SDK]` 重建头）：结算类 `AE_Damage` / `AE_DamageAbsolute`（父类 `UAbilityEffectDamageComponent`）、`AE_HealAbsolute`、`AE_Knockback`、`AE_RestoreMPToInvoker`、`AE_StaminaDamageAbsolute`、`AE_StunDamageAbsolute`；表现类 `AE_HitStop`（父类 `UAbilityEffectTimedComponent`）、`AE_CameraShake`、`AE_ShakeTarget`、`AE_ForceFeedback`。蓝图子类未枚举（CUE 待查）。
+
 ## UE4SS / 引擎行为（P0 实测）
 
 - `RegisterProcessConsoleExecCallback` 是 post 回调，且 UE4SS 只在 `Context` 是 `UGameViewportClient` 时调用（`Hooks.cpp`）；`UGameViewportClient::Exec` 在 `ProcessConsoleExec(Cmd, Ar, NULL)` 返回 false 后才交给 GameInstance / GEngine（UE 4.26 `GameViewportClient.cpp` 2916 行）。所以 `elmp …` 只来自本地玩家（Controller0）控制台路径。`[E-源码][E-实测]`
