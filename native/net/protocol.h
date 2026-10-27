@@ -87,7 +87,7 @@ struct Snd {
     std::uint8_t kind = 1;
     std::uint16_t net_id = 0;
     std::uint16_t event = 0; // UFMODEvent path name id
-    std::uint8_t is2d = 0;
+    std::uint8_t is2d = 0; // 0 at the owner, 1 2D, 2 attached to the owner's root (fx::SoundMode)
 };
 struct ActStop {
     std::uint8_t kind = 1;

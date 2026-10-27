@@ -201,7 +201,7 @@ bool decode(std::span<const std::uint8_t> in, Snd& m) {
     m.net_id = r.u16();
     m.event = r.u16();
     m.is2d = r.u8();
-    return r.done() && m.event != 0 && kind_ok(m.kind) && m.is2d <= 1;
+    return r.done() && m.event != 0 && kind_ok(m.kind) && m.is2d <= 2;
 }
 std::size_t encode(const ActStop& m, std::span<std::uint8_t> out) {
     auto w = start(out, Msg::ActStop);

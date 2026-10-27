@@ -33,7 +33,7 @@
 | L21 | 特效（`SpawnFX`） | `UBaseFXComponent::SpawnFX_Implementation` `0x7D0600` `[E-IDA]` | 部分 | ② | cnt、shot | 2026-10-28 基线：slime-fight Host fx_sent 137 / stops 133，Client fx_bad 0 | |
 | L22 | 蓝图直生特效（`SpawnEmitter*`） | 待调研 | 缺失 | — | rec（fx） | P6 已知限制 | |
 | L23 | 一次性音效 | FMOD `PlayEventAtLocation` `0x78D570` `[E-IDA]` | 部分 | ② | cnt | 2026-10-28 基线：slime-fight sounds_sent 90，Client sound_bad 0 | |
-| L24 | 附着 / 循环音效 | `PlayEventAttached` `0x78D7A0` `[E-IDA]` | 缺失 | — | cnt（attachedSounds） | 2026-10-28 r7-p6：Client `attachedSounds=1` 未复制 | |
+| L24 | 附着 / 循环音效 | `PlayEventAttached` `0x78D7A0` `[E-IDA]` | 已同步 | ② | cnt（attachedSounds） | 2026-10-28：Host 闪避 player-dodge 附着在 Lily → Client 副本播放；测试辅助史莱姆附着声音 → Client 史莱姆上 FMODAudioComponent 1；soundBad 0（net-facts「附着 / 循环音效」） | |
 | L25 | 受击闪白 / 顿帧 | 受击处理 `BndEvt__HPComponent_…_HPDamageEvent`（`PlayAdditiveDamage`）`[E-IDA]`；顿帧 `AE_HitStop` | 部分 | ② | rec、shot | 2026-10-28 基线：Client hit_reacts 27（slime-fight） | |
 | L26 | 皮肤 / 外观 | 快照 `skin` | 待测 | ① | shot | — | |
 | L27 | HP / MP / 祈祷（HUD） | 快照 `hp mhp mp mmp heals mheals` | 部分 | ① | `elmp hud`、shot | 2026-10-28 基线：slime-fight 副本 HP 序列与 Host 一致 | P7 实测副本 HP 不更新 |
@@ -54,7 +54,7 @@
 | E07 | 技能 / 弹体 | `Act`（`0xCAD0C0`）、`ActStop` | 部分 | ② | cnt | 2026-10-28 基线：acts 45 / Client act_bad 0 | |
 | E08 | 特效 | `SpawnFX` | 部分 | ② | cnt | 2026-10-28 基线：同 L21 | |
 | E09 | 一次性音效 | `PlayEventAtLocation` | 部分 | ② | cnt | 2026-10-28 基线：同 L23 | |
-| E10 | 附着 / 循环音效 | `PlayEventAttached` | 缺失 | — | cnt | P6 已知限制 | |
+| E10 | 附着 / 循环音效 | `PlayEventAttached` | 已同步 | ② | cnt | 2026-10-28：Host 闪避 player-dodge 附着在 Lily → Client 副本播放；测试辅助史莱姆附着声音 → Client 史莱姆上 FMODAudioComponent 1；soundBad 0（net-facts「附着 / 循环音效」） | |
 | E11 | 受击反应（附加受击动画 / 闪白） | Host HP 下降 → Client 调受击处理函数 | 部分 | ② | rec、shot | 2026-10-28 基线：hit_reacts 计数增长；未截图对照 | |
 | E12 | 硬直 / 击退 / 眩晕动画 | 轨道 0 名 | 待测 | ① | rec | — | |
 | E13 | Boss 阶段 | 待调研 | 待测 | — | — | — | 需要用户存档 |

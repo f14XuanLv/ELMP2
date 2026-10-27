@@ -121,7 +121,7 @@ std::uint64_t __fastcall d_sound(UObject* ctx, UObject* ev, const std::uint8_t* 
                 float t[3]{};
                 if (xf) std::memcpy(t, xf + 16, 12);
                 ++g_cap_sound;
-                g_sinks.sound({owner, ev, t[0] == 0 && t[1] == 0 && t[2] == 0}); // PlayEvent2D passes the identity transform
+                g_sinks.sound({owner, ev, static_cast<std::uint8_t>(t[0] == 0 && t[1] == 0 && t[2] == 0 ? kSound2D : kSoundAt)}); // PlayEvent2D passes the identity transform
             }
         } else if (g_client && g_block && !g_replaying) {
             if (auto* owner = sound_owner(ctx); owner && guard::marked(owner)) return ++g_local_sound_blocked, 0; // the host's sound arrives instead
@@ -130,8 +130,25 @@ std::uint64_t __fastcall d_sound(UObject* ctx, UObject* ev, const std::uint8_t* 
     return o_sound(ctx, ev, xf, autoplay);
 }
 
+std::unordered_map<std::string, std::uint64_t> g_attached_kinds; // Dev: "event @ owner class [marked]" (first 48)
+
 UObject* __fastcall d_attached(UObject* ev, UObject* parent, std::uint64_t socket, const float* at, std::uint8_t rule, bool stop, bool play, bool destroy) {
-    if (ue::on_game_thread()) ++g_attached;
+    // Callers (CUE --imports, 2026-10-28): SpineAnimNotify_PlayFMODEvent (attached anim-notify sounds),
+    // CAS_Dash (spirit dash), BP_Character_Player_Base (AudioEventSubmerged), BP_Elevator (MoveSoundEvent).
+    // Host: sounds of synced owners are sent like located ones (mode attached); client: a presented owner's own
+    // attached sound is suppressed, the host's arrives instead.
+    if (ue::on_game_thread() && ev) {
+        ++g_attached;
+        auto* owner = parent ? sound_owner(parent) : nullptr;
+        if (g_attached_kinds.size() < 48)
+            g_attached_kinds[std::format("{} @ {}{}", path_of(ev), owner ? log::utf8(ue::class_name_of(owner)) : "-", owner && guard::marked(owner) ? " [marked]" : "")]++;
+        if (g_host && g_sinks.sound && owner && play) {
+            ++g_cap_sound;
+            g_sinks.sound({owner, ev, kSoundAttached});
+        } else if (g_client && g_block && !g_replaying && owner && guard::marked(owner)) {
+            return ++g_local_sound_blocked, nullptr;
+        }
+    }
     return o_attached(ev, parent, socket, at, rule, stop, play, destroy);
 }
 
@@ -227,7 +244,8 @@ bool deactivate(ue::UObject* psc) {
     return reflect::Frame(d).invoke(psc);
 }
 
-bool play_sound(ue::UObject* actor, const std::string& event_path, bool is2d, std::string* why) {
+bool play_sound(ue::UObject* actor, const std::string& event_path, std::uint8_t mode, std::string* why) {
+    const bool is2d = mode == kSound2D;
     auto fail = [&](const char* w) {
         if (why) *why = w;
         return false;
@@ -242,7 +260,24 @@ bool play_sound(ue::UObject* actor, const std::string& event_path, bool is2d, st
     if (!cdo || !at.ok() || !flat.ok() || !xf.ok()) return fail("FMOD statics");
     bool ok = false;
     g_replaying = true;
-    if (is2d) {
+    if (mode == kSoundAttached) {
+        // PlayEventAttached(Event, AttachToComponent, AttachPointName, Location, LocationType, bStopWhenAttachedToDestroyed, bAutoPlay, bAutoDestroy)
+        static reflect::FuncRef attached = r.func(L"PlayEventAttached", 8);
+        static reflect::FuncRef root = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).func(L"K2_GetRootComponent", 0);
+        reflect::Frame rc(root);
+        auto* comp = attached.ok() && root.ok() && rc.invoke(actor) ? rc.ret<ue::UObject*>() : nullptr;
+        if (!attached.ok()) {
+            g_replaying = false;
+            return fail("PlayEventAttached");
+        }
+        if (!ue::alive(comp)) {
+            g_replaying = false;
+            return fail("owner has no root component");
+        }
+        reflect::Frame f(attached);
+        f.arg(0, ev).arg(1, comp).arg_bool(5, true).arg_bool(6, true).arg_bool(7, true);
+        ok = f.invoke(cdo);
+    } else if (is2d) {
         reflect::Frame f(flat);
         f.arg(0, actor).arg(1, ev).arg_bool(2, true);
         ok = f.invoke(cdo);
@@ -279,6 +314,7 @@ std::string describe() {
                                   g_spawn_ok, g_deact_ok, g_sound_ok, g_stop_ok, g_cap_spawn, g_cap_deact, g_cap_sound, g_cap_stop, g_rep_spawn, g_rep_fail, g_rep_deact, g_rep_sound,
                                   g_rep_stop, g_local_blocked, g_local_sound_blocked, g_attached, g_block ? "" : " (blocking off)");
     for (const auto& [p, n] : g_blocked_ps) out += std::format("  local {} x{}\n", p.substr(p.rfind('/') + 1), n);
+    for (const auto& [k, n] : g_attached_kinds) out += std::format("  attached {} x{}\n", k.substr(k.rfind('/') + 1), n);
     return out;
 }
 

@@ -29,8 +29,10 @@ struct Spawn {
 struct Sound {
     ue::UObject* owner = nullptr;
     ue::UObject* event = nullptr; // UFMODEvent
-    bool is2d = false;
+    std::uint8_t mode = 0; // SoundMode
 };
+// net::proto::Snd::is2d byte: 0 at the owner's location, 1 2D, 2 attached to the owner's root component
+enum SoundMode : std::uint8_t { kSoundAt = 0, kSound2D = 1, kSoundAttached = 2 };
 struct Sinks {
     void (*spawn)(const Spawn&) = nullptr;
     void (*deactivate)(ue::UObject* psc) = nullptr;
@@ -50,7 +52,7 @@ void set_block_local(bool on); // Dev comparison (default on)
 // Client replays (false on failure, reason in *why).
 ue::UObject* replay_spawn(ue::UObject* actor, const net::proto::Fx& m, const std::string& ps_path, const std::string& custom_bone, std::string* why);
 bool deactivate(ue::UObject* psc);
-bool play_sound(ue::UObject* actor, const std::string& event_path, bool is2d, std::string* why);
+bool play_sound(ue::UObject* actor, const std::string& event_path, std::uint8_t mode, std::string* why);
 bool stop_ability(ue::UObject* ability, std::uint8_t reason);
 
 std::string path_of(ue::UObject* asset); // cached per object (weak handle checked)

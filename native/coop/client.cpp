@@ -499,6 +499,7 @@ struct RetryEv {
 std::deque<RetryEv> g_ev_retry;
 std::unordered_map<std::uint64_t, ObjHandle> g_ab_live;  // kind << 48 | id << 32 | act seq → replayed ability
 std::unordered_map<std::uint32_t, ObjHandle> g_fx_live;  // host FX seq → replayed PSC
+std::string g_snd_last_bad; // last rejected sound (diagnostics)
 std::uint64_t g_ev_absent = 0, g_ev_retried = 0, g_snd_far = 0, g_fx_bad = 0, g_snd_bad = 0, g_stop_missed = 0;
 
 bool world_ready() {
@@ -583,7 +584,10 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
         const auto at = core::location(owner);
         if (me && at && std::fabs(me->y - at->y) + std::fabs(me->z - at->z) > kSoundRangeUU) return ++g_snd_far, EvResult::Done;
         std::string why;
-        if (!fx::play_sound(owner, *ev, m.is2d != 0, &why) && ++g_snd_bad <= 5) log::warn("coop: sound {} rejected: {}", *ev, why);
+        if (!fx::play_sound(owner, *ev, m.is2d, &why)) {
+            g_snd_last_bad = *ev + ": " + why;
+            if (++g_snd_bad <= 5) log::warn("coop: sound {} rejected: {}", *ev, why);
+        }
         return EvResult::Done;
     }
     case proto::Msg::ActStop: {
@@ -1141,9 +1145,9 @@ ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id) {
 }
 
 std::string describe_events() {
-    return std::format("events(client): hitReacts={} spirits={} spawned={} failed={} retryQueue={} retried={} absent={} fxBad={} soundBad={} soundFar={} stopMissed={} live abilities={} fx={}\n",
+    return std::format("events(client): hitReacts={} spirits={} spawned={} failed={} retryQueue={} retried={} absent={} fxBad={} soundBad={} soundFar={} stopMissed={} live abilities={} fx={} lastSoundBad='{}'\n",
                        g_hit_reacts, g_spirits.size(), g_spirit_spawned, g_spirit_failed, g_ev_retry.size(), g_ev_retried, g_ev_absent, g_fx_bad, g_snd_bad, g_snd_far, g_stop_missed, g_ab_live.size(),
-                       g_fx_live.size());
+                       g_fx_live.size(), g_snd_last_bad);
 }
 
 void present_lily_rows(const ClientCtx& c) {

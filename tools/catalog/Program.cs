@@ -66,6 +66,32 @@ if (options.ContainsKey("triggers"))
     return 0;
 }
 
+// --imports <name>: list every package importing an object with this exact name (e.g. a UFunction such as
+// PlayEventAttached), for research — which blueprints call a native entry.
+if (options.TryGetValue("imports", out var importName))
+{
+    Console.OutputEncoding = System.Text.Encoding.UTF8;
+    var n = 0;
+    foreach (var path in provider.Files.Keys.Where(k => k.EndsWith(".uasset") || k.EndsWith(".umap")).ToList())
+    {
+        try
+        {
+            var pkg = provider.LoadPackage(path);
+            var hit = false;
+            if (pkg is CUE4Parse.UE4.Assets.IoPackage io)
+                foreach (var idx in io.ImportMap)
+                    hit |= io.ResolveObjectIndex(idx)?.Name.Text == importName;
+            else if (pkg is CUE4Parse.UE4.Assets.Package legacy)
+                foreach (var imp in legacy.ImportMap)
+                    hit |= imp.ObjectName.Text == importName;
+            if (hit) Console.WriteLine(path);
+            if (++n % 1000 == 0) Console.Error.Write(".");
+        }
+        catch { }
+    }
+    return 0;
+}
+
 // --dump <file name> --out <dir>: write every matching package (exports + blueprint bytecode) as JSON, for research.
 if (options.TryGetValue("dump", out var dumpName))
 {

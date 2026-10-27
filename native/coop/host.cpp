@@ -369,7 +369,7 @@ struct FxEv {
 std::vector<FxEv> g_fx_pending;
 struct SndEv {
     ObjHandle owner, event;
-    bool is2d = false;
+    std::uint8_t mode = 0; // fx::SoundMode
 };
 std::vector<SndEv> g_snd_pending;
 std::vector<std::pair<ObjHandle, std::uint8_t>> g_stop_pending;
@@ -391,7 +391,7 @@ void on_deactivate(ue::UObject* psc) {
 void on_sound(const fx::Sound& s) {
     if (g_peers.empty()) return;
     if (g_snd_pending.size() >= 128) return void(++g_ev_dropped);
-    g_snd_pending.push_back({ObjHandle::of(s.owner), ObjHandle::of(s.event), s.is2d});
+    g_snd_pending.push_back({ObjHandle::of(s.owner), ObjHandle::of(s.event), s.mode});
 }
 void on_ability_stop(ue::UObject* ability, std::uint8_t reason) {
     if (g_peers.empty() || (!g_ab_live.contains(ability) && g_pending.empty())) return; // only launches we replicate
@@ -431,7 +431,7 @@ void send_events() {
             ++g_ev_noref;
             continue;
         }
-        if (const auto id = name(fx::path_of(ev))) send_to(*r, proto::Snd{static_cast<std::uint8_t>(r->kind), r->id, id, static_cast<std::uint8_t>(e.is2d)}, g_snd_sent);
+        if (const auto id = name(fx::path_of(ev))) send_to(*r, proto::Snd{static_cast<std::uint8_t>(r->kind), r->id, id, e.mode}, g_snd_sent);
     }
     g_snd_pending.clear();
     for (auto& [h, reason] : g_stop_pending) {
