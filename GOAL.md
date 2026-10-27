@@ -4,7 +4,7 @@
 > **进度以 §7 的勾选表为准**：每完成一项就在该行打勾并补「日期 · 证据（kb 节 / 截图 / 命令输出）· commit」；「当前进行中」同步更新。goal 完成 = §7 全部打勾。
 > 只有在全部完成、或某项经充分尝试仍无法达成（写明尝试、证据、剩余选项）且再无其他可做项时才报告 goal 完成或 blocked。需要我决定的问题：先按需求树已有定案与 fail closed 默认继续其他工作，记到顶部「需要用户」与阶段报告，不要停下等。
 
-**当前进行中**：§4 —— 附着音效完成；下一步 §7.4 蓝图直接粒子（SpawnEmitter* / 非 SpawnFX 路径）（2026-10-28）
+**当前进行中**：§4 —— 蓝图直接粒子完成；下一步 §7.4 敌人 VisualPivot 竖直偏移（2026-10-28）
 **需要用户**：（无新增）①G3 / 覆盖矩阵里门 / 宝箱 / Boss 行需要一个入口图里有未开门、宝箱、可进入未打 Boss 的存档放到 Host2 / Client2（没有就按同通路代证并在矩阵标「未在真对象上实测」）。
 
 ## 背景与本阶段目标
@@ -86,7 +86,7 @@ P7 失败的一个直接原因是没有能复跑的回归基线。先补：
 ### 7.4 点位（每行 = 矩阵一行或一组；实现时按实际点位增删行，新增行不删旧行）
 - [x] 正确性基线缺陷（基线实测中发现的，逐条列出并修复） —— 2026-10-28 · 证据：net-facts「P7 重启 · P6 基线六剧本」缺陷 ①–⑦ 及各自修复节（① 看门狗 979eb9a / ② 客人死亡姿态 6f8e931 / ③ 复核 / ④ 判定不可见差异 / ⑤ 入座前无副本 / ⑥ 重放预算 03dc683 / ⑦ 重放根组件校验 166b192）；复跑 guest-fight / death-respawn / slime-fight 正确性行全绿、变化沿 93–100%，截图 guest-fight-attack / death-respawn-guest-dead -{host,client}.png · commit 03dc683
 - [x] 附着 / 循环音效（`PlayEventAttached` 等） —— 2026-10-28 · 证据：net-facts「P7 重启 · 附着 / 循环音效」（CUE 调用者 4 个、IDA 0x78D7A0、Host 闪避 player-dodge 自然路径与测试辅助史莱姆路径 Client 均附着播放、slime-fight 98% / guest-fight 97% 正确性绿）；矩阵 L24 / E10 已同步 · commit 3c2824f
-- [ ] 蓝图直生特效（`SpawnEmitter*` / 非 `SpawnFX` 路径）
+- [x] 蓝图直生特效（`SpawnEmitter*` / 非 `SpawnFX` 路径） —— 2026-10-28 · 证据：net-facts「P7 重启 · 蓝图直接粒子」（IDA 0x25463A0 / 0x2546230、CUE 调用者清单、Host 捕获 PS_Gloweye / PS_Appear_M 等、Client 重放 fxBad 0、重放预算后 Client P99 453 µs、slime-fight / guest-fight 正确性绿；截图 emitter-slime-{host,client}）· commit 19905f4
 - [ ] 敌人 VisualPivot 竖直偏移
 - [ ] 精灵位置插值 / 精灵全状态
 - [ ] 敌人受击反应 / 全动画状态对齐
