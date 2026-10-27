@@ -87,7 +87,7 @@ P7 失败的一个直接原因是没有能复跑的回归基线。先补：
 - [x] 正确性基线缺陷（基线实测中发现的，逐条列出并修复） —— 2026-10-28 · 证据：net-facts「P7 重启 · P6 基线六剧本」缺陷 ①–⑦ 及各自修复节（① 看门狗 979eb9a / ② 客人死亡姿态 6f8e931 / ③ 复核 / ④ 判定不可见差异 / ⑤ 入座前无副本 / ⑥ 重放预算 03dc683 / ⑦ 重放根组件校验 166b192）；复跑 guest-fight / death-respawn / slime-fight 正确性行全绿、变化沿 93–100%，截图 guest-fight-attack / death-respawn-guest-dead -{host,client}.png · commit 03dc683
 - [x] 附着 / 循环音效（`PlayEventAttached` 等） —— 2026-10-28 · 证据：net-facts「P7 重启 · 附着 / 循环音效」（CUE 调用者 4 个、IDA 0x78D7A0、Host 闪避 player-dodge 自然路径与测试辅助史莱姆路径 Client 均附着播放、slime-fight 98% / guest-fight 97% 正确性绿）；矩阵 L24 / E10 已同步 · commit 3c2824f
 - [x] 蓝图直生特效（`SpawnEmitter*` / 非 `SpawnFX` 路径） —— 2026-10-28 · 证据：net-facts「P7 重启 · 蓝图直接粒子」（IDA 0x25463A0 / 0x2546230、CUE 调用者清单、Host 捕获 PS_Gloweye / PS_Appear_M 等、Client 重放 fxBad 0、重放预算后 Client P99 453 µs、slime-fight / guest-fight 正确性绿；截图 emitter-slime-{host,client}）· commit 19905f4
-- [ ] 敌人 VisualPivot 竖直偏移
+- [x] 敌人 VisualPivot 竖直偏移 —— 2026-10-28 · 证据：net-facts「P7 重启 · 敌人 VisualPivot 竖直偏移」（IDA 无字面量、CUE 写入者只有重置 / 莉莉攀爬、24 敌逐帧恒 0、截图 vp-soldier-host）→ 无差异无需通道；矩阵 E05 · commit 4e25921
 - [ ] 精灵位置插值 / 精灵全状态
 - [ ] 敌人受击反应 / 全动画状态对齐
 - [ ] 远程莉莉非战斗状态（坐椅 / 祈祷 / 受伤 / 击退 / 死亡 / 复活 / 交互 / 爬梯等）
