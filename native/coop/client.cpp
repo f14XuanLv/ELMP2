@@ -13,6 +13,7 @@
 #include "coop/entities/spawn.h"
 #include "coop/entity.h"
 #include "coop/session.h"
+#include "coop/sync.h"
 
 #include "guard/guard.h"
 
@@ -818,6 +819,7 @@ void tick(std::int64_t now_us) {
     h_input.add(static_cast<double>(t3 - t2));
     recheck(now_us);
     retry_events(now_us);
+    sync::rec_tick();
     if (t2 - t1 + clock::now_us() - t3 > 50) h_slow.add(static_cast<double>(t2 - t1 + clock::now_us() - t3));
 }
 
@@ -1086,6 +1088,74 @@ std::string describe() {
     return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} copies={} reconciles={} kills={} actBad={} actAbsent={} rechecks={} aiLeaks={} world={} equipRequests={} motionWrites={} presses(attack)={}\n{}{}", g_seat,
                        g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, std::uint64_t{0}, g_equip_requests, g_motion_writes, g_input.presses[3], ability::describe() + fx::describe() + describe_events() + adapters_text(),
                        guard::describe());
+}
+
+// `elmp lan sync` (coop/sync.h): what this client presents, keyed like the host's report
+namespace {
+std::string sync_spirit_key(ue::UObject* a) {
+    static reflect::PropRef owner = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).prop(L"Owner", reflect::Kind::Object);
+    const auto cls = log::utf8(ue::class_name_of(a));
+    auto* p1c = world::p1_controller();
+    if (owner.ok() && p1c && owner.object(a) == p1c) return std::format("s:{}:{}", g_seat, cls);
+    for (const auto& [k, sc] : g_spirits)
+        if (sc.actor.get() == a) return std::format("s:{}:{}", k >> 8, cls);
+    return {};
+}
+
+std::string sync_key_of(ue::UObject* a) {
+    static ue::UClass* spirit = reflect::find_class(L"/Script/Zenith.ZenithSpirit");
+    static ue::UClass* zc = reflect::find_class(L"/Script/Zenith.ZenithCharacter");
+    if (a == world::p1_pawn()) return std::format("l:{}", g_seat);
+    for (const auto& [k, c] : g_copies)
+        if (core::pawn(c.slot) == a) return std::format("l:{}", k);
+    if (spirit && a->GetClassPrivate()->IsChildOf(spirit)) return sync_spirit_key(a);
+    if (!zc || !a->GetClassPrivate()->IsChildOf(zc) || !g_resolved) return {};
+    if (auto* sp = g_spawn_point.object(a)) return "e:" + ue::utf8_name(sp);
+    for (const auto& [k, d] : g_dyn)
+        if (d.actor.get() == a) return std::format("d:{}", k);
+    return {};
+}
+
+std::vector<sync::Ent> sync_entities() {
+    resolve();
+    std::vector<sync::Ent> v;
+    static reflect::PropRef hidden = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).prop(L"bHidden", reflect::Kind::Bool);
+    if (auto* p1 = world::p1_pawn()) v.push_back({std::format("l:{}", g_seat), p1, true});
+    for (const auto& [k, c] : g_copies)
+        if (auto* p = core::pawn(c.slot)) v.push_back({std::format("l:{}", k), p, true});
+    for (const auto& e : registry::bucket(registry::Kind::Enemy))
+        if (auto* a = e.handle.get(); a && g_resolved) {
+            const auto k = sync_key_of(a);
+            v.push_back({k.empty() ? "x:" + ue::utf8_name(a) : k, a, false});
+        }
+    for (const auto& e : registry::bucket(registry::Kind::Spirit))
+        if (auto* a = e.handle.get(); a && hidden.ok() && !hidden.read_bool(a)) {
+            const auto k = sync_spirit_key(a);
+            v.push_back({k.empty() ? "s:?:" + log::utf8(ue::class_name_of(a)) : k, a, false});
+        }
+    return v;
+}
+} // namespace
+
+std::string rec(const std::string& sub, int frames) { return sub == "start" ? sync::rec_start(sync_entities, frames) : sync::rec_dump(); }
+
+std::string sync_report(const std::string& cat) {
+    std::string out;
+    sync::header(out, "client", g_seat, std::format("\"latest\":{}", g_latest));
+    if (sync::wants(cat, "ent"))
+        for (const auto& e : sync_entities()) sync::entity(out, e);
+    if (sync::wants(cat, "fx")) sync::fx(out, sync_key_of);
+    if (sync::wants(cat, "cnt")) {
+        sync::guard_counters(out);
+        out += std::format("{{\"cat\":\"cnt\",\"src\":\"client\",\"applied\":{},\"bad_snaps\":{},\"unknown_names\":{},\"taken\":{},\"kills\":{},\"copies\":{},\"spirits\":{},"
+                           "\"reconciles\":{},\"anim_sets\":{},\"anim_fail\":{},\"act_bad\":{},\"act_absent\":{},\"hit_reacts\":{},\"ev_retried\":{},\"ev_absent\":{},"
+                           "\"fx_bad\":{},\"sound_bad\":{},\"sound_far\":{},\"stop_missed\":{},\"ai_leaks\":{},\"dyn_bound\":{}}}\n",
+                           g_applied, g_bad_snaps, g_unknown_names, g_taken.size(), g_kills, g_copies.size(), g_spirits.size(), g_reconciles, g_anim_sets, g_anim_fail, g_act_bad,
+                           g_act_absent, g_hit_reacts, g_ev_retried, g_ev_absent, g_fx_bad, g_snd_bad, g_snd_far, g_stop_missed, g_leaks, g_dyn.size());
+    }
+    if (sync::wants(cat, "world")) sync::world_objects(out);
+    if (sync::wants(cat, "hash")) sync::hashes(out);
+    return out;
 }
 
 void install() { coop::set_handlers(Role::Client, {on_connected, on_closed, on_reliable, on_unreliable, tick, stop}); }

@@ -54,6 +54,14 @@ void lan_cmd(Args a, std::string& out) {
         out += world::level_instance::describe();
     } else if (sub == "trace" && a.size() > 1) {
         out += (coop::role() == coop::Role::Host ? coop::host::trace(a[1]) : coop::client::trace(a[1])) + "\n";
+    } else if (sub == "sync") { // P7 restart §3: comparable JSON lines (ent | fx | cnt | hash | all)
+        const std::string cat = a.size() > 1 ? a[1] : "all";
+        if (coop::role() == coop::Role::Client) out += coop::client::sync_report(cat);
+        else out += coop::host::sync_report(cat); // also without a session: the host-side view of this world
+    } else if (sub == "rec") { // Dev: per-frame edge recorder (start [frames] | dump)
+        const std::string what = a.size() > 1 ? a[1] : "dump";
+        const int frames = a.size() > 2 ? std::atoi(a[2].c_str()) : 900;
+        out += coop::role() == coop::Role::Client ? coop::client::rec(what, frames) : coop::host::rec(what, frames);
     } else if (sub == "status") {
         out += coop::describe();
         if (coop::role() == coop::Role::Host) out += coop::host::describe();
@@ -91,7 +99,7 @@ void hunter_cmd(Args a, std::string& out) {
 }
 
 void register_coop_commands() {
-    add("lan", "host <code> [port] [max] | join <addr> <code> [port] | leave | status | bg load|unload|boss", lan_cmd);
+    add("lan", "host <code> [port] [max] | join <addr> <code> [port] | leave | status | sync [ent|fx|cnt|hash|all] | bg load|unload|boss", lan_cmd);
     add("sdk", "SDK mods (Mods/*/elmp.json): registration, slot ranges, subscriptions", [](Args, std::string& out) { out += sdk::describe(); });
     add("hunter", "start [kills N] [time S] [grace S] [respawn S] [target boss|<mapId>] [progress mirror|preset] | stop | status", hunter_cmd);
 }

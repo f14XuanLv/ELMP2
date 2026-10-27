@@ -11,6 +11,7 @@
 #include "coop/entity.h"
 #include "coop/maps.h"
 #include "coop/session.h"
+#include "coop/sync.h"
 
 #include "party/seat.h"
 #include "party/transit.h"
@@ -619,6 +620,7 @@ void tick(std::int64_t now_us) {
     send_acts();
     send_events();
     send_snapshots();
+    sync::rec_tick();
 }
 
 void stop() {
@@ -662,6 +664,70 @@ std::string describe() {
     out += maps::describe();
     for (const auto& [id, p] : g_peers)
         out += std::format("  peer {} -> P{} key={} seq={} acked={} input={} mapReady={} build=[{}]\n", id, p.slot, p.guest_key, p.seq, p.acked, p.stalled ? "stalled" : "live", p.map_ready, p.build_report);
+    return out;
+}
+
+// `elmp lan sync` (coop/sync.h): what the host world holds, keyed like the client's report
+namespace {
+std::string spirit_key(ue::UObject* a) {
+    static reflect::PropRef owner = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).prop(L"Owner", reflect::Kind::Object);
+    const auto seat = owner.ok() ? seat_of_controller(owner.object(a)) : 0;
+    return seat ? std::format("s:{}:{}", seat, log::utf8(ue::class_name_of(a))) : std::string{};
+}
+
+std::string key_of(ue::UObject* a) {
+    for (const auto& [p, seat] : g_lily_pawns)
+        if (p == a) return std::format("l:{}", seat);
+    static ue::UClass* spirit = reflect::find_class(L"/Script/Zenith.ZenithSpirit");
+    if (spirit && a->GetClassPrivate()->IsChildOf(spirit)) return spirit_key(a);
+    static ue::UClass* zc = reflect::find_class(L"/Script/Zenith.ZenithCharacter");
+    if (!zc || !a->GetClassPrivate()->IsChildOf(zc) || !g_resolved) return {};
+    if (auto* sp = g_spawn_point.object(a)) return "e:" + ue::utf8_name(sp);
+    if (const auto d = entities::dyn_id_of(ObjHandle::of(a))) return std::format("d:{}", d);
+    return {};
+}
+
+std::vector<sync::Ent> sync_entities() {
+    resolve();
+    refresh_lily_pawns();
+    std::vector<sync::Ent> v;
+    auto ent = [&](std::string key, ue::UObject* a, bool lily) {
+        const auto at = core::location(a);
+        const int slot = at ? std::max(0, maps::slot_of_y(at->y)) : 0;
+        v.push_back({std::move(key), a, lily, slot, maps::offset(slot)});
+    };
+    for (const auto& [p, seat] : g_lily_pawns) ent(std::format("l:{}", seat), p, true);
+    for (const auto& e : registry::bucket(registry::Kind::Enemy))
+        if (auto* a = e.handle.get(); a && g_resolved) {
+            const auto k = key_of(a);
+            ent(k.empty() ? "x:" + ue::utf8_name(a) : k, a, false);
+        }
+    static reflect::PropRef hidden = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).prop(L"bHidden", reflect::Kind::Bool);
+    for (const auto& e : registry::bucket(registry::Kind::Spirit))
+        if (auto* a = e.handle.get(); a && hidden.ok() && !hidden.read_bool(a))
+            if (auto k = spirit_key(a); !k.empty()) ent(std::move(k), a, false);
+    return v;
+}
+} // namespace
+
+std::string rec(const std::string& sub, int frames) { return sub == "start" ? sync::rec_start(sync_entities, frames) : sync::rec_dump(); }
+
+std::string sync_report(const std::string& cat) {
+    std::string out, seats;
+    for (const auto& [id, p] : g_peers)
+        if (p.slot) seats += std::format("{}\"{}\":{}", seats.empty() ? "" : ",", p.slot, std::max(0, maps::slot_of_seat(p.slot)));
+    sync::header(out, "host", 1, "\"seatSlots\":{" + seats + "}");
+    if (sync::wants(cat, "ent"))
+        for (const auto& e : sync_entities()) sync::entity(out, e);
+    if (sync::wants(cat, "fx")) sync::fx(out, key_of);
+    if (sync::wants(cat, "cnt")) {
+        sync::guard_counters(out);
+        out += std::format("{{\"cat\":\"cnt\",\"src\":\"host\",\"peers\":{},\"acts_sent\":{},\"acts_dropped\":{},\"fx_sent\":{},\"fx_stops_sent\":{},\"sounds_sent\":{},"
+                           "\"ability_stops_sent\":{},\"events_dropped\":{},\"events_noowner\":{}}}\n",
+                           g_peers.size(), g_acts_sent, g_acts_dropped, g_fx_sent, g_fx_stops_sent, g_snd_sent, g_ab_stops_sent, g_ev_dropped, g_ev_noref);
+    }
+    if (sync::wants(cat, "world")) sync::world_objects(out);
+    if (sync::wants(cat, "hash")) sync::hashes(out);
     return out;
 }
 

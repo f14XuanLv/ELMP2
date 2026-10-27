@@ -4,7 +4,7 @@
 > **进度以 §7 的勾选表为准**：每完成一项就在该行打勾并补「日期 · 证据（kb 节 / 截图 / 命令输出）· commit」；「当前进行中」同步更新。goal 完成 = §7 全部打勾。
 > 只有在全部完成、或某项经充分尝试仍无法达成（写明尝试、证据、剩余选项）且再无其他可做项时才报告 goal 完成或 blocked。需要我决定的问题：先按需求树已有定案与 fail closed 默认继续其他工作，记到顶部「需要用户」与阶段报告，不要停下等。
 
-**当前进行中**：§2/§3 —— 矩阵已列行；先做 `elmp lan sync` + `sync_diff.py` + `scenario.py`，再用它们逐行实测 P6 基线（§2 第二项与 §3 验收同一轮完成）
+**当前进行中**：§3 —— `elmp lan sync` / `sync_diff.py` 完成；`scenario.py` 已跑通 slime-fight / guest-fight，继续其余 4 个剧本并据此填 §2 基线（2026-10-28）
 **需要用户**：①G3 / 覆盖矩阵里门 / 宝箱 / Boss 行需要一个入口图里有未开门、宝箱、可进入未打 Boss 的存档放到 Host2 / Client2（没有就按同通路代证并在矩阵标「未在真对象上实测」）。
 
 ## 背景与本阶段目标
@@ -79,8 +79,8 @@ P7 失败的一个直接原因是没有能复跑的回归基线。先补：
 - [ ] P6 基线逐行实测填入「当前状态」（Host2 / Client2）
 
 ### 7.3 工具
-- [ ] `elmp lan sync [cat]` 两侧可用，JSON 行输出
-- [ ] `tools/sync_diff.py`
+- [x] `elmp lan sync [cat]` 两侧可用，JSON 行输出 —— 2026-10-28 · 证据：`native/coop/sync.{h,cpp}` + host / client `sync_report`（ent / world / fx / cnt / hash，角色无关键 e: d: l: s: x:）与 `elmp lan rec start|dump` 逐帧变化沿记录；Host2 / Client2 church_07 实测两侧 26 实体、world、cnt、hash 正常输出 · commit 见本行提交
+- [x] `tools/sync_diff.py` —— 2026-10-28 · 证据：并行取两侧 `elmp lan sync`，按客人座位所在图过滤、5 UU / 动画 / HP / 可见 / fx / world 差异与正确性判据（guard replayed、Host 死 Client 活、Client 本地活敌）；`rec` 模式按实体 LCS（church_07 8 击：84 边 83 匹配）· commit 见本行提交
 - [ ] `tools/scenario.py` 六个剧本（slime-fight / guest-fight / world-objects / death-respawn / map-change / join-reconnect）在 P6 基线跑通，截图成对入 kb
 
 ### 7.4 点位（每行 = 矩阵一行或一组；实现时按实际点位增删行，新增行不删旧行）

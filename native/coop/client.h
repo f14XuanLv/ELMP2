@@ -11,6 +11,8 @@ namespace elmp::coop::client {
 
 void install(); // registers the Client handlers with coop/session
 std::string describe();
+std::string sync_report(const std::string& cat); // `elmp lan sync` JSON lines (coop/sync.h)
+std::string rec(const std::string& sub, int frames); // `elmp lan rec start [frames] | dump`
 std::string trace(const std::string& spawn_point);
 // adapter enemy_dyn (client half): adopt / spawn, takeover, present the ed rows; removal of vanished rows
 void present_dynamic(const ClientCtx& c);

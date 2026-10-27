@@ -18,6 +18,8 @@ void install(); // registers the Host handlers with coop/session
 // mode status line to the peer seated at only_seat (0 = every peer); shown as the client's banner
 void broadcast_banner(const std::string& text, std::int64_t only_seat = 0);
 std::string describe();
+std::string sync_report(const std::string& cat); // `elmp lan sync` JSON lines (coop/sync.h)
+std::string rec(const std::string& sub, int frames); // `elmp lan rec start [frames] | dump`
 std::string trace(const std::string& spawn_point); // Dev: previous trace of captured Y, starts a new one
 
 } // namespace elmp::coop::host
