@@ -118,31 +118,6 @@ TEST_MAIN({
         CHECK(n && decode(std::span(mb.data(), n), in2) && in2.presses[3] == 65535 && in2.snap_ack == 9);
         mb[2] = 101; // x out of range
         CHECK(!decode(std::span(mb.data(), n), in2));
-        Act act;
-        act.ability = 5, act.xf = {0, 0, 0, 1, 1, 2, 3, 1, 1, 1};
-        n = encode(act, mb);
-        Act act2;
-        CHECK(n && decode(std::span(mb.data(), n), act2) && act2.xf[5] == 2);
-        for (std::size_t k = 0; k < n; ++k) CHECK(!decode(std::span(mb.data(), k), act2));
-        act.xf[3] = 0; // degenerate quaternion
-        n = encode(act, mb);
-        CHECK(!decode(std::span(mb.data(), n), act2));
-        act.xf[3] = 1, act.kind = 5; // unknown owner kind
-        n = encode(act, mb);
-        CHECK(!decode(std::span(mb.data(), n), act2));
-        Fx fx;
-        fx.kind = 4, fx.net_id = 0x0201, fx.seq = 77, fx.ps = 9, fx.custom_bone = 3, fx.flags = 3, fx.sort = -2, fx.pool = 1;
-        n = encode(fx, mb);
-        Fx fx2;
-        CHECK(n && decode(std::span(mb.data(), n), fx2) && fx2.net_id == 0x0201 && fx2.seq == 77 && fx2.sort == -2 && fx2.pool == 1);
-        for (std::size_t k = 0; k < n; ++k) CHECK(!decode(std::span(mb.data(), k), fx2));
-        fx.ps = 0; // no particle system
-        n = encode(fx, mb);
-        CHECK(!decode(std::span(mb.data(), n), fx2));
-        ActStop as{3, 1, 12, 2};
-        n = encode(as, mb);
-        ActStop as2;
-        CHECK(n && decode(std::span(mb.data(), n), as2) && as2.seq == 12 && as2.kind == 3);
         Cmd cm{3, 2, 41, 123456, 17, 0, 3};
         n = encode(cm, mb);
         Cmd cm2;
@@ -157,10 +132,6 @@ TEST_MAIN({
         cm.cls = 17, cm.kind = 9; // unknown owner kind
         n = encode(cm, mb);
         CHECK(!decode(std::span(mb.data(), n), cm2));
-        Snd sd{1, 4, 8, 1};
-        n = encode(sd, mb);
-        Snd sd2;
-        CHECK(n && decode(std::span(mb.data(), n), sd2) && sd2.event == 8 && !decode(std::span(mb.data(), n - 1), sd2));
         NameDef nd{7, "map_church_08"};
         n = encode(nd, mb);
         NameDef nd2;

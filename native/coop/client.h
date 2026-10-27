@@ -1,7 +1,7 @@
 #pragma once
 
 // Coop client role (§7.5 client/*): Build → Welcome, local input upstream, snapshot decode, enemy takeover
-// (guard marks + frozen tick) and presentation, map follow.
+// (ADR 0006: decision source stopped, vanilla execution runs host commands) and presentation, map follow.
 
 #include <string>
 
@@ -17,8 +17,6 @@ void present_dynamic(const ClientCtx& c);
 // adapter halves enemy / lily (coop/entities/{enemy,lily}.cpp)
 void present_enemies(const ClientCtx& c);
 void present_lily_rows(const ClientCtx& c);
-void present_spirits(const ClientCtx& c); // adapter spirit (client half)
-void reset_spirits();
 std::string describe_dynamic(); // Dev: returns the previous trace, starts a new one (240 frames of presented Y)
 
 } // namespace elmp::coop::client

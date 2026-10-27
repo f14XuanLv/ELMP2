@@ -6,9 +6,7 @@
 
 #include "coop/host.h"
 
-#include "coop/ability.h"
 #include "coop/commands.h"
-#include "coop/fx.h"
 #include "coop/entity.h"
 #include "coop/maps.h"
 #include "coop/session.h"
@@ -205,61 +203,6 @@ void write_enemies(HostCtx&) {
         }
 }
 
-// adapter spirit (host half, P6): summoned spirits of P1 and every seat. Spirits are pooled per equipped
-// spirit and hidden while not summoned; Owner = the summoner's controller.
-namespace {
-std::unordered_map<ObjHandle, std::uint16_t> g_spirit_keys; // spirit → row key (seat << 8 | index)
-std::array<std::uint8_t, 256> g_spirit_next{};
-std::unordered_map<std::uint16_t, std::string> g_spirit_paths; // registry class id → class path
-reflect::PropRef g_hidden, g_owner, g_spirit_loco;
-
-std::uint16_t seat_of_controller(const ue::UObject* pc) {
-    if (!pc) return 0;
-    if (pc == world::p1_controller()) return 1;
-    for (const auto& seat : party::seats())
-        if (core::controller(seat.slot) == pc) return static_cast<std::uint16_t>(seat.slot);
-    return 0;
-}
-} // namespace
-
-void write_spirits(HostCtx&) {
-    const auto* s = core::schema::script();
-    static bool tried = false;
-    if (!tried) {
-        tried = true;
-        reflect::Resolver a("Actor", reflect::find_class(L"/Script/Engine.Actor"));
-        g_hidden = a.prop(L"bHidden", reflect::Kind::Bool);
-        g_owner = a.prop(L"Owner", reflect::Kind::Object);
-        g_spirit_loco = reflect::Resolver("ZenithSpirit", reflect::find_class(L"/Script/Zenith.ZenithSpirit")).prop(L"LocomotionComponent", reflect::Kind::Object);
-        if (!a.ok()) log::warn("coop: spirit capture unavailable: {}", a.failure());
-    }
-    if (!s || !g_hidden.ok() || !g_owner.ok() || registry::size(registry::Kind::Spirit) == 0) return;
-    for (const auto& e : registry::bucket(registry::Kind::Spirit)) {
-        auto* a = e.handle.get();
-        if (!a || g_hidden.read_bool(a)) continue;
-        const auto seat = seat_of_controller(g_owner.object(a));
-        if (!seat || seat > 255) continue;
-        auto [it, fresh] = g_spirit_keys.try_emplace(e.handle, 0);
-        if (fresh) it->second = static_cast<std::uint16_t>(seat << 8 | g_spirit_next[seat]++);
-        auto* row = g_frame->sp.add(it->second);
-        if (!row) break;
-        auto& path = g_spirit_paths[e.class_id];
-        if (path.empty()) path = log::utf8(a->GetClassPrivate()->GetPathName());
-        row->cls = name(path);
-        if (auto at = core::location(a)) row->x = at->x, row->y = at->y, row->z = at->z;
-        if (auto* loco = g_spirit_loco.ok() ? g_spirit_loco.object(a) : nullptr) {
-            reflect::Frame fr(s->loco_facing_right);
-            if (fr.invoke(loco)) row->facing = fr.ret_bool() ? 1 : -1;
-        }
-        pose(a, e.handle, *row, *s);
-    }
-}
-
-void reset_spirits() {
-    g_spirit_keys.clear();
-    g_spirit_next.fill(0);
-}
-
 namespace {
 void capture(std::int64_t now_us) {
     const auto t0 = clock::now_us();
@@ -306,7 +249,8 @@ std::optional<Ref> ref_of(ue::UObject* owner) {
     for (const auto& [p, seat] : g_lily_pawns)
         if (p == owner) return r.kind = proto::RefKind::Lily, r.id = seat, r;
     const auto h = ObjHandle::of(owner);
-    if (auto it = g_spirit_keys.find(h); it != g_spirit_keys.end()) return r.kind = proto::RefKind::Spirit, r.id = it->second, r;
+    static ue::UClass* spirit = reflect::find_class(L"/Script/Zenith.ZenithSpirit"); // derived by the summoner's command
+    if (spirit && owner->GetClassPrivate()->IsChildOf(spirit)) return r.kind = proto::RefKind::Spirit, r.id = 0, r;
     // SourceSpawnPoint is a ZenithCharacter property: other owners must not be read with it (access violation
     // 0x40000000d when a lily's spirit launched an ability)
     static ue::UClass* zc = reflect::find_class(L"/Script/Zenith.ZenithCharacter");
@@ -325,7 +269,6 @@ bool wants(const Peer& p, const Ref& r) {
 
 std::uint32_t ref_key(const Ref& r) { return static_cast<std::uint32_t>(r.kind) << 16 | r.id; }
 
-std::uint64_t g_acts_sent = 0, g_acts_dropped = 0, g_fx_sent = 0, g_fx_stops_sent = 0, g_snd_sent = 0, g_ab_stops_sent = 0, g_ev_dropped = 0, g_ev_noref = 0;
 
 template <class Msg>
 void send_to(const Ref& r, const Msg& m, std::uint64_t& counter) {
@@ -333,43 +276,6 @@ void send_to(const Ref& r, const Msg& m, std::uint64_t& counter) {
     if (!n) return;
     for (auto& [id, peer] : g_peers)
         if (wants(peer, r)) send_rel(id, n), ++counter;
-}
-
-struct Pending {
-    ObjHandle owner, spawned;
-    ability::Launch l;
-};
-std::vector<Pending> g_pending;
-std::unordered_map<std::uint32_t, std::uint32_t> g_act_seq; // ref key → last act seq
-struct AbilityLive {
-    ObjHandle h;
-    Ref r;
-    std::uint32_t seq = 0;
-};
-std::unordered_map<ue::UObject*, AbilityLive> g_ab_live; // launched ability → (owner, act seq) for ActStop
-
-void on_launch(const ability::Launch& l) {
-    if (g_peers.empty()) return;
-    if (g_pending.size() >= 64) return void(++g_acts_dropped);
-    g_pending.push_back({ObjHandle::of(l.owner), ObjHandle::of(l.spawned), l});
-}
-
-void send_acts() {
-    for (auto& p : g_pending) {
-        const auto r = ref_of(p.owner.get());
-        if (!r) continue;
-        auto act = p.l.act;
-        act.kind = static_cast<std::uint8_t>(r->kind);
-        act.net_id = r->id;
-        act.ability = name(p.l.cls);
-        act.custom_spawn = p.l.custom_spawn == "None" ? 0 : name(p.l.custom_spawn);
-        act.custom_attach = p.l.custom_attach == "None" ? 0 : name(p.l.custom_attach);
-        act.seq = ++g_act_seq[ref_key(*r)];
-        if (!act.ability) continue;
-        if (auto* ab = p.spawned.get()) g_ab_live[ab] = {p.spawned, *r, act.seq};
-        send_to(*r, act, g_acts_sent);
-    }
-    g_pending.clear();
 }
 
 // Command channel (ADR 0006): command starts of replicated actors, flushed before the snapshot of the frame.
@@ -407,91 +313,6 @@ void send_cmds() {
     g_cmd_pending.clear();
 }
 
-// FX / sound / ability-stop events (coop/fx detours, game thread) queued per frame, flushed after the acts
-struct FxEv {
-    ObjHandle owner, ps, psc;
-    fx::Spawn s;
-};
-std::vector<FxEv> g_fx_pending;
-struct SndEv {
-    ObjHandle owner, event;
-    bool is2d = false;
-};
-std::vector<SndEv> g_snd_pending;
-std::vector<std::pair<ObjHandle, std::uint8_t>> g_stop_pending;
-std::vector<std::uint32_t> g_deact_pending;
-std::unordered_map<ue::UObject*, std::pair<ObjHandle, std::uint32_t>> g_fx_live; // sent PSC → FX seq
-std::uint32_t g_fx_seq = 0;
-
-void on_fx(const fx::Spawn& s) {
-    if (g_peers.empty()) return;
-    if (g_fx_pending.size() >= 256) return void(++g_ev_dropped);
-    g_fx_pending.push_back({ObjHandle::of(s.owner), ObjHandle::of(s.ps), ObjHandle::of(s.psc), s});
-}
-void on_deactivate(ue::UObject* psc) {
-    auto it = g_fx_live.find(psc);
-    if (it == g_fx_live.end()) return;
-    if (it->second.first.get() == psc && g_deact_pending.size() < 256) g_deact_pending.push_back(it->second.second);
-    g_fx_live.erase(it);
-}
-void on_sound(const fx::Sound& s) {
-    if (g_peers.empty()) return;
-    if (g_snd_pending.size() >= 128) return void(++g_ev_dropped);
-    g_snd_pending.push_back({ObjHandle::of(s.owner), ObjHandle::of(s.event), s.is2d});
-}
-void on_ability_stop(ue::UObject* ability, std::uint8_t reason) {
-    if (g_peers.empty() || (!g_ab_live.contains(ability) && g_pending.empty())) return; // only launches we replicate
-    if (g_stop_pending.size() >= 256) return void(++g_ev_dropped);
-    g_stop_pending.emplace_back(ObjHandle::of(ability), reason);
-}
-
-void send_events() {
-    for (auto& e : g_fx_pending) {
-        auto* ps = e.ps.get();
-        const auto r = ps ? ref_of(e.owner.get()) : std::nullopt;
-        if (!r) {
-            ++g_ev_noref;
-            continue;
-        }
-        auto m = e.s.msg;
-        m.kind = static_cast<std::uint8_t>(r->kind);
-        m.net_id = r->id;
-        m.seq = ++g_fx_seq;
-        m.ps = name(fx::path_of(ps));
-        m.custom_bone = e.s.custom_bone.empty() || e.s.custom_bone == "None" ? 0 : name(e.s.custom_bone);
-        if (!m.ps) continue;
-        if (auto* psc = e.psc.get()) g_fx_live[psc] = {e.psc, m.seq};
-        send_to(*r, m, g_fx_sent);
-    }
-    g_fx_pending.clear();
-    for (auto seq : g_deact_pending) { // the client ignores seqs it never replayed
-        const auto n = proto::encode(proto::FxStop{seq}, g_buf);
-        for (auto& [id, peer] : g_peers)
-            if (peer.slot && n) send_rel(id, n), ++g_fx_stops_sent;
-    }
-    g_deact_pending.clear();
-    for (auto& e : g_snd_pending) {
-        auto* ev = e.event.get();
-        const auto r = ev ? ref_of(e.owner.get()) : std::nullopt;
-        if (!r) {
-            ++g_ev_noref;
-            continue;
-        }
-        if (const auto id = name(fx::path_of(ev))) send_to(*r, proto::Snd{static_cast<std::uint8_t>(r->kind), r->id, id, static_cast<std::uint8_t>(e.is2d)}, g_snd_sent);
-    }
-    g_snd_pending.clear();
-    for (auto& [h, reason] : g_stop_pending) {
-        auto* ab = h.get();
-        auto it = ab ? g_ab_live.find(ab) : g_ab_live.end();
-        if (it == g_ab_live.end() || it->second.h != h) continue;
-        send_to(it->second.r, proto::ActStop{static_cast<std::uint8_t>(it->second.r.kind), it->second.r.id, it->second.seq, reason}, g_ab_stops_sent);
-        g_ab_live.erase(it);
-    }
-    g_stop_pending.clear();
-    if (g_fx_live.size() > 1024) std::erase_if(g_fx_live, [](const auto& kv) { return !kv.second.first.get(); });
-    if (g_ab_live.size() > 1024) std::erase_if(g_ab_live, [](const auto& kv) { return !kv.second.h.get(); });
-}
-
 // Per-peer view (P3, coop/maps): a peer receives the rows of the map its seat stands in, in that map's local
 // coordinates (background slot k is captured at Y +300000·k). World rows are name keyed and kept whole.
 template <class Sec>
@@ -519,7 +340,6 @@ void send_snapshots() {
         band(g_frame->e, v.e, slot, off);
         band(g_frame->ed, v.ed, slot, off);
         band(g_frame->pk, v.pk, slot, off);
-        band(g_frame->sp, v.sp, slot, off);
         v.w = g_frame->w;
         const snap::Frame* base = nullptr;
         if (p.acked) {
@@ -670,16 +490,10 @@ void stop() {
     for (auto& [id, p] : g_peers)
         if (p.slot) party::leave(p.slot);
     for (auto& [k, slot] : g_parked) party::leave(slot);
-    ability::host_disable();
-    fx::host_disable();
     commands::host_disable();
     g_cmd_pending.clear(), g_cmd_seq.clear();
-    reset_spirits();
-    g_fx_pending.clear(), g_snd_pending.clear(), g_stop_pending.clear(), g_deact_pending.clear(), g_fx_live.clear(), g_ab_live.clear();
     party::transit::set_stay(nullptr);
     maps::reset();
-    g_pending.clear();
-    g_act_seq.clear();
     g_peers.clear();
     g_parked.clear();
     g_names.clear();
@@ -701,9 +515,7 @@ std::string trace(const std::string& name) {
 }
 
 std::string describe() {
-    std::string out = std::format("host: peers={} parked={} names={} epoch={} actsSent={} actsDropped={}\n", g_peers.size(), g_parked.size(), g_names.size(), g_epoch,
-                                  g_acts_sent, g_acts_dropped) +
-                      std::format("events: fx={} fxStops={} sounds={} abilityStops={} dropped={} noOwner={} live fx={} abilities={}\n", g_fx_sent, g_fx_stops_sent, g_snd_sent, g_ab_stops_sent, g_ev_dropped, g_ev_noref, g_fx_live.size(), g_ab_live.size()) +
+    std::string out = std::format("host: peers={} parked={} names={} epoch={}\n", g_peers.size(), g_parked.size(), g_names.size(), g_epoch) +
                       std::format("cmds: sent={} dropped={} noOwner={} spiritSkipped={}\n", g_cmds_sent, g_cmds_dropped, g_cmds_noref, g_cmds_spirit) + commands::describe();
     for (auto* a : adapters()) out += a->describe();
     out += maps::describe();

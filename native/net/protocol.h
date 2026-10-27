@@ -35,24 +35,20 @@ enum class Msg : std::uint8_t {
     NameDef = 2,    // host → client: id ↔ utf8
     Map = 3,        // host → client: follow to map (name id) via player start tag
     MapReady = 4,   // client → host: arrived in map
-    Act = 5,        // host → client: enemy ability launch replay
+    // 5 Act, 10 Fx, 11 FxStop, 12 Snd, 13 ActStop: P2 / P6 product channels, retired by ADR 0006 (protocol 4)
     Build = 6,      // client → host: guest build json (guestKey + equipment)
     EquipRequest = 7, // client → host: menu action json
     EquipResult = 8,  // host → client: result json
     Control = 9,    // either: code + text
-    Fx = 10,        // host → client: SpawnFX on a replicated actor's FX component
-    FxStop = 11,    // host → client: DeactivateSystem of a replicated SpawnFX result
-    Snd = 12,       // host → client: sound timeline event on a replicated actor
-    ActStop = 13,   // host → client: AAbility::Stop of a replicated launch
     Cmd = 14,       // host → client: CommandQueue command start of a replicated actor (ADR 0006)
 };
 
-// Owner of a replicated event (P6): which presented actor on the client it belongs to.
+// Owner of a replicated command: which presented actor on the client it belongs to.
 enum class RefKind : std::uint8_t {
     Enemy = 1,  // id = spawn point name id (section e key)
     Dyn = 2,    // id = dyn id (section ed key)
     Lily = 3,   // id = seat key (section l key; 1 = host P1)
-    Spirit = 4, // id = spirit row key (section sp: seat << 8 | index)
+    Spirit = 4, // host-side classification only (spirit commands derive from the summoner, never sent)
 };
 inline constexpr std::uint8_t kRefKindMax = 4;
 
@@ -60,42 +56,6 @@ struct Welcome { std::uint8_t seat = 0; std::uint16_t epoch = 0; std::uint16_t m
 struct NameDef { std::uint16_t id = 0; std::string text; };
 struct MapMsg { std::uint16_t map = 0; std::string tag; };
 struct MapReady { std::uint16_t map = 0; };
-struct Act {
-    std::uint16_t net_id = 0; // owner id (meaning per kind)
-    std::uint8_t kind = 1;    // RefKind
-    std::uint32_t seq = 0;
-    std::uint16_t ability = 0; // class path name id
-    std::array<float, 10> xf{0, 0, 0, 1, 0, 0, 0, 1, 1, 1};  // FAbilityDescription.Offset: quat (4), translation (3), scale (3)
-    std::array<float, 10> xf2{0, 0, 0, 1, 0, 0, 0, 1, 1, 1}; // the call's Offset argument
-    std::uint8_t spawn_bone = 0, attach_bone = 0;             // ESpineBone values
-    std::uint16_t custom_spawn = 0, custom_attach = 0;        // name ids (0 = None)
-    std::uint8_t flags = 0;     // bit0 follow spawn rot, bit1 follow attach rot, bit2 fire-and-forget
-};
-struct Fx {
-    std::uint8_t kind = 1;  // RefKind of the FX component's owner
-    std::uint16_t net_id = 0;
-    std::uint32_t seq = 0;  // host-wide FX sequence (FxStop target)
-    std::uint16_t ps = 0;   // UParticleSystem path name id
-    std::uint8_t bone = 0;  // ESpineBone
-    std::uint16_t custom_bone = 0; // name id (0 = None)
-    std::array<float, 10> xf{0, 0, 0, 1, 0, 0, 0, 1, 1, 1}; // Offset
-    std::uint8_t flags = 0; // bit0 attach, bit1 follow bone rotation, bit2 register as running FX
-    std::int32_t sort = 0;  // TranslucencySortPriority
-    std::uint8_t pool = 0;  // EPSCPoolMethod
-};
-struct FxStop { std::uint32_t seq = 0; };
-struct Snd {
-    std::uint8_t kind = 1;
-    std::uint16_t net_id = 0;
-    std::uint16_t event = 0; // UFMODEvent path name id
-    std::uint8_t is2d = 0;
-};
-struct ActStop {
-    std::uint8_t kind = 1;
-    std::uint16_t net_id = 0;
-    std::uint32_t seq = 0; // the Act.seq of that owner
-    std::uint8_t reason = 0; // EAbilityStopReason
-};
 // ADR 0006 decision replication: the host's command start, replayed on the client through the vanilla
 // AddNewImmediateCommand(dir, cmd, class). Combat / movement command types only (ECommandInputTypes 0..8;
 // INTERACT / MAINMENU / PAUSE / MINIMAP never travel).
@@ -117,17 +77,8 @@ std::size_t encode(const Welcome& m, std::span<std::uint8_t> out);
 std::size_t encode(const NameDef& m, std::span<std::uint8_t> out);
 std::size_t encode(const MapMsg& m, std::span<std::uint8_t> out);
 std::size_t encode(const MapReady& m, std::span<std::uint8_t> out);
-std::size_t encode(const Act& m, std::span<std::uint8_t> out);
 std::size_t encode(Msg type, const Json& m, std::span<std::uint8_t> out); // Build / EquipRequest / EquipResult
 std::size_t encode(const Control& m, std::span<std::uint8_t> out);
-std::size_t encode(const Fx& m, std::span<std::uint8_t> out);
-std::size_t encode(const FxStop& m, std::span<std::uint8_t> out);
-std::size_t encode(const Snd& m, std::span<std::uint8_t> out);
-std::size_t encode(const ActStop& m, std::span<std::uint8_t> out);
-bool decode(std::span<const std::uint8_t> in, Fx& m);
-bool decode(std::span<const std::uint8_t> in, FxStop& m);
-bool decode(std::span<const std::uint8_t> in, Snd& m);
-bool decode(std::span<const std::uint8_t> in, ActStop& m);
 std::size_t encode(const Cmd& m, std::span<std::uint8_t> out);
 bool decode(std::span<const std::uint8_t> in, Cmd& m);
 
@@ -136,7 +87,6 @@ bool decode(std::span<const std::uint8_t> in, Welcome& m);
 bool decode(std::span<const std::uint8_t> in, NameDef& m);
 bool decode(std::span<const std::uint8_t> in, MapMsg& m);
 bool decode(std::span<const std::uint8_t> in, MapReady& m);
-bool decode(std::span<const std::uint8_t> in, Act& m);
 bool decode(std::span<const std::uint8_t> in, Json& m);
 bool decode(std::span<const std::uint8_t> in, Control& m);
 

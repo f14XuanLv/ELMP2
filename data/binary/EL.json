@@ -147,14 +147,6 @@
       "source": "[E-IDA] v2 2026-10-28：守卫 +656（已死）→ 黑板 / 效用 / 导航收尾 → 按死亡样式 +176 分派（0xCA6410 / 0xCA6980 / 0xCA5FE0 / 0xCA5AD0）→ OnStartDeath 广播 +624；调用者 = ForceDeath（exec 0xD54C70 → thunk 0xCA76E0；另 0xDA0660）与 OnReceiveDeadEvent 实现 0xCB2740（HP 死亡委托，exec 0xD56100）",
       "note": "Client：guard 标记的呈现对象（敌人 / 动态敌人 / 莉莉副本）不跑原版死亡（掉落、出生点清除、销毁都在其后），死亡只由快照呈现"
     },
-    "AbilityLaunchFromDesc": {
-      "rva": "0x00CAD0C0",
-      "prefix": "48895C2408488974241048897C241855488D6C24B04881EC",
-      "signature": "AAbility* UAbilityComponent::LaunchAbilityFromDescription(this, const FAbilityDescription&, const FTransform&)",
-      "owner": "coop/host/events",
-      "source": "[E-IDA][E-实测] v1 data/RVA.json（IDA 2026-10-14）",
-      "note": "FAbilityTimeline::Tick(0xCBABE0) 直调，不经 ProcessEvent；pre 取参"
-    },
     "CommandProcessStart": {
       "rva": "0x00CB4F00",
       "prefix": "488BC4555657488BEC4881EC800000000F2970B8",
@@ -170,46 +162,6 @@
       "owner": "coop/commands",
       "source": "[E-IDA] v2 2026-10-28：FrameID (+320 + 1) % 10000 → 对 CommandSet 每条 FCommandSettings（136 B）调 TryAddCommandsFromSettings 实现 0xCC2840；代码调用者 = ZenithCharacter::Tick 0xCF3740、另一 Pawn Tick 0xCEF190、exec 0xD50F60",
       "note": "ADR 0006：Client 上莉莉副本的“输入 → 命令”在此被抑制（返回 −1），命令只来自 Host 的 Cmd；输入仍驱动移动与进行中命令的按住语义"
-    },
-    "SpawnFXImpl": {
-      "rva": "0x007D0600",
-      "prefix": "4C894C2420555356574154415541564157488DAC2418FFFF",
-      "signature": "UParticleSystemComponent* UBaseFXComponent::SpawnFX_Implementation(this, UParticleSystem*, ESpineBone, FName CustomBone, const FTransform* Offset, bool bAttach, bool bFollowBoneRotation, int32 TranslucencySortPriority, EPSCPoolMethod, bool bRegisterAsRunningFX)",
-      "owner": "coop/fx",
-      "source": "[E-IDA] v2 2026-10-27：execSpawnFX 0x7D5540 经 vtable +1024 调用；FX 时间线 0xD24380、Spine 动画通知 0x7D0E60 / 0x7D1380、技能 VisualCue 0xCBABE0 等都经 thunk 0x7D4A50 → ProcessEvent → 此实现",
-      "note": "Host 捕获网络对象的特效；Client 对已标记的呈现对象抑制非重放的本地特效"
-    },
-    "PSCDeactivateSystem": {
-      "rva": "0x0269A040",
-      "prefix": "405341544883EC584C8BA1A8000000488BD94D85E47508E8",
-      "signature": "void UParticleSystemComponent::DeactivateSystem(this)",
-      "owner": "coop/fx",
-      "source": "[E-IDA] v2 2026-10-27：符号 ?DeactivateSystem@UParticleSystemComponent@@QEAAXXZ；FX 时间线到 To 时调用",
-      "note": "Host：已下发的 SpawnFX 结果被停用 → FxStop"
-    },
-    "FMODPlayEventAtLocation": {
-      "rva": "0x0078D570",
-      "prefix": "40555657415641574883EC60488B05C518CB034833C44889",
-      "signature": "FFMODEventInstance UFMODBlueprintStatics::PlayEventAtLocation(UObject* WorldContext, UFMODEvent*, const FTransform&, bool bAutoPlay)",
-      "owner": "coop/fx",
-      "source": "[E-IDA] v2 2026-10-27：PlayEvent2D 0x78D520 以单位变换转发到此；音效时间线 0xD24B50（UCommandAction 采样的第 5 条时间线）、技能 0xCA5FE0 / 0xCB2430、FMODAnimNotifyPlay、蓝图 exec 都调用它；实测音效时间线钩子 0 次命中，声音不只来自时间线",
-      "note": "Host 捕获网络对象（上下文 Actor 或组件所属 Actor，技能除外）的音效；Client 抑制呈现对象的本地音效"
-    },
-    "FMODPlayEventAttached": {
-      "rva": "0x0078D7A0",
-      "prefix": "48895C241048896C2418488974242041564881EC90000000",
-      "signature": "UFMODAudioComponent* UFMODBlueprintStatics::PlayEventAttached(UFMODEvent*, USceneComponent*, FName, FVector, EAttachLocation, bool bStopWhenAttachedToDestroyed, bool bAutoPlay, bool bAutoDestroy)",
-      "owner": "coop/fx",
-      "source": "[E-IDA] v2 2026-10-27：execPlayEventAttached 0x79AE70 直调",
-      "note": "只计数（附着 / 循环音效暂不复制）"
-    },
-    "AbilityStop": {
-      "rva": "0x00CBDB80",
-      "prefix": "48895C2408574883EC300FB681280200000FB6DA8891A502",
-      "signature": "void AAbility::Stop(this, EAbilityStopReason)",
-      "owner": "coop/fx",
-      "source": "[E-IDA] v2 2026-10-27：execStop 0xD3DF60 直调；StopAbility 0xCBDC90、Tick 0xCBEE00 等 7 处调用；状态 +552（≥3 运行中）",
-      "note": "Host：已下发的技能结束 → ActStop"
     },
     "InteractablePressInteract": {
       "rva": "0x00CE8BF0",

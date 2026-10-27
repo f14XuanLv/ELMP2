@@ -6,9 +6,7 @@
 
 #include "coop/client.h"
 
-#include "coop/ability.h"
 #include "coop/commands.h"
-#include "coop/fx.h"
 #include "overlay/render.h"
 #include "coop/entities/clearable.h"
 #include "coop/entities/spawn.h"
@@ -597,99 +595,22 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
 // is not presented yet (e.g. a spirit's first ability arriving before the snapshot that summons it) is retried
 // for up to 300 ms, in order.
 constexpr std::int64_t kRetryUs = 300'000;
-constexpr float kSoundRangeUU = 4000.0f;
 enum class EvResult { Done, Retry };
 struct RetryEv {
     std::int64_t deadline = 0;
     std::vector<std::uint8_t> msg;
 };
 std::deque<RetryEv> g_ev_retry;
-std::unordered_map<std::uint64_t, ObjHandle> g_ab_live;  // kind << 48 | id << 32 | act seq → replayed ability
-std::unordered_map<std::uint32_t, ObjHandle> g_fx_live;  // host FX seq → replayed PSC
-std::uint64_t g_ev_absent = 0, g_ev_retried = 0, g_snd_far = 0, g_fx_bad = 0, g_snd_bad = 0, g_stop_missed = 0;
+std::uint64_t g_ev_absent = 0, g_ev_retried = 0;
 
 bool world_ready() {
     bool loading = true, ready = false;
     return lifecycle::state() == lifecycle::State::Settled && world::loader_flags(loading, ready) && !loading && ready;
 }
 
-std::uint64_t ab_key(std::uint8_t kind, std::uint16_t id, std::uint32_t seq) { return static_cast<std::uint64_t>(kind) << 48 | static_cast<std::uint64_t>(id) << 32 | seq; }
 
 EvResult handle_event(std::span<const std::uint8_t> msg) {
     switch (proto::type_of(msg)) {
-    case proto::Msg::Act: {
-        proto::Act a;
-        if (!proto::decode(msg, a)) return ++g_act_bad, EvResult::Done;
-        auto& last = g_act_last[static_cast<std::uint32_t>(a.kind) << 16 | a.net_id];
-        if (a.seq <= last) return EvResult::Done; // idempotent per owner
-        const auto* cls = g_names.text(a.ability);
-        const auto* cs = a.custom_spawn ? g_names.text(a.custom_spawn) : nullptr;
-        const auto* ca = a.custom_attach ? g_names.text(a.custom_attach) : nullptr;
-        if (!cls) return ++g_act_bad, EvResult::Done;
-        auto* owner = actor_of(a.kind, a.net_id);
-        if (!owner) return EvResult::Retry;
-        last = a.seq;
-        std::string why;
-        ue::UObject* spawned = nullptr;
-        const auto r0 = clock::now_us();
-        const bool ok = ability::replay(owner, a, *cls, cs ? *cs : "", ca ? *ca : "", &why, &spawned);
-        h_replay.add(static_cast<double>(clock::now_us() - r0));
-        if (!ok && ++g_act_bad <= 5) log::warn("coop: act {} on kind {} id {} rejected: {}", *cls, a.kind, a.net_id, why);
-        if (spawned) g_ab_live[ab_key(a.kind, a.net_id, a.seq)] = ObjHandle::of(spawned);
-        if (g_ab_live.size() > 512) std::erase_if(g_ab_live, [](const auto& kv) { return !kv.second.get(); });
-        return EvResult::Done;
-    }
-    case proto::Msg::Fx: {
-        proto::Fx m;
-        if (!proto::decode(msg, m)) return ++g_fx_bad, EvResult::Done;
-        const auto* ps = g_names.text(m.ps);
-        const auto* bone = m.custom_bone ? g_names.text(m.custom_bone) : nullptr;
-        if (!ps) return ++g_fx_bad, EvResult::Done;
-        auto* owner = actor_of(m.kind, m.net_id);
-        if (!owner) return EvResult::Retry;
-        std::string why;
-        if (auto* psc = fx::replay_spawn(owner, m, *ps, bone ? *bone : "", &why)) g_fx_live[m.seq] = ObjHandle::of(psc);
-        else if (++g_fx_bad <= 5) log::warn("coop: fx {} rejected: {}", *ps, why);
-        if (g_fx_live.size() > 512) std::erase_if(g_fx_live, [](const auto& kv) { return !kv.second.get(); });
-        return EvResult::Done;
-    }
-    case proto::Msg::FxStop: {
-        proto::FxStop m;
-        if (!proto::decode(msg, m)) return EvResult::Done;
-        auto it = g_fx_live.find(m.seq);
-        if (it == g_fx_live.end()) return EvResult::Done; // never replayed here (other map / own seat / dropped)
-        fx::deactivate(it->second.get());
-        g_fx_live.erase(it);
-        return EvResult::Done;
-    }
-    case proto::Msg::Snd: {
-        proto::Snd m;
-        if (!proto::decode(msg, m)) return ++g_snd_bad, EvResult::Done;
-        const auto* ev = g_names.text(m.event);
-        auto* owner = actor_of(m.kind, m.net_id);
-        if (!ev) return ++g_snd_bad, EvResult::Done;
-        if (!owner) return EvResult::Retry;
-        const auto me = core::location(world::p1_pawn());
-        const auto at = core::location(owner);
-        if (me && at && std::fabs(me->y - at->y) + std::fabs(me->z - at->z) > kSoundRangeUU) return ++g_snd_far, EvResult::Done;
-        std::string why;
-        if (!fx::play_sound(owner, *ev, m.is2d != 0, &why) && ++g_snd_bad <= 5) log::warn("coop: sound {} rejected: {}", *ev, why);
-        return EvResult::Done;
-    }
-    case proto::Msg::ActStop: {
-        proto::ActStop m;
-        if (!proto::decode(msg, m)) return EvResult::Done;
-        auto it = g_ab_live.find(ab_key(m.kind, m.net_id, m.seq));
-        if (it == g_ab_live.end()) {
-            // the act may still wait in the retry queue (owner not presented yet)
-            const auto last = g_act_last[static_cast<std::uint32_t>(m.kind) << 16 | m.net_id];
-            if (last < m.seq) return EvResult::Retry;
-            return ++g_stop_missed, EvResult::Done;
-        }
-        fx::stop_ability(it->second.get(), m.reason);
-        g_ab_live.erase(it);
-        return EvResult::Done;
-    }
     case proto::Msg::Cmd: { // ADR 0006: the host's decision, run through the vanilla command queue
         proto::Cmd m;
         if (!proto::decode(msg, m)) return ++g_cmd_bad, EvResult::Done;
@@ -790,20 +711,6 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         g_follow_tag = m.tag;
         g_follow_pending = true;
         g_follow_next_us = 0;
-        break;
-    }
-    case proto::Msg::Act:
-    case proto::Msg::Fx:
-    case proto::Msg::FxStop:
-    case proto::Msg::Snd:
-    case proto::Msg::ActStop: {
-        // after leave (stop() ran in this same session tick, enemies released, OpenLevel queued) the inbox
-        // can still hold events: never replay outside a seated session (AV 0x130 in LaunchAbilityFromDescription)
-        if (!g_seat) return;
-        // the local world is loading / tearing down (an act replayed while the client went back to the title
-        // crashed inside LaunchAbilityFromDescription: AV 0x130)
-        if (!world_ready()) return void(++g_act_absent);
-        queue_event(msg);
         break;
     }
     case proto::Msg::Cmd: {
@@ -1065,9 +972,7 @@ void stop() {
     g_act_last.clear();
     g_cmd_last.clear(), g_cmd_due.clear();
     commands::clear_suppressed();
-    g_ev_retry.clear(), g_ab_live.clear(), g_fx_live.clear();
-    fx::client_disable();
-    reset_spirits();
+    g_ev_retry.clear();
     for (auto* a : adapters()) a->reset();
     g_equip_sent.clear();
     g_index.clear();
@@ -1151,112 +1056,6 @@ void present_enemies(const ClientCtx& c) {
     if (const auto* s = core::schema::script(); s && g_resolved) present_enemies_impl(c.frame, *s);
 }
 
-// adapter spirit (client half, P6): one presentation actor per host spirit row of another seat — spawned from
-// the row's class, frozen (presentation component whitelist), marked, no collision; shown / hidden with the
-// row (kept for reuse), positioned / turned / posed from the row like the lily copies.
-struct SpiritCopy {
-    ObjHandle actor, spine;
-    std::uint16_t cls = 0, anim = 0;
-    std::int8_t facing = 0;
-    bool seen = false, visible = false;
-};
-std::map<std::uint16_t, SpiritCopy> g_spirits;
-std::uint64_t g_spirit_spawned = 0, g_spirit_failed = 0;
-
-namespace {
-void set_hidden(ue::UObject* a, bool hidden) {
-    static reflect::FuncRef hide = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).func(L"SetActorHiddenInGame", 1);
-    if (!a || !hide.ok()) return;
-    reflect::Frame h(hide);
-    h.arg_bool(0, hidden);
-    h.invoke(a);
-}
-} // namespace
-
-void present_spirits(const ClientCtx& c) {
-    // ADR 0006: spirits are derived by the lily copies' own replayed summon commands; the P6 spirit copies
-    // (and the sp section) are retired — deleted in P7-5
-    if (constexpr bool kRetired = true; kRetired) return;
-    const auto* s = core::schema::script();
-    if (!s || !g_seat) return;
-    if (!g_set_collision.ok()) {
-        reflect::Resolver a("Actor", reflect::find_class(L"/Script/Engine.Actor"));
-        g_set_collision = a.func(L"SetActorEnableCollision", 1);
-        g_set_rotation = a.func(L"K2_SetActorRotation", 2);
-    }
-    static reflect::PropRef loco_prop =
-        reflect::Resolver("ZenithSpirit", reflect::find_class(L"/Script/Zenith.ZenithSpirit")).prop(L"LocomotionComponent", reflect::Kind::Object);
-    static reflect::FuncRef set_facing = reflect::Resolver("LocomotionComponent", reflect::find_class(L"/Script/Zenith.LocomotionComponent")).func(L"SetFacing", 1);
-    static reflect::FuncRef set_time = reflect::Resolver("TrackEntry", reflect::find_class(L"/Script/SpinePlugin.TrackEntry")).func(L"SetTrackTime", 1);
-    static ObjHandle spine_cls = ObjHandle::of(reflect::find_object(L"/Script/SpineExtensionPlugin.SpineSkeletonAnimationExComponent"));
-    for (auto& [k, sc] : g_spirits) sc.seen = false;
-    for (const auto& row : c.frame.sp.view()) {
-        if ((row.key >> 8) == g_seat) continue; // own spirits: the local P1 summons them itself
-        auto& sc = g_spirits[row.key];
-        sc.seen = true;
-        auto* a = sc.actor.get();
-        if (!a || sc.cls != row.cls) {
-            if (a) guard::unmark(a), entities::destroy_copy(a);
-            sc = SpiritCopy{};
-            sc.seen = true;
-            const auto* path = c.text(row.cls);
-            auto* cls = path ? entities::class_by_path(*path) : nullptr;
-            static ue::UClass* spirit_base = reflect::find_class(L"/Script/Zenith.ZenithSpirit");
-            if (!cls || !spirit_base || !cls->IsChildOf(spirit_base)) continue;
-            if (!(a = entities::spawn_copy(cls, row.x, row.y, row.z))) {
-                ++g_spirit_failed;
-                continue;
-            }
-            ++g_spirit_spawned;
-            sc.actor = ObjHandle::of(a);
-            sc.cls = row.cls;
-            if (g_set_collision.ok()) {
-                reflect::Frame fc(g_set_collision);
-                fc.arg_bool(0, false);
-                fc.invoke(a);
-            }
-            freeze(a);
-            guard::mark(a);
-            reflect::Frame sf(s->actor_component_by_class);
-            sf.arg(0, spine_cls.get());
-            if (sf.invoke(a)) sc.spine = ObjHandle::of(sf.ret<ue::UObject*>());
-        }
-        if (!sc.visible) set_hidden(a, false), sc.visible = true;
-        if (auto at = core::location(a); at && (std::fabs(at->x - row.x) + std::fabs(at->y - row.y) + std::fabs(at->z - row.z)) > 0.5f) {
-            reflect::Frame tp(s->actor_teleport);
-            tp.arg(0, core::Vec3{row.x, row.y, row.z}).arg_bool(1, false).arg_bool(3, false);
-            tp.invoke(a);
-        }
-        if (row.facing && row.facing != sc.facing)
-            if (auto* loco = loco_prop.ok() ? loco_prop.object(a) : nullptr; loco && set_facing.ok()) {
-                reflect::Frame ff(set_facing);
-                ff.arg_bool(0, row.facing > 0);
-                if (ff.invoke(loco)) sc.facing = row.facing;
-            }
-        if (row.anim && row.anim != sc.anim)
-            if (const auto* anim = g_names.text(row.anim); anim && sc.spine.get()) {
-                reflect::Frame f(s->sp_set_animation);
-                f.arg(0, 0).arg_string(1, log::wide(*anim)).arg_bool(2, row.loop != 0);
-                if (f.invoke(sc.spine.get())) {
-                    if (auto* entry = f.ret<ue::UObject*>(); set_time.ok() && ue::alive(entry) && row.t > 0) {
-                        reflect::Frame st(set_time);
-                        st.arg(0, row.t);
-                        st.invoke(entry);
-                    }
-                    sc.anim = row.anim;
-                }
-            }
-    }
-    for (auto& [k, sc] : g_spirits)
-        if (!sc.seen && sc.visible) set_hidden(sc.actor.get(), true), sc.visible = false, sc.anim = 0;
-}
-
-void reset_spirits() {
-    for (auto& [k, sc] : g_spirits)
-        if (auto* a = sc.actor.get()) guard::unmark(a), entities::destroy_copy(a);
-    g_spirits.clear();
-}
-
 ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id) {
     ue::UObject* a = nullptr;
     switch (static_cast<proto::RefKind>(kind)) {
@@ -1276,9 +1075,7 @@ ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id) {
     case proto::RefKind::Lily:
         if (auto it = g_copies.find(id); it != g_copies.end()) a = core::pawn(it->second.slot);
         break;
-    case proto::RefKind::Spirit:
-        if (auto it = g_spirits.find(id); it != g_spirits.end() && it->second.visible) a = it->second.actor.get();
-        break;
+    case proto::RefKind::Spirit: break; // derived by the summoner's replayed command, never addressed
     }
     return a && !a->HasAnyFlags(RC::Unreal::RF_BeginDestroyed) ? a : nullptr;
 }
@@ -1287,9 +1084,7 @@ std::string describe_events() {
     return std::format("cmds(client): due={} bad={} owners={} copySnaps={} copyBlends={} poseHolds={}\n", g_cmd_due.size(), g_cmd_bad, g_cmd_last.size(), g_copy_snaps,
                        g_copy_blends, g_pose_holds) +
            commands::describe() +
-           std::format("events(client): hitReacts={} spirits={} spawned={} failed={} retryQueue={} retried={} absent={} fxBad={} soundBad={} soundFar={} stopMissed={} live abilities={} fx={}\n",
-                       g_hit_reacts, g_spirits.size(), g_spirit_spawned, g_spirit_failed, g_ev_retry.size(), g_ev_retried, g_ev_absent, g_fx_bad, g_snd_bad, g_snd_far, g_stop_missed, g_ab_live.size(),
-                       g_fx_live.size());
+           std::format("events(client): hitReacts={} retryQueue={} retried={} absent={}\n", g_hit_reacts, g_ev_retry.size(), g_ev_retried, g_ev_absent);
 }
 
 void present_lily_rows(const ClientCtx& c) {
@@ -1316,7 +1111,7 @@ std::string adapters_text() {
 
 std::string describe() {
     return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} copies={} reconciles={} kills={} actBad={} actAbsent={} rechecks={} aiLeaks={} world={} equipRequests={} motionWrites={} presses(attack)={}\n{}{}", g_seat,
-                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, std::uint64_t{0}, g_equip_requests, g_motion_writes, g_input.presses[3], ability::describe() + fx::describe() + describe_events() + adapters_text(),
+                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, std::uint64_t{0}, g_equip_requests, g_motion_writes, g_input.presses[3], describe_events() + adapters_text(),
                        guard::describe());
 }
 
