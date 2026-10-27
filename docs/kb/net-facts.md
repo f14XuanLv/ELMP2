@@ -142,3 +142,13 @@
   - 帧时间（资产已缓存后的 16 击窗口，`elmp perf`）：Host `frame.elmp_us` P99 428 µs（capture P99 376）；Client P99 277 µs（apply P99 134，replay P50 131 µs）。首次加载窗口（首次 LoadObject 精灵类 / 粒子 / 音效）Client P99 1.2 ms、单帧最大 135 ms（类加载），属一次性。
   - `PlayEventAttached` 0 次（church_07 未触发附着式音效）。
 - **遗留**：附着 / 循环音效与蓝图直接 `SpawnEmitter*` 不复制；精灵位置无插值（每快照直放）；首次资产加载的一次性卡顿；敌人 VisualPivot 竖直偏移。
+
+## P7 调研 spike（v2 2026-10-28，用户要求复盘方法论；Host2 单实例、无会话，church_07；ADR 0006）
+- **结论**：P6 属于“冻结执行层后逐项仿造产物”的加法路线（接管时按白名单关组件 tick → CommandAction 五条时间线全停 → 只能从下游捕获特效 / 音效 / 技能结束再复制）。所有角色的动作都经 `UCommandQueueComponent`（engine-facts「CommandQueue 决策管线」），复制“命令启动”这一个决策、让 Client 跑原版执行层即可得到完整表现。需求树 §7.21 定案。
+- **休眠敌人注入命令** `[E-实测]`：`e2010_Slime18`（AI 未运行，45 个组件全部 tick 关，Actor tick 关）调 `CommandQueueComponent:AddNewImmediateCommand(0, 1, CA_e2010_Slime_Attack_C)` → 返回命令 ID 1，动画立即变 `attack_A`（Start 时 State 时间线 t=0），之后 4 s 不再变化、队列一直 1——CommandQueue 不 tick 就不采样。
+- **放开执行层再注入** `[E-实测]`：同一只史莱姆 `SetActorTickEnabled(true)` + 全部组件 `SetComponentTickEnabled(true)`（AI 仍未运行，`BrainComponent:IsRunning()=false`）后注入同一命令：`attack_A`（f0–60）→ `attack_A_fall_loop`（f66–108）→ `attack_A_landing`（f114–162）→ `idle`（f168）；技能 Actor f36 出现 1 个、f66 起为 0（原版自然结束）；位置沿 Move 时间线 Y 3956 → 4578、Z −478 → −1378（跳起后落到下层地面）；命令完成后队列 0。之后状态机自己出 `idle_turn → walk`（无 AI，原版动画状态机）。
+- **莉莉副本注入命令** `[E-实测]`：`elmp spawn 101 mirror` 的第二只莉莉调 `AddNewImmediateCommand(0, 3, CACS_s5060_Combo_LV3_C)`（P1 刚用过的类）→ 莉莉 `summon_DEFAULT_C`（f0–42）→ `idle`；精灵 `BP_s5060_Assassin_C`（Owner 为该座位）立即出现并派生执行 `CA_s5060_Ground_01_C`，f54 命令结束、f84 精灵自行消失。精灵与精灵技能不需要单独复制。
+- **只写位置 + 速度不能驱动莉莉移动动画** `[E-实测]`：第二只莉莉每帧 `K2_SetActorLocation(+400/60 UU)` 并写 `CharacterMovement.Velocity = (0, 400, 0)` 90 帧，动画始终 `idle`（MovementMode 1）；同法作用于放开执行层的史莱姆，状态机出 `idle_turn → walk`。莉莉副本的移动必须走原版输入；敌人移动动画可以靠速度。
+- **轮询观察**：P1 连按 ATTACK 时 P1 的 `CommandQueue` 依次出现 `CACS_s5060_Combo_LV3_C/3`（按一次出现一次，约 44 帧后清空）；同期 24 只敌人中未进入战斗的（`idle` / `idle_peace`）队列始终为空。
+- **测试辅助（已登记、已清理）**：UEBridge eval 轮询 / 注入脚本（`%TEMP%\elmp_cmdprobe.lua`、`elmp_cmdinject.lua`、`elmp_lilyinject.lua`、`elmp_velprobe*.lua`）；`elmp spawn 101` 已 `despawn`；对 Slime18 的 tick 改写只在本次运行内。Host P1 中途在 church_07 死亡回椅子，`GameSlot_0.sav` / `GameSlot_backup_0_2.sav` / `save_index.json` 被改写，已从测试前备份还原并逐文件哈希一致。
+- **踩坑**：窗口最小化期间 Host2 曾处于 `IsGamePaused=true`（P1 站在 church_07 门盒里也不切图），eval `GameplayStatics:SetGamePaused(world, false)` 后立即切图。原因未查（疑似失焦暂停或死亡流程界面），以后门盒不触发时先查暂停态。

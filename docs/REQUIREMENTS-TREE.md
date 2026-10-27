@@ -170,11 +170,11 @@
 - 自研 UDP + CNG（ECDH P-256 / HKDF / AES-256-GCM）；不可靠最新通道（快照 / 输入）+ 可靠有序通道（握手 / 跟图 / 档案 / 装备请求 / 断线原因 / 动作重放）；MTU 1200 分片；增量快照（按对端基线）；所有队列有界；ACK 规则；`F_CLOSE`；多对端表；接口可替换（`IEncryptedTransport` 语义）。
 
 ### C15 Host 权威世界同步
-- 实体注册表（上网清单唯一事实）+ 每类适配器（静态敌人 / 动态敌人 / 莉莉行 / 世界对象 / 剧情旗标 / 掉落物）；快照节按实体 id 键控、按图分区、按对端兴趣过滤；敌人动作通道（`LaunchAbilityFromDescription` 原生捕获 → 可靠下发）；跟图闸门（`map` / `mapReady` 回执前不投入客人 Pawn）；卸载 ≠ 死亡。
+- 实体注册表（上网清单唯一事实）+ 每类适配器（静态敌人 / 动态敌人 / 莉莉行 / 世界对象 / 剧情旗标 / 掉落物）；快照节按实体 id 键控、按图分区、按对端兴趣过滤；**命令通道**（2026-10-28 起，§7.21 / ADR 0006：CommandQueue 命令启动沿原生捕获 → 可靠下发，取代 P2 的 `LaunchAbilityFromDescription` 动作通道与 P6 的产物通道）；莉莉行回带座位原始输入；跟图闸门（`map` / `mapReady` 回执前不投入客人 Pawn）；卸载 ≠ 死亡。
 - 依赖 M12、M17 实体注册与生命周期监听、E5 敌人激活 / 清除事实。
 
 ### C16 Client 呈现
-- 呈现化接管：敌人逐组件关 tick（白名单保留渲染 / 动画 / 技能 / FX）、`CanBePaused=false`、原生三闸（激活本体 / 碰撞原语 / tick 原语）+ 1 Hz 直写复检；激活体积源头冻结；输入锚点（本机 P1 隐藏、保留碰撞与输入组件与 Spine 跟随 tick）；幂等 Set 清单；行驻留语义（缺席 ≠ 消失）；注册式 teardown 按原值逐项还原。
+- 呈现化接管（2026-10-28 起按 §7.21 / ADR 0006）：**只停决策源、放开执行层**——敌人 AI 激活闸 + 1 Hz AI 泄漏复检、激活体积源头冻结，组件不再逐个关 tick；Host 命令经原版 `AddNewImmediateCommand` 重放，特效 / 音效 / 技能 / 精灵由原版执行层自己产生；莉莉副本 = 原版管线 + 回带输入 + Host 命令 + 位置纠正；结算边界（伤害 / 命中效果按类 / 交互类命令 / 存档 / 死亡只呈现）兜底；幂等 Set 清单；行驻留语义（缺席 ≠ 消失）；注册式 teardown 按原值逐项还原。（P2 的“逐组件关 tick 白名单”已被取代。）
 - 依赖 M11、M18 激活闸门、M14。
 
 ### C17 多客人
@@ -422,8 +422,8 @@ ELMP 包零 Lua；对 Lua Mod 注入 C 函数；语法糖随 SDK 仓库。`elmp.
 2. **客人进程 P1 呈现模式**：P1 忽略全部闸门目标（门 / 椅子 / 交互物 / 触发器）并关拾取球；世界变化只来自 Host（worldobj / story / pickup / enemy_dyn 适配器）。
 3. **Client 离开会话回标题**（fail closed：本地世界是呈现态，不在其上继续单机）；从未落座的被拒绝 join 不回标题。
 4. **可破坏物 Client 只隐藏**，不回放原版破坏（会本地生成掉落）。
-5. **重放技能 Actor 寿命上限 2 s**（Client 无原版结束路径；Host 发结束事件可更精确，留待需要时）。
-6. **敌人呈现**：按 Host 时间 100 ms 缓冲插值、>500 ms 直跳、不外推；离本地 Lily > 3000 UU 的敌人位置写入降为 ~10 Hz；换动画时 `SetTrackTime` 对齐。
+5. **重放技能 Actor 寿命上限 2 s**（Client 无原版结束路径；Host 发结束事件可更精确，留待需要时）。（2026-10-28 被 §7.21 取代：放开执行层后技能由原版自然结束。）
+6. **敌人呈现**：按 Host 时间 100 ms 缓冲插值、>500 ms 直跳、不外推；离本地 Lily > 3000 UU 的敌人位置写入降为 ~10 Hz；换动画时 `SetTrackTime` 对齐。（动画部分 2026-10-28 被 §7.21-6 取代：动画由原版执行层产生，快照动画名只兜底校正。）
 7. **切图规则 1 / 2 只对本地座位**；网络座位保留自己的 travel 闸门（C18）。交互按下时复查闸门（激活残留不能绕过后来关闭的闸门）。
 8. **客人构筑**：新座位按客人自带装备字段（spirits / summonSet / passives.equipped）apply；解锁 / 等级 / 持有用 Host 共享进度；重连收回座位不覆盖。装备变更 1 Hz 比对上行（EquipRequest / EquipResult）。
 9. **G3 门 / 宝箱 / Boss 窗口**：Host2 存档无可用对象，门 / 宝箱以同一 `AInteractable` 通路 + Tip 实测代证；Boss 战按 §7.1.3 fail closed。
@@ -445,7 +445,8 @@ unner <方向> <距离>，异图
 unner in <mapId>；客人经 Control code 10 横幅显示。
 4. **SDK 身份**：调用方 = Mod 目录名，须带 elmp.json（elmpApi 1 + slots）；最多 16 个 SDK Mod；Lua 事件用 `ELMP_PollEvents` 轮询（JSON），C++ 用 `subscribe` 回调（帧泵末尾派发）。
 
-### 7.20 P6 远程表现补全决定（2026-10-27，用户追加）→ **[定，可复议]**
+### 7.20 P6 远程表现补全决定（2026-10-27，用户追加）→ **[已被 §7.21 取代，2026-10-28]**
+> 第 2–5 条（精灵副本、特效 / 音效 / 技能结束复制）属于“冻结执行层后逐项仿造产物”的加法路线，P7 命令通道实测对齐后删除；第 1 条 Ref、第 6 条受击表现、第 7 条乱序重试保留并入 §7.21。
 1. **事件归属 Ref**：动作 / 特效 / 音效 / 技能结束一律带所属对象 `{kind: enemy(出生点名) / dyn(动态 id) / lily(座位) / spirit(座位<<8|序号), id}`；只发给座位与所属对象同图的对端，不回发给产生它的座位（该客人本机的莉莉与精灵自己跑）。协议版本升到 3。
 2. **精灵呈现**：快照新段 `sp`（只含已召唤 = 未隐藏、Owner 为座位 PC 的精灵）；Client 按行的类生成呈现用精灵（白名单冻结、无碰撞、guard 标记），行消失则隐藏复用；位置每快照直放（同莉莉副本）。
 3. **特效**：Host 钩 `UBaseFXComponent::SpawnFX` 实现捕获所属网络对象的特效（FX 时间线 / Spine 动画通知 / VisualCue / 蓝图都经此）；`DeactivateSystem` 同步为 FxStop；Client 对 guard 标记的呈现对象，非重放的本地 SpawnFX 立即隐藏 + 停用（不回 null，原版调用方会解引用）。
@@ -453,6 +454,19 @@ unner in <mapId>；客人经 Control code 10 横幅显示。
 5. **技能结束**：Host 钩 `AAbility::Stop`，已下发的发射按 (Ref, seq) 发 ActStop；Client 对仍在运行的重放体调同一 `Stop`；重放寿命上限从 2 s 放宽为 10 s 兜底。
 6. **受击表现**：Client 呈现的敌人 / 莉莉副本 HP 下降时，调用其蓝图 `OnReceiveDamage` 处理函数（BP_Character_SpineBase 的 `BndEvt__HPComponent_…_HPDamageEvent`：附加受击动画），只表现不结算。
 7. **乱序**：所属对象尚未呈现的事件（如精灵首个技能先于召唤它的快照到达）按序重试 ≤ 300 ms。
+
+### 7.21 P7 Client 呈现方法论：复制决策 + 跑原版执行层 + 收束结算（2026-10-28，用户要求）→ **[定，细则可复议]**
+依据：ADR 0006；engine-facts「CommandQueue 决策管线」`[E-IDA][E-CUE]`；net-facts「P7 调研 spike」`[E-实测]`。
+1. **方法论**：Client 上每个网络对象分三层——决策层归 Host（复制决策），执行层在 Client 跑原版（不冻结、不仿造产物），结算层只在 Host（Client 在结算汇点做减法）。新增呈现需求先问“它是哪一层”，执行层的东西不再加通道。
+2. **决策入口 = CommandQueue 命令启动沿**（`0xCB4F00` 首次处理分支；敌人行为树 `ExecuteActionAsync` → `AddNewImmediateCommand`，莉莉输入 → `TryAddCommands*`，精灵由召唤命令派生）。Host 对网络对象（敌人 / 动态敌人 / 座位莉莉）捕获 `Cmd{Ref, seq, t_ms, CommandAction 类 id, Dir, Cmd}`，可靠下发，不回发给产生它的座位；精灵命令不发。
+3. **Client 重放**：对呈现对象调原版 `AddNewImmediateCommand(Dir, Cmd, 类)`；校验类 `IsChildOf(CommandAction)`、Cmd 类型白名单（JUMP / DODGE / ATTACK / SUMMON_1 / SUMMON_2 / SUMMON_SET_SWITCH / HOOK / HEAL；INTERACT / MAINMENU / PAUSE / MINIMAP 不重放）、所属对象为 guard 标记的呈现对象、每对象 seq 单调幂等、队列有界、未呈现重试 ≤ 300 ms。敌人按插值渲染时刻（Host 时间 − 100 ms）到点执行，莉莉副本到达即执行。
+4. **接管**：敌人只停决策源（AI 激活闸、激活体积源头冻结、1 Hz AI 泄漏复检），组件 tick 与世界碰撞保持原版；guard 的 tick / 碰撞原语闸只拦决策源对象。动态敌人同。
+5. **莉莉副本**：原版管线（组件不冻结）；快照莉莉行回带座位原始输入（轴 / 按住位 / 累计计数，与上行 `Input` 同语义），经虚拟手柄喂入；副本本地“输入 → 命令”生成被抑制（原生钩子，只对副本），命令只来自 Host（第 2 条）；位置纠正 >240 UU 直跳、40–240 每帧收拢 15%（复测后定）。精灵由副本自己的召唤命令派生，取消精灵呈现副本与 `sp` 段。
+6. **位置与动画**：敌人无进行中重放命令时由快照插值定位置，插值速度写 `CharacterMovement.Velocity`（原版状态机选 idle / walk / turn）；有进行中命令时原版 Move 时间线移动，偏差超阈值才校正。快照动画名只做漂移检测与兜底校正（默认：无命令且动画不一致持续 > 300 ms 才 `SetAnimation`）。
+7. **结算边界**（P7-1 用 IDA 枚举后定稿，每项有拦截计数）：存档保护、`DoDamage` / 技能伤害拦截（已有）；命中效果按类——`AE_Damage / DamageAbsolute / HealAbsolute / Knockback / RestoreMPToInvoker / StaminaDamageAbsolute / StunDamageAbsolute` 不施加，`AE_HitStop / CameraShake / ShakeTarget / ForceFeedback` 照常；死亡只由快照呈现；交互类命令不重放、副本不生成；Client 本地生成的敌人交 `enemy_dyn` 收养或销毁；掉落不生成。本地 P1 被击退默认不放行（靠 >150 UU 回拉），实测后可复议。
+8. **保留**：Ref、乱序重试、受击表现（Host HP 下降 → 呈现对象蓝图 `OnReceiveDamage` 处理函数）、快照插值、HP / MP 直写。
+9. **删除**（命令通道实测对齐后）：`Act / Fx / FxStop / Snd / ActStop` 通道与对应 Host 钩子、本地特效抑制、精灵副本与 `sp` 段、重放寿命上限；协议版本升到 4。
+10. **验收**：同一场战斗 Host / Client 并排截图与录屏级对照（攻击动画、特效、音效、精灵、技能结束、受击）；`cmd captured = replayed`、rejected 0；结算边界各项拦截计数可观测且 Client 存档 / 世界清除 / 掉落泄漏为 0；G1 仍成立（AI 激活 0）；Host / Client ELMP 帧 P99 < 1 ms，并记录放开执行层后的游戏整体帧时间。
 
 ---
 

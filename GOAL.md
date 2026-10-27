@@ -5,13 +5,13 @@
 > 只有在全部完成、或某阶段门槛经充分尝试仍无法达成（写明尝试、证据、剩余选项）时才报告 goal 完成或 blocked。需要我决定的产品问题：先按需求树已有定案与 fail closed 默认继续其他工作，把问题集中列出，不要停下等。
 > **进度以 §7 的勾选表为准**：每完成一项就在该行打勾并补「日期 · 证据（kb 节 / 截图 / 命令输出）· commit」；下面「当前进行中」一行同步更新。goal 完成 = §7 全部打勾。
 
-**当前进行中**：无 —— P6 远程表现补全（2026-10-27 追加）已全部打勾，协议升到 3（发布包未重打）；P1–P5 已于 2026-10-27 全部打勾。
+**当前进行中**：P7 Client 呈现方法论重构（2026-10-28 追加，ADR 0006 / 需求树 §7.21）—— P7-0 调研定案已完成，下一步 P7-1 结算边界枚举与补全。发布包暂不重打（P6 协议 3 未发布；P7 完成后协议 4 一并出包）。
 **需要用户**：①若要补测 G3 门 / 宝箱 / Boss 窗口专项，请提供一个入口图里有未开门 / 宝箱、可进入未打 Boss 的存档放到 Host2/Client2（当前按同通路代证 + Boss fail closed 继续）；（P2 自行定案已记 net-facts：本地 P1 预测 + >150 UU 回拉；Client 离开会话回标题；可破坏物 Client 只隐藏不回放破坏）
 
 ## 0. 恢复上下文（每轮先读）
 1. `AGENTS.md`（规则、资料路径与证据等级、常用命令）。
 2. `README.md`「当前阶段」——P0、P1a–P1f 已完成并提交（`f611b5e`），P2 未开始。
-3. `docs/REQUIREMENTS-TREE.md`：§2.3 F2.1–F2.13、§2.4 F3.*、§2.5 F4.*、§3 C14–C20、§4 M11/M17–M24、§5 E5/E6/E9、§7（7.1 后台图 Boss fail closed、7.2 闸门矩阵、7.3 单值假设清单、7.9/7.10 SDK 与命中规则、7.13–7.16 P1 实施决定）、§8 验收口径与性能门槛。
+3. `docs/REQUIREMENTS-TREE.md`：§2.3 F2.1–F2.13、§2.4 F3.*、§2.5 F4.*、§3 C14–C20、§4 M11/M17–M24、§5 E5/E6/E9、§7（7.1 后台图 Boss fail closed、7.2 闸门矩阵、7.3 单值假设清单、7.9/7.10 SDK 与命中规则、7.13–7.16 P1 实施决定、**7.21 P7 呈现方法论**）、§8 验收口径与性能门槛；`docs/adr/0006-client-vanilla-execution.md`（2026-10-28：复制决策 + 跑原版执行层 + 收束结算）。
 4. `docs/ARCHITECTURE-V2.md`：§3 线程模型、§5 注册表、§6 Hook 总表、§7.5 coop / §7.6 modes、§8 类型化协议、§9 多地图、§11 Dev、§12 SDK、§13 验证策略、§15 P2–P5 门槛、§16.1 缓存清单。
 5. `docs/kb/engine-facts.md`、`core-facts.md`、`party-facts.md`（P1f：原版交互入口、存档登记降频、闸门矩阵本地列、帧时间基线）。
 6. 现有代码接口：`native/engine/{reflect,registry,frame,lifecycle,world,handle}.h`、`native/base/{events,seqlock,settings,binary_manifest}.h`、`native/core/*.h`、`native/party/*.h`、`native/pvp/hitgate.h`、`native/overlay/model.h`、`native/console/console.h`、`data/binary/EL.json`、`data/gates.json`。新模块一律建在这些之上，不另起反射 / 帧泵 / 注册表。
@@ -75,6 +75,16 @@
 - 技能结束：Host 钩技能停止，按 (Ref, seq) 下发；Client 停掉对应重放体；寿命上限保留为兜底并放宽。
 - 受击表现：按 IDA / 实测选原版入口（委托广播或蓝图事件），只做表现、不结算。
 门槛：Host P1 / 其他客人的精灵攻击在 Client 可见（截图 + 计数）；敌人 FX 时间线特效、音效在 Client 出现（Host / Client 计数对账）；技能结束同步后 Client 残留重放体 ≈ Host；受击闪白 / 火花可见；Client / Host 帧时间 P99 仍 < 1.0 ms；kb + 需求树 §7.20 + README 已知限制更新。
+
+## 5c. P7 Client 呈现方法论重构（2026-10-28 追加，用户要求）
+背景：P6 是“冻结执行层后逐项仿造产物”的加法路线（特效 / 音效 / 技能结束 / 精灵副本各一条通道），要呈现的是开放集合、补不全。改为减法路线：**复制决策 + Client 跑原版执行层 + 只在结算汇点收束**（ADR 0006、需求树 §7.21；调研证据 engine-facts「CommandQueue 决策管线」、net-facts「P7 调研 spike」）。
+实施（每步先在 Host2/Client2 实测再进下一步，结论写 net-facts）：
+- **P7-1 结算边界**：IDA 枚举放开执行层后 Client 可达的结算点——命中效果分发（`0xCBB110` 与各 `AE_*` 的 `OnApplyEffect`）、死亡 / 掉落、`ClearableComponent` 清除、交互 / 休息、剧情旗标、存档；guard 增加“命中效果按类拦截”（结算类不施加、表现类照常）与计数；`EL.json` 登记；kb 写成表（汇点 / 证据 / 拦截方式 / 计数名）。
+- **P7-2 命令通道**：Host 原生 detour 命令启动沿（`0xCB4F00` 首次处理分支，或经 IDA 选更窄的点），对网络对象（敌人 / 动态敌人 / 座位莉莉）发 `Cmd{Ref, seq, t_ms, 类 id, dir, cmd}`；Client 对呈现对象调原版 `AddNewImmediateCommand`（类 / Cmd 白名单、seq 幂等、有界、乱序重试），敌人按插值渲染时刻执行；CTest 编解码；协议 4。
+- **P7-3 敌人接管改为只停决策源**：不再逐组件关 tick；guard 原语闸只拦 AI 控制器；1 Hz 改查 AI 泄漏；位置归属（无命令 = 快照插值 + 速度写入；有命令 = 原版 Move + 超阈值校正）；动画名只兜底校正；`enemy_dyn` 同步改；Client 本地生成的敌人交 `enemy_dyn` 收养 / 销毁。
+- **P7-4 莉莉副本走原版管线**：快照莉莉行回带座位原始输入 → 虚拟手柄；副本本地输入 → 命令生成抑制（原生钩子，只对副本）；命令只来自 Host；精灵由召唤命令派生（取消精灵副本与 `sp` 段）；位置纠正阈值复测。
+- **P7-5 删除加法通道**：命令通道对齐后删除 `Act / Fx / FxStop / Snd / ActStop`、Host 的 SpawnFX / FMOD / AbilityStop / PSC 钩子与 `EL.json` 条目、本地特效抑制、精灵副本、寿命上限；保留 Ref、乱序重试、受击表现。
+门槛：同一场战斗 Host / Client 并排截图对照（攻击动画、特效、音效、精灵、技能自然结束、受击）；`cmd captured = replayed`、rejected 0；结算边界各项拦截计数可观测，Client 存档 / 世界清除 / 掉落泄漏 0；G1 仍成立；Host / Client ELMP P99 < 1 ms 并记录游戏整体帧时间；两客人（Client3）各自看到对方与 Host 的完整表现；README 已知限制、需求树、kb 更新；`elmp.json` 版本升级并重打 Shipping / Dev 包（零 `.lua`）。
 
 ## 6. 全程硬规则
 - 拿走知识不照搬代码（`D:\CodeT\ELMP`、`D:\CodeT\LilyInEM` 只读）；Shipping 零 Lua；游戏线程入口只有 `RegisterEngineTickPreCallback`；缓存优先且每个缓存有失效源与审计计数；无座位无会话时 `g0.reflect_calls` 保持 0。
@@ -165,3 +175,13 @@
 - [x] 技能结束同步 —— 2026-10-27 · 证据：net-facts「P6 远程表现补全」（ActStop 66/66、stopMissed 0；寿命上限 10 s 兜底） · commit 本提交
 - [x] 受击表现 —— 2026-10-27 · 证据：net-facts「P6 远程表现补全」（OnReceiveDamage 处理函数 28 次） · commit 本提交
 - [x] 门槛实测（截图 + 计数对账 + 帧时间）+ kb + 需求树 §7.20 + README —— 2026-10-27 · 证据：net-facts「P6 远程表现补全」（fx2-client/host.png；Host P99 428 µs / Client 277 µs）、需求树 §7.20、README 已知限制 · commit 本提交
+
+### P7 Client 呈现方法论重构（2026-10-28 追加）
+- [x] P7-0 调研定案：IDA 定位 CommandQueue 决策管线、单实例 spike（放开执行层后注入命令得到完整原版表现）、ADR 0006 + 需求树 §7.21 + 架构 §7.5 / §8 + engine-facts / net-facts —— 2026-10-28 · 证据：engine-facts「CommandQueue 决策管线」、net-facts「P7 调研 spike」、docs/adr/0006-client-vanilla-execution.md · commit 本提交
+- [ ] P7-1 结算边界枚举（IDA 表）+ 命中效果按类拦截 + EL.json + 实测计数
+- [ ] P7-2 命令通道（Host 启动沿捕获 → Cmd → Client 原版 AddNewImmediateCommand 重放；协议 4；CTest）
+- [ ] P7-3 敌人接管改为只停决策源（组件不冻结、原语闸只拦 AI、位置归属、动画兜底、enemy_dyn）
+- [ ] P7-4 莉莉副本走原版管线（回带输入 + 本地命令抑制 + Host 命令 + 精灵派生 + 位置纠正）
+- [ ] P7-5 删除加法通道（Act / Fx / FxStop / Snd / ActStop、对应钩子与 EL.json、本地抑制、精灵副本、寿命上限）
+- [ ] P7 门槛：Host2/Client2(+Client3) 并排对照 + 计数对账 + 结算泄漏 0 + G1 + 帧时间，写入 net-facts
+- [ ] P7 收尾：README 已知限制 + 需求树 + 版本升级 + 重打 Shipping / Dev 包（零 .lua）

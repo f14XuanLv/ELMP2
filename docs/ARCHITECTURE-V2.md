@@ -238,9 +238,9 @@ struct WorldLoaderFacade { static FName currentMapId(); static bool isLoading();
 - `world_model`：Host 侧与 Client 侧共用的“行”结构体与驻留表（`at` 时间戳、GONE/PURGE 语义不变）。
 - `host/capture`：每帧：P1 行、客人行、`lv` 行、各 adapter `writeHost` 写入 `FrameSnapshot`（struct-of-rows，预分配容量 128/64/512）；按对端兴趣过滤 → `SnapSender(peer).encode(base)`。
 - `host/guest`：对端 → 座位；暂扣 / 部署；500 ms 停滞松键；档案 / 构筑按 `guestKey` 存取（C12）。
-- `host/events`：`act` 捕获队列（detour 写入 → 帧内可靠下发）、`map/mapReady` 闸门、`control`。
+- `host/events`：`cmd` 捕获队列（CommandQueue 命令启动沿 detour 写入 → 帧内可靠下发；2026-10-28 起取代 `act` 与 P6 产物通道，ADR 0006）、`map/mapReady` 闸门、`control`。
 - `host/maps`：后台图槽位、生命周期、`toLocalY/locateY`。
-- `client/takeover`：接管配方（逐组件关 tick、白名单、`CanBePaused=false`、`guard::markEnemy`、激活体积源头冻结、1 Hz 两标志复检）；`client/apply`：行 → 幂等 Set；`client/presenter`：锚点 / 相机清洗 / 进入离开；`client/vitals`：`CurrHP/CurrMP` 属性直写、`UseHeal/RestoreHeal` 计数对齐。
+- `client/takeover`：接管配方（ADR 0006：只停决策源——AI 激活闸、`guard::markEnemy`、激活体积源头冻结、1 Hz AI 泄漏复检；组件 tick 与世界碰撞保持原版，不再逐组件关 tick）；`client/commands`：Host 命令按时间轴经原版 `AddNewImmediateCommand` 重放（敌人按插值渲染时刻、莉莉副本到达即执行）；`client/lily`：莉莉副本 = 原版管线 + 回带输入经虚拟手柄 + 本地命令生成抑制 + 位置纠正；`guard` 增加命中效果按类拦截与交互类命令拦截；`client/apply`：行 → 幂等 Set；`client/presenter`：锚点 / 相机清洗 / 进入离开；`client/vitals`：`CurrHP/CurrMP` 属性直写、`UseHeal/RestoreHeal` 计数对齐。
 - `entities/*`：与 ADR 0003 同一契约（`claimHost/scanDoneHost/writeHost/claimClient/takeover/observe/render/onEvent/reset/unpuppetAll`），改为 C++ 虚接口 `IEntityAdapter`。
 
 ### 7.6 `modes/hunter`
@@ -283,10 +283,11 @@ FrameSnapshot {
 `InputMsg{ep u16, x i8, y i8, raw u16, c[9] u16, snap_ack u32}`（与 v1 语义一致）。
 
 ### 8.3 可靠有序
-`Hello/Welcome/Reject{Full|Version|Code}`、`NameDef`、`Act{net_id, seq, desc 白名单字段}`、`Map{map_id}` / `MapReady{map_id}`、`Profile{json bytes}`、`Build{guestKey → 构筑 json}`、`EquipRequest/EquipResult`（F2.10）、`StorySet`、`Control{WorldLost…}`、`Close{reason}`。
+`Hello/Welcome/Reject{Full|Version|Code}`、`NameDef`、`Cmd{Ref, seq, t_ms, cls 名字 id, dir, cmd}`（2026-10-28 起，ADR 0006；取代 `Act{net_id, seq, desc 白名单字段}` 与 P6 的 `Fx / FxStop / Snd / ActStop`，协议版本 4）、`Map{map_id}` / `MapReady{map_id}`、`Profile{json bytes}`、`Build{guestKey → 构筑 json}`、`EquipRequest/EquipResult`（F2.10）、`StorySet`、`Control{WorldLost…}`、`Close{reason}`。
+快照莉莉行恢复设计稿的输入字段（`ix iy iraw ic[9]`，与上行 `InputMsg` 同语义），供 Client 上的莉莉副本经虚拟手柄喂原版管线。
 
 ### 8.4 Client 应用顺序（每帧）
-`inbox drain → observe（行入驻留表）→ render（插值 / 姿态 / HP / 显隐 / 变身）→ takeover.tick（新敌人接管、1 Hz 复检）→ hud(vitals) → followCamera`。
+`inbox drain → observe（行入驻留表）→ commands（到点的 Cmd 经原版入口重放）→ render（插值位置 / 速度 / HP / 显隐 / 变身；动画名只兜底校正）→ lily 副本输入喂入与位置纠正 → takeover.tick（新敌人接管、1 Hz AI 泄漏复检）→ hud(vitals) → followCamera`。
 
 ---
 
@@ -428,6 +429,7 @@ v1 积累了 270 个离线 Lua 测试 + 84 个原生测试，其中相当一部�
 ## 18. ADR 更新清单
 
 - **新增 ADR 0005**：Shipping 纯 C++、单帧泵、注册表、typed 协议、C ABI SDK（本文件 §1–§12）。
+- **新增 ADR 0006**（2026-10-28）：Client 呈现改为“复制决策（CommandQueue 命令启动沿 + 莉莉回带输入）+ 跑原版执行层 + 收束结算”，取代接管冻结与 P6 产物复制（§7.5、§8.3、§8.4 已同步）。
 - **ADR 0001**：模块表改指向 `native/core/*`；“跨 Lua 状态的数据放原生层”原则自然成立。
 - **ADR 0003**：文件布局节替换为 §2；决定一～五不变。
 - **ADR 0004**：补充 §9 单值假设工作清单与 Boss 房 fail closed。
