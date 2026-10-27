@@ -109,6 +109,10 @@ def compare(h: dict, c: dict) -> dict:
             hv, cv = hw.get(k), cw.get(k)
             hs = None if hv is None else (hv.get("vis"), hv.get("hp"), hv.get("n"))
             cs = None if cv is None else (cv.get("vis"), cv.get("hp"), cv.get("n"))
+            if hv is None and cv is not None and cv.get("vis") is False:
+                continue  # destroyed on the host ↔ hidden on the client (worldobj gone / broken presentation)
+            if hv and cv and k.startswith("w:") and hv.get("vis") == cv.get("vis") and (hv.get("hp") or 0) <= 0 and not cv.get("vis"):
+                continue  # broken on both (client HP is not written, only hidden)
             if hs != cs:
                 res["world"].append((k, hs, cs))
     g = c["cnt"].get("guard")

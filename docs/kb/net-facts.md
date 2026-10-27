@@ -189,3 +189,17 @@
 
 ### 结论：每个同步点位按证据选机制（ADR 0006）
 P7 的方向（复制决策、让原版执行层产生表现）对“完全由命令驱动、执行层在 Client 无副作用、结果会被快照纠正”的点位成立；错在**一次性对所有点位、所有对象类换方法论并删除兜底**。今后每个点位从 ①快照状态 ②事件复制 ③决策复制 ④放开部分执行层 ⑤不同步 中按调研证据选择，③ / ④ 只在该点位的结算汇点已 xref 封闭、Client 状态被证明收敛到快照时采用，且不删除原通道直到覆盖矩阵（`docs/kb/sync-coverage.md`）该行全绿。
+
+## P7 重启 · P6 基线六剧本（v2 2026-10-28，Host2 / Client2，槽 0，main `6cb6031` Dev；`tools/scenario.py`）
+工具：`elmp lan sync [ent|world|fx|cnt|hash]`（两侧角色无关键）、`elmp lan rec start N | dump`（逐帧变化沿）、`tools/sync_diff.py`（瞬时对账 + `rec` 按实体 LCS）。报告 `%TEMP%\elmp_scn\<剧本>-<时刻>\report.txt`，截图 `<userDir>\Saved\ELMP\pilot\shots\<剧本>-<步>-{host,client}.png`。每个剧本结束都把两侧 `SaveGames` 与 `Saved\ELMP\ELMP` 还原到剧本前备份。
+| 剧本 | 变化沿按序匹配 | 正确性（C01–C03） | 主要差异 |
+|---|---|---|---|
+| slime-fight | 194 / 246（79%） | 绿 | Host P1 被史莱姆打死（起始 HP 280，已加 `vitals 1 restore`）；副本缺 `jump_up`；Client `frame.elmp_us` P99 1298 µs |
+| guest-fight | 155 / 169（92%） | 绿（damage_blocked 10、replayed 0） | Client 敌人插入 `<empty>`；客人本地 P1 缺 `death`；静止卡 `idle_turn`；Client 6 个无 Owner 重放技能；P99 1187 µs |
+| world-objects | 148 / 149（99%） | 绿 | 花：Host 销毁 ↔ Client 隐藏；休息点 Host 有 3 个伴随精灵、Client 无（截图 `world-objects-rest-*`） |
+| death-respawn | 131 / 136（96%） | 绿（damage_blocked 42） | 客人死亡 `death` 缺；`<empty>` 复现 |
+| map-change | 瞬时 25/26、后台 25/25、移交 25/26 | 绿 | world 行未按图分带（工具限制） |
+| join-reconnect | 晚加入 24/26 | 绿 | 断线期间 Host P1 无人操作战死，重连检查点落在 church_08 |
+- 瞬时 `sync` 的位置 / 动画差在运动中是 100 ms 插值缓冲的预期滞后；判定看 `rec` 序列与正确性行。
+- **基线缺陷（§7.4 第一项逐条修）**：①Client 敌人轨道 0 出现 Host 没有的 `<empty>`；②客人自己的本地 P1 死亡无 `death` 动画（G03）；③敌人静止时 Client 卡 `idle_turn`、Host 已 `idle`；④Client 重放技能 Actor 无 Owner 且残留（2 s 寿命）；⑤入座前首个快照让 Client 为自己的座位生成过一次副本（日志 `presenting host P2 as local slot 52`，Welcome 后删除）；⑥Client 战斗窗口 `frame.elmp_us` P99 1.2–1.3 ms（> 1 ms 门槛）。
+- 测试辅助（登记）：`elmp tp / kill / press / vitals / perm`；eval `Breakable.HPComponent:DoDamage`、`Lily.HPComponent:DoDamage(99999)`、`BP_Interactable_RestingPoint_C:OnInteract(PC)`、`WBP_RestMenu_C:RemoveFromParent`、`OpenLevel TitleMap` + `OnSaveSlotSelected`；`instance.py stop/start client`（断线）。
