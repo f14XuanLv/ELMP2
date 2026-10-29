@@ -29,6 +29,8 @@ bool marked(ue::UObject* actor);
 void mark_not_player(ue::UObject* actor, bool on); // IsPlayer → false (anchor, copies)
 // P8：客户端敌人跑模拟时，允许对已标记的 actor 打开 actor tick（tick 闸只拦“开启”，结算/碰撞闸不变）
 void allow_tick(ue::UObject* actor, bool on);
+// P8：跑模拟还要补一次原版激活（默认状态集合来自 Activate），只放行激活本身，AI 激活仍拦
+void allow_activate(ue::UObject* actor, bool on);
 
 // Replay window: damage to this actor (its HP component's owner) is allowed until close.
 void open_replay(ue::UObject* target);

@@ -16,7 +16,7 @@ namespace {
 using RC::Unreal::UObject;
 
 bool g_installed = false, g_install_failed = false, g_armed = false;
-std::unordered_set<UObject*> g_marked, g_not_player, g_replay, g_tick_allow;
+std::unordered_set<UObject*> g_marked, g_not_player, g_replay, g_tick_allow, g_activate_allow;
 Counters g_c{};
 
 using DoDamageFn = void(__fastcall*)(UObject*, UObject*, int, bool, bool);
@@ -90,7 +90,7 @@ void __fastcall d_ai_activate(UObject* controller) {
 }
 
 void __fastcall d_char_activate(UObject* pawn) {
-    if (g_armed && g_marked.count(pawn)) return void(++g_c.char_activate_blocked);
+    if (g_armed && g_marked.count(pawn) && !g_activate_allow.count(pawn)) return void(++g_c.char_activate_blocked);
     o_char_activate(pawn);
 }
 
@@ -148,8 +148,15 @@ void unmark_all() {
     g_not_player.clear();
     g_replay.clear();
     g_tick_allow.clear();
+    g_activate_allow.clear();
 }
 bool marked(ue::UObject* a) { return g_marked.count(a) != 0; }
+void allow_activate(ue::UObject* a, bool on) {
+    if (!a) return;
+    if (on) g_activate_allow.insert(a);
+    else g_activate_allow.erase(a);
+}
+
 void allow_tick(ue::UObject* a, bool on) {
     if (!a) return;
     if (on) g_tick_allow.insert(a);
