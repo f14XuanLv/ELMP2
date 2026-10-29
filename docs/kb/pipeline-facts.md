@@ -218,3 +218,15 @@ sub_140D4A260(this)                      // 收尾
 `idle` 这类状态来自角色的**激活**流程（`AZenithCharacter::Activate` `0xCCDAA0` → `OnActivate` → 默认状态集合），而 P6 对已标记对象的 `Activate` 也是拦掉的（`char_activate_blocked`）。所以客户端敌人从来没有默认状态：命令的 StateTimeline 加进来的状态在命令结束时被移除，之后就什么都不剩。
 
 跑模拟还需要第二道白名单：允许对模拟对象执行 `Activate`（或在接管时主动调一次），让默认状态集合就位。这同样属于“跑模拟”，不属于结算，安全边界仍是效果施加 / 死亡 / 存档 / 交互副作用。
+
+### 10.3 主动调 Activate 会崩：`FindFunctionChecked("OnActivate")` `[E-实测]`
+
+第一版实现是“接管时主动调一次 `ZenithCharacter::Activate`”。实机在 `BP_s5050_Giant_C` 上直接崩：
+
+```
+LowLevelFatalError: Failed to find function OnActivate in BP_s5050_Giant_C
+```
+
+原因：原生 `Activate` 内部对 `OnActivate` 用 `FindFunctionChecked`，没有实现该事件的 BP 类会致命错误（史莱姆有、巨人有没）。
+
+修法：**不主动调 Activate**，只把 guard 的激活闸白名单打开（`guard::allow_activate`），让游戏自己的激活体积在玩家靠近时触发。默认状态集合因此依赖“游戏自己激活”，`animLocal=1` 的 `<empty>` 问题留到状态校正（V3）一起解决。

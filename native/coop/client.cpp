@@ -194,13 +194,10 @@ void freeze(ue::UObject* enemy) {
     }
     const auto* s = core::schema::script();
     if (g_sim_local) {
-        // 跑模拟：补一次原版激活（默认状态集合来自 Activate 的 OnActivate），AI 激活仍然拦着
+        // 跑模拟：只放行原版激活（默认状态集合来自 Activate），不主动调 —— Activate 内部是
+        // FindFunctionChecked("OnActivate")，没有这个事件的 BP（实测 BP_s5050_Giant_C）会直接崩。
+        // 由游戏自己的激活体积在玩家靠近时触发即可。
         guard::allow_activate(enemy, true);
-        static reflect::FuncRef activate = reflect::Resolver("ZenithCharacter", reflect::find_class(L"/Script/Zenith.ZenithCharacter")).func(L"Activate", 0);
-        if (activate.ok()) {
-            reflect::Frame f(activate);
-            f.invoke(enemy);
-        }
     } else {
         guard::allow_activate(enemy, false);
     }
