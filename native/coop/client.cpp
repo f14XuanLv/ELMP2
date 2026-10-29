@@ -7,6 +7,7 @@
 #include "coop/client.h"
 
 #include "coop/ability.h"
+#include "coop/commands.h"
 #include "coop/fx.h"
 #include "overlay/render.h"
 #include "coop/entities/clearable.h"
@@ -199,7 +200,8 @@ void freeze(ue::UObject* enemy) {
                     if (!ue::alive(items[i])) continue;
                     const auto cls = ue::class_name_of(items[i]);
                     if (cls == L"SpineSkeletonAnimationExComponent" || cls == L"SpineSkeletonRendererComponent" || cls == L"AbilityComponent" ||
-                        cls == L"SpineBoneFollowerComponent" || cls == L"SpineBoneComponent" || cls == L"ParticleSystemComponent" || cls == L"WidgetComponent") {
+                        cls == L"SpineBoneFollowerComponent" || cls == L"SpineBoneComponent" || cls == L"ParticleSystemComponent" || cls == L"WidgetComponent" ||
+                        cls == L"CommandQueueComponent") {
                         // dormant enemies ship with the Spine animation / renderer ticks off → turn the
                         // presentation set on explicitly (v1 net-facts: else the mesh stays at its first frame)
                         reflect::Frame on(set_comp_tick);
@@ -464,6 +466,8 @@ std::deque<RetryEv> g_ev_retry;
 std::unordered_map<std::uint64_t, ObjHandle> g_ab_live;  // kind << 48 | id << 32 | act seq → replayed ability
 std::unordered_map<std::uint32_t, ObjHandle> g_fx_live;  // host FX seq → replayed PSC
 std::uint64_t g_ev_absent = 0, g_ev_retried = 0, g_snd_far = 0, g_fx_bad = 0, g_snd_bad = 0, g_stop_missed = 0;
+std::uint64_t g_cmd_bad = 0, g_cmd_seen = 0;
+std::unordered_map<std::uint32_t, std::uint32_t> g_cmd_last; // (kind << 16 | id) → last seq
 
 bool world_ready() {
     bool loading = true, ready = false;
@@ -551,6 +555,32 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
         g_ab_live.erase(it);
         return EvResult::Done;
     }
+    case proto::Msg::Cmd: {
+        proto::Cmd m;
+        if (!proto::decode(msg, m)) {
+            ++g_cmd_bad;
+            if (g_cmd_bad <= 5) log::warn("coop: cmd decode failed");
+            return EvResult::Done;
+        }
+        ++g_cmd_seen;
+        auto& last = g_cmd_last[static_cast<std::uint32_t>(m.kind) << 16 | m.net_id];
+        if (m.seq <= last) return EvResult::Done;
+        const auto* cls = g_names.text(m.cls);
+        if (!cls) {
+            ++g_cmd_bad;
+            if (g_cmd_bad <= 5) log::warn("coop: cmd class {} unknown", m.cls);
+            return EvResult::Done;
+        }
+        auto* owner = actor_of(m.kind, m.net_id);
+        if (!owner) {
+            if (g_cmd_seen <= 8) log::warn("coop: cmd owner absent kind={} id={}", m.kind, m.net_id);
+            return EvResult::Retry;
+        }
+        last = m.seq;
+        std::string why;
+        if (!commands::replay(owner, *cls, m.dir, m.cmd, &why) && ++g_cmd_bad <= 5) log::warn("coop: cmd {} on kind {} id {} rejected: {}", *cls, m.kind, m.net_id, why);
+        return EvResult::Done;
+    }
     default: return EvResult::Done;
     }
 }
@@ -616,6 +646,7 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
     case proto::Msg::Fx:
     case proto::Msg::FxStop:
     case proto::Msg::Snd:
+    case proto::Msg::Cmd:
     case proto::Msg::ActStop: {
         // after leave (stop() ran in this same session tick, enemies released, OpenLevel queued) the inbox
         // can still hold events: never replay outside a seated session (AV 0x130 in LaunchAbilityFromDescription)
@@ -1088,7 +1119,7 @@ std::string adapters_text() {
 
 std::string describe() {
     return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} copies={} reconciles={} kills={} actBad={} actAbsent={} rechecks={} aiLeaks={} world={} equipRequests={} motionWrites={} presses(attack)={}\n{}{}", g_seat,
-                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, std::uint64_t{0}, g_equip_requests, g_motion_writes, g_input.presses[3], ability::describe() + fx::describe() + describe_events() + adapters_text(),
+                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, std::uint64_t{0}, g_equip_requests, g_motion_writes, g_input.presses[3], ability::describe() + commands::describe() + fx::describe() + describe_events() + adapters_text(),
                        guard::describe());
 }
 

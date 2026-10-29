@@ -7,6 +7,7 @@
 #include "coop/host.h"
 
 #include "coop/ability.h"
+#include "coop/commands.h"
 #include "coop/fx.h"
 #include "coop/entity.h"
 #include "coop/maps.h"
@@ -398,8 +399,23 @@ std::vector<std::uint32_t> g_deact_pending;
 std::unordered_map<ue::UObject*, std::pair<ObjHandle, std::uint32_t>> g_fx_live; // sent PSC → FX seq
 std::uint32_t g_fx_seq = 0;
 
-void on_fx(const fx::Spawn& s) {
-    if (g_peers.empty()) return;
+// 命令启动沿（P8 敌人域）：只对可复制的敌人 / 动态敌人发；Lily 的副本将来走输入复制而不是命令复制
+struct CmdEv {
+    ObjHandle owner;
+    std::string path;
+    std::uint8_t dir = 0, cmd = 0;
+};
+std::vector<CmdEv> g_cmd_pending;
+std::uint32_t g_cmd_seq = 0;
+std::uint64_t g_cmds_sent = 0, g_cmds_skipped = 0;
+
+void on_cmd_start(const commands::Start& s) {
+    if (g_peers.empty() || !s.owner || s.path.empty()) return;
+    if (g_cmd_pending.size() >= 128) return void(++g_ev_dropped);
+    g_cmd_pending.push_back({ObjHandle::of(s.owner), s.path, s.dir, s.cmd});
+}
+
+void on_fx(const fx::Spawn& s) {    if (g_peers.empty()) return;
     if (g_fx_pending.size() >= 256) return void(++g_ev_dropped);
     g_fx_pending.push_back({ObjHandle::of(s.owner), ObjHandle::of(s.ps), ObjHandle::of(s.psc), s});
 }
@@ -459,6 +475,27 @@ void send_events() {
         send_to(*r, m, g_fx_sent);
     }
     g_fx_pending.clear();
+    for (auto& e : g_cmd_pending) {
+        auto* owner = e.owner.get();
+        const auto r = owner ? ref_of_owner(owner) : std::nullopt;
+        if (!r || (r->kind != proto::RefKind::Enemy && r->kind != proto::RefKind::Dyn)) {
+            ++g_cmds_skipped;
+            continue;
+        }
+        proto::Cmd m;
+        m.kind = static_cast<std::uint8_t>(r->kind);
+        m.net_id = r->id;
+        m.seq = ++g_cmd_seq;
+        m.dir = e.dir;
+        m.cmd = e.cmd;
+        m.cls = name(e.path);
+        if (!m.cls) {
+            ++g_cmds_skipped;
+            continue;
+        }
+        send_to(*r, m, g_cmds_sent);
+    }
+    g_cmd_pending.clear();
     for (auto seq : g_deact_pending) { // the client ignores seqs it never replayed
         const auto n = proto::encode(proto::FxStop{seq}, g_buf);
         for (auto& [id, peer] : g_peers)
@@ -655,6 +692,7 @@ void tick(std::int64_t now_us) {
     capture(now_us);
     ability::host_enable(on_launch);
     fx::host_enable({on_fx, on_deactivate, on_sound, on_ability_stop});
+    commands::host_enable(on_cmd_start);
     refresh_lily_pawns();
     party::transit::set_stay([](std::int64_t seat) { return maps::slot_of_seat(seat) > 0; });
     maps::tick(now_us);
@@ -699,7 +737,7 @@ std::string describe() {
     std::string out = std::format("host: peers={} parked={} names={} epoch={} actsSent={} actsDropped={}\n", g_peers.size(), g_parked.size(), g_names.size(), g_epoch,
                                   g_acts_sent, g_acts_dropped) +
                       std::format("events: fx={} fxStops={} sounds={} abilityStops={} dropped={} noOwner={} live fx={} abilities={}\n", g_fx_sent, g_fx_stops_sent, g_snd_sent, g_ab_stops_sent, g_ev_dropped, g_ev_noref, g_fx_live.size(), g_ab_live.size()) +
-                      ability::describe() + fx::describe();
+                      ability::describe() + commands::describe() + fx::describe() + std::format("cmds sent={} skipped={}\\n", g_cmds_sent, g_cmds_skipped);
     for (auto* a : adapters()) out += a->describe();
     out += maps::describe();
     for (const auto& [id, p] : g_peers)

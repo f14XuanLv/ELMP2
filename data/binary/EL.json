@@ -147,6 +147,14 @@
       "source": "[E-IDA] v2 2026-10-29：xrefs_to 0x1425463A0 = 0x7D0600（SpawnFX 实现，内部转调）、0x7D0E60 / 0x7D1380（Spine 插件里只被 vtable 引用的两个动画通知 spawn 函数）、UAnimNotify_PlayParticleEffect::SpawnParticleSystem 0x142320530、execSpawnEmitterAttached；实测 P6（只钩 SpawnFX）在一次召唤连段里 deact +3 而 spawn 捕获 +0",
       "note": "FX 的真正汇点（动画通知粒子不走 SpawnFX）。Host 捕获时 owner 取 AttachToComponent 的 outer 链 Actor（技能取其 Owner 角色）；Client 重放挂到该角色根组件"
     },
+    "CommandProcessStart": {
+      "rva": "0x00CB4F00",
+      "prefix": "488BC4555657488BEC4881EC800000000F2970B8",
+      "signature": "char UCommandQueueComponent::ProcessCommand(this, void*, UCommand*)",
+      "owner": "coop/commands",
+      "source": "[E-IDA] v2 2026-10-29（源自 explore 分支 P7-1 的同一入口，结论沿用）：队列处理 0xCC2BA0 与自身覆盖分支调用；UCommand.CurrentResult == NONE 即启动沿",
+      "note": "Host 在网络对象的命令启动沿捕获（UCommand.CommandAction 的类 / CommandInputType / GetInvokedByDirectionInputType），Client 用原版 AddNewImmediateCommand 重放"
+    },
     "PSCDeactivateSystem": {
       "rva": "0x0269A040",
       "prefix": "405341544883EC584C8BA1A8000000488BD94D85E47508E8",

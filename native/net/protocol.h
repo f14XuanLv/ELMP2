@@ -44,6 +44,7 @@ enum class Msg : std::uint8_t {
     FxStop = 11,    // host → client: DeactivateSystem of a replicated SpawnFX result
     Snd = 12,       // host → client: sound timeline event on a replicated actor
     ActStop = 13,   // host → client: AAbility::Stop of a replicated launch
+    Cmd = 14,       // host → client: command start edge on a replicated enemy (P8 enemy-domain test)
 };
 
 // Owner of a replicated event (P6): which presented actor on the client it belongs to.
@@ -82,8 +83,7 @@ struct Fx {
     std::int32_t sort = 0;  // TranslucencySortPriority
     std::uint8_t pool = 0;  // EPSCPoolMethod
 };
-struct FxStop { std::uint32_t seq = 0; };
-struct Snd {
+struct FxStop { std::uint32_t seq = 0; };struct Snd {
     std::uint8_t kind = 1;
     std::uint16_t net_id = 0;
     std::uint16_t event = 0; // UFMODEvent path name id
@@ -94,6 +94,16 @@ struct ActStop {
     std::uint16_t net_id = 0;
     std::uint32_t seq = 0; // the Act.seq of that owner
     std::uint8_t reason = 0; // EAbilityStopReason
+};
+// P8 敌人域：命令启动沿（UCommandQueueComponent::ProcessCommand，CurrentResult == NONE）。
+// Client 用原版 AddNewImmediateCommand 重放，让 CommandAction 的五条时间线自己跑。
+struct Cmd {
+    std::uint8_t kind = 1;
+    std::uint16_t net_id = 0;
+    std::uint32_t seq = 0;  // per-owner, monotonic (idempotent)
+    std::uint8_t dir = 0;   // GetInvokedByDirectionInputType
+    std::uint8_t cmd = 0;   // ECommandInputTypes
+    std::uint16_t cls = 0;  // CommandAction class path name id
 };
 struct Json { std::string text; };
 struct Control { std::uint8_t code = 0; std::string text; };
@@ -110,10 +120,12 @@ std::size_t encode(const Fx& m, std::span<std::uint8_t> out);
 std::size_t encode(const FxStop& m, std::span<std::uint8_t> out);
 std::size_t encode(const Snd& m, std::span<std::uint8_t> out);
 std::size_t encode(const ActStop& m, std::span<std::uint8_t> out);
+std::size_t encode(const Cmd& m, std::span<std::uint8_t> out);
 bool decode(std::span<const std::uint8_t> in, Fx& m);
 bool decode(std::span<const std::uint8_t> in, FxStop& m);
 bool decode(std::span<const std::uint8_t> in, Snd& m);
 bool decode(std::span<const std::uint8_t> in, ActStop& m);
+bool decode(std::span<const std::uint8_t> in, Cmd& m);
 
 Msg type_of(std::span<const std::uint8_t> in); // 0 cast when empty
 bool decode(std::span<const std::uint8_t> in, Welcome& m);

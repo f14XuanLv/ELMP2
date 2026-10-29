@@ -220,8 +220,28 @@ bool decode(std::span<const std::uint8_t> in, ActStop& m) {
     m.reason = r.u8();
     return r.done() && kind_ok(m.kind) && m.reason < 16;
 }
-bool decode(std::span<const std::uint8_t> in, Json& m) {
+std::size_t encode(const Cmd& m, std::span<std::uint8_t> out) {
+    auto w = start(out, Msg::Cmd);
+    w.u8(m.kind);
+    w.u16(m.net_id);
+    w.u32(m.seq);
+    w.u8(m.dir);
+    w.u8(m.cmd);
+    w.u16(m.cls);
+    return done(w);
+}
+bool decode(std::span<const std::uint8_t> in, Cmd& m) {
     Reader r(in);
+    if (!open(r, Msg::Cmd)) return false;
+    m.kind = r.u8();
+    m.net_id = r.u16();
+    m.seq = r.u32();
+    m.dir = r.u8();
+    m.cmd = r.u8();
+    m.cls = r.u16();
+    return r.done() && kind_ok(m.kind) && m.cls != 0 && m.dir < 8 && m.cmd < 16;
+}
+bool decode(std::span<const std::uint8_t> in, Json& m) {    Reader r(in);
     const auto t = r.u8();
     if (t != static_cast<std::uint8_t>(Msg::Build) && t != static_cast<std::uint8_t>(Msg::EquipRequest) && t != static_cast<std::uint8_t>(Msg::EquipResult)) return false;
     m.text = std::string(r.str(kMaxJson));

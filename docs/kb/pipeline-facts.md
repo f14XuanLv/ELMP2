@@ -146,3 +146,33 @@ sub_140D4A260(this)                      // 收尾
 - 钩 `SpawnEmitterAttached`（`0x1425463A0`）与 `SpawnEmitterAtLocation`（`0x142546070`）：前者 owner 取 AttachToComponent 的 Owner；后者无 owner，按**世界坐标**发（客户端在对应地图的同一世界坐标生成，不跟随），并在消息里区分“附着 / 世界”两种。
 - `SpawnFX` 与这两者存在调用嵌套（`SpawnFX` → `SpawnEmitter*`），用重入标志去重，否则一条特效发两遍。
 - **持续性特效（自身发光）** 仍是状态不是事件：需要在 takeover / 新客人加入时同步 `USpineFXComponent::RunningFXs`（粒子资产 + 骨骼 + 变换），否则只在 spawn 那一刻有事件、错过就永远没有。
+
+## 9. 判决实验：命令启动沿复制 → 客户端自己生成 FX（2026-10-29，Host2 / Client2，church_07）
+
+### 9.1 实验设计
+
+判据（§8 的删除测试）：**关掉 FX 复制通道后，客户端的特效是否还在**。
+
+- 新增 transient 开关 `elmp set fxLocal 1`：客户端不重放 Host 的 `Fx` / `FxStop`、也不隐藏本地生成的粒子（`g_block=false`）。
+- 新增 `coop/commands`：Host 在 `UCommandQueueComponent::ProcessCommand`（`0xCB4F00`）的启动沿（`UCommand.CurrentResult == NONE`）捕获 CommandAction 类 / `CommandInputType` / 方向，经 `Msg::Cmd` 发给拥有该敌人的对端；Client 用原版 `AddNewImmediateCommand` 重放。协议的 `Cmd` 走可靠通道，按 `(kind, net_id)` 去重。
+- 客户端敌人的 `CommandQueueComponent` 不再进入冻结集（`freeze` 白名单）。
+
+### 9.2 结果 `[E-实测]`
+
+| 项 | 值 |
+|---|---|
+| Host `cmds captured` / `sent` | 1 / 1 |
+| Client `cmds replayed` / `rejected` | 1 / 0 |
+| Client FX 重放（通道） | 0（`fxLocal=1`，通道被绕过） |
+| Client 本地生成（`localKept fx`） | **1** |
+
+也就是说：Host 的一条史莱姆攻击命令 → Client 用原版 `AddNewImmediateCommand` 跑同一条 `CA_e2010_Slime_Attack` → CommandAction 的 FX 时间线在客户端自己发出粒子。**没有复制任何 FX。**
+
+反过来，同一场景在 `fxLocal=0`（P6 行为：抑制本地 + 重放通道）下是 `client replayed spawn=1`——表现是“复制来的”。两者都能看见特效，但只有前者是在跑管线。
+
+### 9.3 结论
+
+1. **FX 不需要同步通道**：只要客户端跑同一条命令，特效由模拟自己产生。§8 里“补 spawn 路径 / 补 owner 身份 / 补持续状态”的工作全部不再需要。
+2. **真正的缺口是“客户端没跑管线”**：冻结 + 快照写轨道名，让动画、通知、粒子链断在了上游。
+3. 后续每个表现域（远程莉莉、精灵、音效）都用同一判据验证：关掉复制通道后还在，才算接上管线。
+4. 已知未覆盖：客户端敌人的**动画**仍由快照写轨道 0（`SpineAnimationComponent` 状态机仍在冻结集里），所以表现为“特效对了、动作还不是状态机产生的”。下一步是把状态机接上，再用同一判据复测。
