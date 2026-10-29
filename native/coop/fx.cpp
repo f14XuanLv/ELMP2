@@ -30,19 +30,28 @@ using SoundFn = std::uint64_t(__fastcall*)(UObject*, UObject*, const std::uint8_
 // PlayEventAttached (0x78D7A0): counted only (attached / looping sounds are not replicated yet)
 using AttachedFn = UObject*(__fastcall*)(UObject*, UObject*, std::uint64_t, const float*, std::uint8_t, bool, bool, bool);
 using StopFn = void(__fastcall*)(UObject*, std::uint8_t);
+// UGameplayStatics::SpawnEmitterAttached (IDA 0x25463A0) [E-IDA]:
+// (PS, AttachToComponent, AttachPointName, Location*, Rotation*, Scale*, EAttachLocation, bAutoDestroy,
+//  EPSCPoolMethod, bAutoActivate) → UParticleSystemComponent*
+// 全游戏粒子的真正汇点：USpineFXComponent::SpawnFX（0x7D0600）内部就转调它，而 Spine 的两个动画通知
+// 生成函数（0x7D0E60 / 0x7D1380，只被 vtable 引用）与蓝图直调都直接走这里 —— P6 只钩 SpawnFX 时漏的正是这些。
+using EmAttachFn = UObject*(__fastcall*)(UObject*, UObject*, std::uint64_t, const float*, const float*, const float*, std::uint8_t, bool, std::uint8_t, bool);
 
 SpawnFn o_spawn{};
 DeactivateFn o_deactivate{};
 SoundFn o_sound{};
 AttachedFn o_attached{};
 StopFn o_stop{};
+EmAttachFn o_em_attach{};
 std::uint64_t g_attached = 0, g_local_sound_blocked = 0;
 
 Sinks g_sinks;
 bool g_host = false, g_client = false, g_block = true, g_replaying = false;
 bool g_spawn_ok = false, g_deact_ok = false, g_sound_ok = false, g_stop_ok = false, g_tried = false;
+bool g_em_ok = false, g_in_spawn = false;
 std::uint64_t g_cap_spawn = 0, g_cap_deact = 0, g_cap_sound = 0, g_cap_stop = 0;
-std::uint64_t g_rep_spawn = 0, g_rep_fail = 0, g_rep_sound = 0, g_rep_stop = 0, g_rep_deact = 0, g_local_blocked = 0;
+std::uint64_t g_cap_emitter = 0, g_local_emitter = 0;
+std::uint64_t g_rep_spawn = 0, g_rep_fail = 0, g_rep_sound = 0, g_rep_stop = 0, g_rep_deact = 0, g_local_blocked = 0, g_rep_emitter = 0;
 std::unordered_map<std::string, std::uint64_t> g_blocked_ps; // Dev: which local FX were suppressed (first 32 kinds)
 
 void read_xf(const std::uint8_t* t, std::array<float, 10>& xf) {
@@ -67,11 +76,16 @@ void hide_now(UObject* psc) {
     deactivate(psc);
 }
 
+UObject* fx_owner(UObject* o); // 定义在 emitter 钩子旁
+
 UObject* __fastcall d_spawn(UObject* comp, UObject* ps, std::uint8_t bone, std::uint64_t custom, const std::uint8_t* xf, bool attach, bool follow, std::int32_t sort,
                             std::uint8_t pool, bool reg) {
+    g_in_spawn = true; // SpawnFX 内部会转调 SpawnEmitterAttached，别在 emitter 钩子上重复捕获
     auto* psc = o_spawn(comp, ps, bone, custom, xf, attach, follow, sort, pool, reg);
+    g_in_spawn = false;
     if (!ue::on_game_thread() || !comp) return psc;
     auto* owner = comp->GetOuterPrivate();
+    if (auto* resolved = fx_owner(owner)) owner = resolved; // 技能（AAbility）产生的特效归到它的 Owner 角色
     if (g_host && g_sinks.spawn && ps && xf) {
         Spawn s;
         s.owner = owner;
@@ -96,8 +110,57 @@ UObject* __fastcall d_spawn(UObject* comp, UObject* ps, std::uint8_t bone, std::
     return psc;
 }
 
-void __fastcall d_deactivate(UObject* psc) {
-    if (g_host && g_sinks.deactivate && psc && ue::on_game_thread()) ++g_cap_deact, g_sinks.deactivate(psc);
+// Emitter 路径的 owner：AttachToComponent 的 outer 链上的 Actor；技能（AAbility）取其 Owner（角色），
+// 这样技能自己产生的粒子也能映射到可复制的 Ref，而不是像 P7-2 那样把 ability-owned 直接丢掉。
+UObject* fx_owner(UObject* o) {
+    static ue::UClass* actor = reflect::find_class(L"/Script/Engine.Actor");
+    static ue::UClass* ability = reflect::find_class(L"/Script/Zenith.Ability");
+    static reflect::FuncRef get_owner;
+    if (actor && !get_owner.ok()) get_owner = reflect::Resolver("Actor", actor).func(L"GetOwner", 0);
+    for (int i = 0; o && actor && i < 8; ++i, o = o->GetOuterPrivate()) {
+        if (!o->GetClassPrivate()->IsChildOf(actor)) continue;
+        if (ability && o->GetClassPrivate()->IsChildOf(ability)) {
+            if (get_owner.ok()) {
+                reflect::Frame f(get_owner);
+                if (f.invoke(o))
+                    if (auto* owner = f.ret<UObject*>()) return owner;
+            }
+            return nullptr;
+        }
+        return o;
+    }
+    return nullptr;
+}
+
+UObject* __fastcall d_em_attach(UObject* ps, UObject* attach_to, std::uint64_t point, const float* loc, const float* rot, const float* scale, std::uint8_t loc_type,
+                                bool autodestroy, std::uint8_t pool, bool activate) {
+    auto* psc = o_em_attach(ps, attach_to, point, loc, rot, scale, loc_type, autodestroy, pool, activate);
+    if (!ue::on_game_thread() || g_in_spawn || !ps || !attach_to) return psc;
+    auto* owner = fx_owner(attach_to);
+    if (!owner) return psc;
+    if (g_host && g_sinks.spawn) {
+        Spawn s;
+        s.owner = owner;
+        s.ps = ps;
+        s.psc = psc;
+        s.msg.flags = 8 | 1; // bit3 emitter + bit0 attached
+        s.msg.sort = loc_type;
+        s.msg.pool = pool;
+        if (rot) s.msg.xf[0] = rot[0], s.msg.xf[1] = rot[1], s.msg.xf[2] = rot[2];
+        if (loc) s.msg.xf[4] = loc[0], s.msg.xf[5] = loc[1], s.msg.xf[6] = loc[2];
+        if (scale) s.msg.xf[7] = scale[0], s.msg.xf[8] = scale[1], s.msg.xf[9] = scale[2];
+        s.custom_bone = ue::utf8(attach_to->GetFName()); // 客户端只做诊断用（重放挂到根组件）
+        ++g_cap_emitter;
+        g_sinks.spawn(s);
+    } else if (g_client && g_block && !g_replaying && ue::alive(psc) && guard::marked(owner)) {
+        // 呈现对象自己的动画通知 / 蓝图粒子：Host 的同一份会重放过来，先隐藏本地的
+        ++g_local_emitter;
+        hide_now(psc);
+    }
+    return psc;
+}
+
+void __fastcall d_deactivate(UObject* psc) {    if (g_host && g_sinks.deactivate && psc && ue::on_game_thread()) ++g_cap_deact, g_sinks.deactivate(psc);
     o_deactivate(psc);
 }
 
@@ -144,6 +207,7 @@ void install() {
     if (g_tried) return;
     g_tried = true;
     g_spawn_ok = hook::install_manifest("SpawnFXImpl", reinterpret_cast<void*>(&d_spawn), reinterpret_cast<void**>(&o_spawn));
+    g_em_ok = hook::install_manifest("SpawnEmitterAttached", reinterpret_cast<void*>(&d_em_attach), reinterpret_cast<void**>(&o_em_attach));
     g_deact_ok = hook::install_manifest("PSCDeactivateSystem", reinterpret_cast<void*>(&d_deactivate), reinterpret_cast<void**>(&o_deactivate));
     g_sound_ok = hook::install_manifest("FMODPlayEventAtLocation", reinterpret_cast<void*>(&d_sound), reinterpret_cast<void**>(&o_sound));
     hook::install_manifest("FMODPlayEventAttached", reinterpret_cast<void*>(&d_attached), reinterpret_cast<void**>(&o_attached));
@@ -173,7 +237,7 @@ ue::UObject* asset(const std::string& path) {
 bool host_enable(const Sinks& s) {
     install();
     g_sinks = s;
-    g_host = g_spawn_ok || g_sound_ok || g_stop_ok;
+    g_host = g_spawn_ok || g_sound_ok || g_stop_ok || g_em_ok;
     return g_host;
 }
 
@@ -181,7 +245,7 @@ void host_disable() { g_host = false, g_sinks = {}; }
 
 bool client_enable() {
     install();
-    g_client = g_spawn_ok;
+    g_client = g_spawn_ok || g_em_ok;
     return g_client;
 }
 
@@ -220,8 +284,41 @@ ue::UObject* replay_spawn(ue::UObject* actor, const net::proto::Fx& m, const std
     return f.ret<ue::UObject*>();
 }
 
-bool deactivate(ue::UObject* psc) {
-    static reflect::FuncRef d = reflect::Resolver("ActorComponent", reflect::find_class(L"/Script/Engine.ActorComponent")).func(L"Deactivate", 0);
+ue::UObject* replay_emitter(ue::UObject* actor, const net::proto::Fx& m, const std::string& ps_path, const std::string& attach_comp, std::string* why) {
+    auto fail = [&](const char* w) -> ue::UObject* {
+        ++g_rep_fail;
+        if (why) *why = w;
+        return nullptr;
+    };
+    static ue::UClass* ps_cls = reflect::find_class(L"/Script/Engine.ParticleSystem");
+    auto* ps = asset(ps_path);
+    if (!ps || !ps_cls || !ps->GetClassPrivate()->IsChildOf(ps_cls)) return fail("not a ParticleSystem");
+    static ue::UClass* actor_cls = reflect::find_class(L"/Script/Engine.Actor");
+    static ue::UClass* gs_cls = reflect::find_class(L"/Script/Engine.GameplayStatics");
+    static reflect::FuncRef root = reflect::Resolver("Actor", actor_cls).func(L"K2_GetRootComponent", 0);
+    static reflect::FuncRef spawn = reflect::Resolver("GameplayStatics", gs_cls).func(L"SpawnEmitterAttached", 10);
+    auto* cdo = reflect::find_object(L"/Script/Engine.Default__GameplayStatics");
+    if (!cdo || !root.ok() || !spawn.ok()) return fail("SpawnEmitterAttached");
+    reflect::Frame r(root);
+    if (!r.invoke(actor)) return fail("root invoke");
+    auto* attach = r.ret<ue::UObject*>();
+    if (!ue::alive(attach)) return fail("no root component");
+    reflect::Frame f(spawn);
+    f.arg(0, ps).arg(1, attach).arg_name(2, ue::FName());
+    if (auto* p = static_cast<float*>(f.raw(3))) p[0] = m.xf[4], p[1] = m.xf[5], p[2] = m.xf[6];
+    if (auto* p = static_cast<float*>(f.raw(4))) p[0] = m.xf[0], p[1] = m.xf[1], p[2] = m.xf[2];
+    if (auto* p = static_cast<float*>(f.raw(5))) p[0] = m.xf[7], p[1] = m.xf[8], p[2] = m.xf[9];
+    f.arg(6, static_cast<std::int32_t>(m.sort)).arg_bool(7, true).arg(8, m.pool).arg_bool(9, true);
+    (void)attach_comp; // 记录用；重放挂到根组件（骨骼级精度后续再补）
+    g_replaying = true;
+    const bool ok = f.invoke(cdo);
+    g_replaying = false;
+    if (!ok) return fail("invoke");
+    ++g_rep_emitter;
+    return f.ret<ue::UObject*>();
+}
+
+bool deactivate(ue::UObject* psc) {    static reflect::FuncRef d = reflect::Resolver("ActorComponent", reflect::find_class(L"/Script/Engine.ActorComponent")).func(L"Deactivate", 0);
     if (!ue::alive(psc) || !d.ok()) return false;
     if (g_client) ++g_rep_deact;
     return reflect::Frame(d).invoke(psc);
@@ -275,9 +372,9 @@ bool stop_ability(ue::UObject* ability, std::uint8_t reason) {
 }
 
 std::string describe() {
-    std::string out = std::format("fx: hooks spawn={} deact={} sound={} stop={} | host captured spawn={} deact={} sound={} stop={} | client replayed spawn={} fail={} deact={} sound={} stop={} localBlocked fx={} sound={} | attachedSounds={}{}\n",
-                                  g_spawn_ok, g_deact_ok, g_sound_ok, g_stop_ok, g_cap_spawn, g_cap_deact, g_cap_sound, g_cap_stop, g_rep_spawn, g_rep_fail, g_rep_deact, g_rep_sound,
-                                  g_rep_stop, g_local_blocked, g_local_sound_blocked, g_attached, g_block ? "" : " (blocking off)");
+    std::string out = std::format("fx: hooks spawn={} deact={} sound={} stop={} emitter={} | host captured spawn={} deact={} sound={} stop={} emitter={} | client replayed spawn={} fail={} deact={} sound={} stop={} emitter={} localBlocked fx={} sound={} emitter={} | attachedSounds={}{}\n",
+                                  g_spawn_ok, g_deact_ok, g_sound_ok, g_stop_ok, g_em_ok, g_cap_spawn, g_cap_deact, g_cap_sound, g_cap_stop, g_cap_emitter, g_rep_spawn, g_rep_fail,
+                                  g_rep_deact, g_rep_sound, g_rep_stop, g_rep_emitter, g_local_blocked, g_local_sound_blocked, g_local_emitter, g_attached, g_block ? "" : " (blocking off)");
     for (const auto& [p, n] : g_blocked_ps) out += std::format("  local {} x{}\n", p.substr(p.rfind('/') + 1), n);
     return out;
 }

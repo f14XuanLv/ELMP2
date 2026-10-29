@@ -49,6 +49,10 @@ void set_block_local(bool on); // Dev comparison (default on)
 
 // Client replays (false on failure, reason in *why).
 ue::UObject* replay_spawn(ue::UObject* actor, const net::proto::Fx& m, const std::string& ps_path, const std::string& custom_bone, std::string* why);
+// flags bit3: FX captured at UGameplayStatics::SpawnEmitterAttached (Spine anim notifies / blueprints).
+// xf = [0..2] rotator, [4..6] location (in the attach component's space, EAttachLocation in `sort`),
+// [7..9] scale; `m.bone` unused and the custom name is the attach component's FName.
+ue::UObject* replay_emitter(ue::UObject* actor, const net::proto::Fx& m, const std::string& ps_path, const std::string& attach_comp, std::string* why);
 bool deactivate(ue::UObject* psc);
 bool play_sound(ue::UObject* actor, const std::string& event_path, bool is2d, std::string* why);
 bool stop_ability(ue::UObject* ability, std::uint8_t reason);

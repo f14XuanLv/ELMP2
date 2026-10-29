@@ -304,8 +304,25 @@ std::optional<Ref> ref_of(ue::UObject* owner) {
     return std::nullopt;
 }
 
-bool wants(const Peer& p, const Ref& r) {
-    if (!p.slot || std::max(0, maps::slot_of_seat(p.slot)) != r.slot) return false;
+// FX / 音效的 owner 可能不是直接可复制的 Actor（伴随精灵、技能、从属对象）：沿 Owner 链找到第一个能映射
+// 成 Ref 的角色。伴随精灵的自身发光（PS_Spirit）就是这种情况 —— 不这样做它们会整批 noOwner 丢掉。
+std::optional<Ref> ref_of_owner(ue::UObject* o) {
+    if (auto r = ref_of(o)) return r;
+    static ue::UClass* actor = reflect::find_class(L"/Script/Engine.Actor");
+    static reflect::FuncRef get_owner;
+    if (actor && !get_owner.ok()) get_owner = reflect::Resolver("Actor", actor).func(L"GetOwner", 0);
+    for (int i = 0; o && get_owner.ok() && i < 4; ++i) {
+        reflect::Frame f(get_owner);
+        if (!f.invoke(o)) break;
+        auto* up = f.ret<ue::UObject*>();
+        if (!up) break;
+        if (auto r = ref_of(up)) return r;
+        o = up;
+    }
+    return std::nullopt;
+}
+
+bool wants(const Peer& p, const Ref& r) {    if (!p.slot || std::max(0, maps::slot_of_seat(p.slot)) != r.slot) return false;
     if (r.kind == proto::RefKind::Lily && r.id == p.slot) return false;
     if (r.kind == proto::RefKind::Spirit && (r.id >> 8) == p.slot) return false;
     return true;
@@ -366,6 +383,11 @@ struct FxEv {
     fx::Spawn s;
 };
 std::vector<FxEv> g_fx_pending;
+struct FxRetry {
+    FxEv ev;
+    std::uint32_t age = 0;
+};
+std::vector<FxRetry> g_fx_retry; // owner 还没映射到 Ref 的 FX（地图加载 / 敌人激活瞬间 spawn 的持续特效）
 struct SndEv {
     ObjHandle owner, event;
     bool is2d = false;
@@ -399,11 +421,31 @@ void on_ability_stop(ue::UObject* ability, std::uint8_t reason) {
 }
 
 void send_events() {
+    for (auto it = g_fx_retry.begin(); it != g_fx_retry.end();) {
+        if (++it->age > 120) {
+            ++g_ev_dropped;
+            it = g_fx_retry.erase(it);
+        } else if (ref_of_owner(it->ev.owner.get())) {
+            g_fx_pending.push_back(it->ev);
+            it = g_fx_retry.erase(it);
+        } else {
+            ++it;
+        }
+    }
     for (auto& e : g_fx_pending) {
         auto* ps = e.ps.get();
-        const auto r = ps ? ref_of(e.owner.get()) : std::nullopt;
+        const auto r = ps ? ref_of_owner(e.owner.get()) : std::nullopt;
         if (!r) {
             ++g_ev_noref;
+            if (g_ev_noref <= 5) log::info("coop: fx owner unmapped: {} owner={}", fx::path_of(ps), e.owner.get() ? log::utf8(ue::class_name_of(e.owner.get())) : "-");
+            // 地图刚加载时敌人/世界对象还没绑定 Ref（自身发光等 FX 恰在这一刻 spawn）：
+            // 放进重试队列，等注册表把 owner 映射出来再发，别直接丢。
+            if (g_ev_noref <= 4096 && g_fx_retry.size() < 256) {
+                FxRetry q;
+                q.ev = e;
+                q.age = 0;
+                g_fx_retry.push_back(std::move(q));
+            }
             continue;
         }
         auto m = e.s.msg;
@@ -425,7 +467,7 @@ void send_events() {
     g_deact_pending.clear();
     for (auto& e : g_snd_pending) {
         auto* ev = e.event.get();
-        const auto r = ev ? ref_of(e.owner.get()) : std::nullopt;
+        const auto r = ev ? ref_of_owner(e.owner.get()) : std::nullopt;
         if (!r) {
             ++g_ev_noref;
             continue;

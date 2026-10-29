@@ -78,7 +78,7 @@ struct Fx {
     std::uint8_t bone = 0;  // ESpineBone
     std::uint16_t custom_bone = 0; // name id (0 = None)
     std::array<float, 10> xf{0, 0, 0, 1, 0, 0, 0, 1, 1, 1}; // Offset
-    std::uint8_t flags = 0; // bit0 attach, bit1 follow bone rotation, bit2 register as running FX
+    std::uint8_t flags = 0; // bit0 attach, bit1 follow bone rotation, bit2 register as running FX, bit3 emitter (SpawnEmitterAttached capture: xf = rotator/loc/scale)
     std::int32_t sort = 0;  // TranslucencySortPriority
     std::uint8_t pool = 0;  // EPSCPoolMethod
 };

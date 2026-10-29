@@ -505,7 +505,9 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
         auto* owner = actor_of(m.kind, m.net_id);
         if (!owner) return EvResult::Retry;
         std::string why;
-        if (auto* psc = fx::replay_spawn(owner, m, *ps, bone ? *bone : "", &why)) g_fx_live[m.seq] = ObjHandle::of(psc);
+        if (auto* psc = (m.flags & 8) ? fx::replay_emitter(owner, m, *ps, bone ? *bone : "", &why)
+                                      : fx::replay_spawn(owner, m, *ps, bone ? *bone : "", &why))
+            g_fx_live[m.seq] = ObjHandle::of(psc);
         else if (++g_fx_bad <= 5) log::warn("coop: fx {} rejected: {}", *ps, why);
         if (g_fx_live.size() > 512) std::erase_if(g_fx_live, [](const auto& kv) { return !kv.second.get(); });
         return EvResult::Done;
