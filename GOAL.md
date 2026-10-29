@@ -1,167 +1,99 @@
-# GOAL：完成 ELMP v2 剩余阶段（P2 → P5）
+# GOAL：P8 统一管线验证 —— 输入驱动的执行层呈现（2026-10-29）
 
-> 本文件是 `/goal` 的完整计划。每一轮开始工作前先重读本文件与下面「恢复上下文」清单；计划有变先改本文件（标日期）。
-> 完成标准：P2、P3、P4、P5 的门槛全部在真实隔离实例上通过并写入 kb，产出 `dist/ELMP-<版本>-shipping.zip`（零 `.lua`）与 `-dev.zip`，README / INSTALL / ADR 0005 更新完毕。
-> 只有在全部完成、或某阶段门槛经充分尝试仍无法达成（写明尝试、证据、剩余选项）时才报告 goal 完成或 blocked。需要我决定的产品问题：先按需求树已有定案与 fail closed 默认继续其他工作，把问题集中列出，不要停下等。
-> **进度以 §7 的勾选表为准**：每完成一项就在该行打勾并补「日期 · 证据（kb 节 / 截图 / 命令输出）· commit」；下面「当前进行中」一行同步更新。goal 完成 = §7 全部打勾。
+> 本文件是 `/goal` 的完整计划。每轮开始前先读本文件与 §1；计划有变先改本文件（标日期）。
+> **这一版刻意收窄**：只回答一个问题——“把 Client 的远程角色放回原版管线（输入 → 命令 → 状态 → 动画），能不能同时拿到 P7-1 的手感和 P6 的完整性”。不铺开覆盖矩阵，不按点位补旧方法论。
+> **进度以 §6 勾选表为准**：完成一项打勾并补「日期 · 证据 · commit」。
 
-**当前进行中**：无 —— P6 远程表现补全（2026-10-27 追加）已全部打勾，协议升到 3（发布包未重打）；P1–P5 已于 2026-10-27 全部打勾。
-**需要用户**：①若要补测 G3 门 / 宝箱 / Boss 窗口专项，请提供一个入口图里有未开门 / 宝箱、可进入未打 Boss 的存档放到 Host2/Client2（当前按同通路代证 + Boss fail closed 继续）；（P2 自行定案已记 net-facts：本地 P1 预测 + >150 UU 回拉；Client 离开会话回标题；可破坏物 Client 只隐藏不回放破坏）
+**当前进行中**：V1 输入驱动实验（设计已定，未动手）
+**需要用户**：① 一个带梯子 / 攀爬 / 祈祷点的存档；② 一个入口图里有未开门 / 宝箱 / 可进入未打 Boss 的存档。都只影响对应验证，不阻塞 V1。
 
-## 0. 恢复上下文（每轮先读）
-1. `AGENTS.md`（规则、资料路径与证据等级、常用命令）。
-2. `README.md`「当前阶段」——P0、P1a–P1f 已完成并提交（`f611b5e`），P2 未开始。
-3. `docs/REQUIREMENTS-TREE.md`：§2.3 F2.1–F2.13、§2.4 F3.*、§2.5 F4.*、§3 C14–C20、§4 M11/M17–M24、§5 E5/E6/E9、§7（7.1 后台图 Boss fail closed、7.2 闸门矩阵、7.3 单值假设清单、7.9/7.10 SDK 与命中规则、7.13–7.16 P1 实施决定）、§8 验收口径与性能门槛。
-4. `docs/ARCHITECTURE-V2.md`：§3 线程模型、§5 注册表、§6 Hook 总表、§7.5 coop / §7.6 modes、§8 类型化协议、§9 多地图、§11 Dev、§12 SDK、§13 验证策略、§15 P2–P5 门槛、§16.1 缓存清单。
-5. `docs/kb/engine-facts.md`、`core-facts.md`、`party-facts.md`（P1f：原版交互入口、存档登记降频、闸门矩阵本地列、帧时间基线）。
-6. 现有代码接口：`native/engine/{reflect,registry,frame,lifecycle,world,handle}.h`、`native/base/{events,seqlock,settings,binary_manifest}.h`、`native/core/*.h`、`native/party/*.h`、`native/pvp/hitgate.h`、`native/overlay/model.h`、`native/console/console.h`、`data/binary/EL.json`、`data/gates.json`。新模块一律建在这些之上，不另起反射 / 帧泵 / 注册表。
-7. 旧仓库知识（只读，不复制代码）：`D:\CodeT\ELMP\docs\kb\net-facts.md`（传输选型、结算拦截、呈现化接管、敌人冻结三闸、世界对象对账、动作通道、多对端、多地图后台加载实验、重构后验收缺陷）、`docs/adr/0003-net-coop.md`、`0004-multimap-multiguest.md`、`docs/REQUIREMENTS.md` §11–§14、`native/net/*`、`native/guard/*`、`native/world/level_instance.cpp`、`lua/elmp/coop/**`、`lua/elmp/modes/hunter.lua`；`D:\Mod_Investigation\HKSS\{HKMP,SSMP}` 协议设计出处。
+## 0. 三条线的结论（用户实机，2026-10-29）
 
-## 1. P1 遗留（先于 P2 或并入 P2 初期）
-- `pickup` 闸门未验证：找有物品掉落（可破坏物 / 白花 / 货币）的图，`elmp perm <slot> pickup off|on` 验证 `UAutoCollectComponent` 路径，补进 party-facts 与 §7.2。
-- 精灵升级收益经共享进度同步到 PX（`SpiritLevels`）补一次实测。
-- **敌人激活入口重新定位**（P2 前置）：`0xCEFAE0` 已证实是 `AZenithSpirit::SetActive`，v1 三闸的第一闸无效。用 IDA（`idb_open` `{game}\Binaries\Win64\EnderLiliesSteam-Win64-Shipping.exe.i64`）+ `elmp native` 从 `BP_Character_Enemy_Base_C:SetPaused`、`AEnemySpawnPoint::ActivateEnemy`、`APawnActivationVolume::OnBeginOverlap`、相机钳制 `RegisterEnemyController` 四条链找真正的原生激活汇点，写进 `EL.json`（前缀 + 来源）与 `engine-facts.md`；找不到单汇点就记录“`SetActorEnableCollision/SetActorTickEnabled` 两原语闸 + `CanBePaused=false` + 1 Hz 复检”为唯一有效方案并实测泄漏数。
+| 线 | 分支 / commit | 机制 | 实机评价 |
+|---|---|---|---|
+| P6 | `main` 基线 `4972eb0` | 冻结执行层 + 快照驱动姿态 + 事件重放产物 | 完整性最好，手感差 |
+| P7-1 | `explore/p7-failed-client-vanilla-execution` @ `a4c49cd` | Client 跑原版执行层 + 复制命令 + 收束结算 | 手感最好，完整性 / 正确性差 |
+| P7-2 | `explore/p7-failed-snapshot-coverage` @ `c48d5a5` | 沿用 P6 + 覆盖矩阵逐点补 | 两头都输；目标过宽、不专注 |
 
-## 2. P2 同图联机（Host2 / Client2）
-实现：
-- `native/net`：自研 UDP + Windows CNG（ECDH P-256 / HKDF-SHA256 / AES-256-GCM，配对码参与派生）；不可靠最新通道 + 可靠有序通道（ACK = 最新连续序号 + 64 位位图，RTO 100 ms–2 s ×1.5 退避，8 s 无进展断链）；MTU 1200 分片；全部队列有界（沿用 v1 FR-NET-5a 的边界：可靠待发 ≤256、出站 ≤512、重组组 ≤32、收件箱 ≤512 先丢快照后丢可靠、ACK 只在变化时写、重复可靠消息触发 ACK 重发、PONG ≤4、饱和减法）；`F_CLOSE`；**多对端表从一开始就做**；握手期异常边界（坏包计数，绝不外抛）。
-- `native/coop`：typed 位掩码增量快照（§8），字符串只走 `NameDef` 名字表；`FrameSnapshot` 预分配零堆分配；`session` / `world_model` / `host/{capture,guest,events,maps 骨架}` / `client/{takeover,apply,presenter,vitals}` / `entities/{enemy,enemy_dyn,lily,worldobj,story,pickup}` 实现 `IEntityAdapter`（claimHost / scanDoneHost / writeHost / claimClient / takeover / observe / render / onEvent / reset / unpuppetAll）；行驻留语义（缺席 ≠ 消失，GONE ≈ 1 s）；卸载 ≠ 死亡（只有最后采样 hp≤0 才带 dy）。
-- `native/guard`：结算拦截（`DoDamage`、技能伤害）、`IsPlayer` 跳板、`SaveGame/SaveGameAsync`、碰撞 / tick 原语闸 + 新定位的激活闸；回放窗口按目标放行；Client 侧 `CanBePaused=false`、激活体积源头冻结、1 Hz 两标志复检。
-- 动作通道：`AbilityLaunchFromDesc` detour pre 取参、白名单字段、按敌人 seq 幂等、可靠下发、Client 同一原版入口重放（`IsChildOf(/Script/Zenith.Ability)` + 值域校验）。
-- 远程座位 = Host 上的本地座位同构：输入 kind=network、不进物理路由、不进共享镜头、只保留 fell 召回、Host `party` 巡检统一复活；500 ms 停滞松键；跟图闸门 `map/mapReady`（回执前不投入客人 Pawn）；晚加入 / 断线重连保留座位。
-- 客人进度与构筑归属（FR-NET-2c）：世界进度归 Host 存档；客人构筑按 `guestKey` 存在 Host 的 `party_<saveId>.json`；Client 本地原版档全程只读（存档保护）。
-- 客人装备通路（F2.10）：Client 打开同一 ImGui 菜单，请求经可靠通道由 Host 按原版规则执行并回传。
-- 管理器“联机”页（F2.1）：主持（端口、配对码）、加入（地址、配对码）、玩家列表、连接状态与拒绝原因、离开。
-- FR-NET-8 版本一致：EXE / `main.dll` / `data` 内容哈希 / 协议版本全等，拒绝原因送达发起方，满员回 Full。
-- Client 相机与伴随体规则（FR-NET-3c）、本地座位压制（FR-NET-3d）、Client HUD 用原版 HUD 显示 Host 权威数值（`CurrHP/CurrMP` 属性直写，祈祷用 `UseHeal/RestoreHeal` 计数对齐）。
+用户对方法论的原始判断（2026-10-27，塑造了 P7-1）：**应该找上游统一的集中管线，让 Client 触发，同时剥离威胁 Host 权威的部分（做减法）；而不是凑出和 Host 高仿的加法路线。**
 
-门槛（Host2/Client2 同机双实例）：
-- G1：Client 无 AI 决策（三闸 + 复检计数可观测，泄漏 0）；G2：客人输入经 Host 原版管线（动画序列取证）；G3：敌人数量 / 位置 ≤5 UU / HP / 门 / 宝箱 / 可破坏物（Client ⊆ Host）/ 剧情旗标 / Boss 窗口；G4：60 / 144 / 波动三档帧时间 + 截图可见 Spine 动画与弹体。
-- 晚加入、断线（非主动离开）重连、Host P1 死亡重生 / 切图时 Client 不把卸载当死亡、离开后本地 P1 数值还原、联机 PvP。
-- §7.2 矩阵补“Host 上远程座位”与“Client 副本”两列。
-- 性能：Host+1 客人每帧 ELMP P99 < 1.0 ms、Client 呈现 < 1.0 ms、无会话时 G0 仍成立。
-- CTest 只加 typed 编解码边界 / 传输状态机 / 握手三类。
+## 1. 调研结论（`docs/kb/pipeline-facts.md`，2026-10-29）
 
-## 3. P3 多客人 + 多地图
-- 第三个实例：在 `devconfig.json` 加 `client2`，按 Host2 / Client2 同法建 `Win64_LAN_Client3` 目录与 `ELMP_Test_Data\client2`（只在隔离目录操作；创建前在报告“需要用户”一节说明）。
-- 多客人：每对端独立会话 / 密钥 / 可靠层 / 基线 / epoch；座位按对端分配；快照公共部分 + 每对端 `me`；其他客人为 `l<seat>` 副本；满员回 Full。
-- 多地图：`native/world/{level_instance,map_context}`（`LoadLevelInstance` 反射参数校验；`ELMP_BG_<Map>__<Part>` 大 Y 偏移；`0xCAAFF0` + `0xC997B0` 上下文窗口）；`coop/host/maps` 生命周期（首个座位进入加载、最后座位离开宽限 10 s 卸载、P1 进入先卸载再原版切图）；坐标按“图 id + 局部坐标”传输与兴趣过滤；远程座位切图只切自己的实例；后台图 Boss 房 fail closed（§7.1.3）；`OnOpenNewArea` 对 PX 的 PC 抑制。
-- **§7.3 的 12 个未分类 `CurrentGameMapID` 读者**（`0xC98210 0xC98D80 0xC99770 0xC9A9F0 0xCA2820 0xCB6240 0xCCDD10 0xCCE900 0xCD5060 0xCD52D0 0xCDC950 0xCDD110`）逐个用 IDA 分类为 {前台表现 / P1 专属 / 需上下文窗口 / fail closed}，写进 kb，据此实现或拒绝。
+用 IDA MCP + CUE4Parse 查到的结构，把上面的判断落到了具体函数：
 
-门槛：两客人同图 G1–G4；一客人在后台图被敌人攻击 / 击杀敌人且 Host 存档清除记账落在正确的图；P1 进入后台图的移交；满员第 N+1 个客人收到 Full；后台图有人战斗时 Host 帧时间 P99 与性能门槛。
+- **统一入口是 `AZenithCharacter::Tick`（`0xCF3740`）**：`InputConsume`（`0xCEF310`）→ 输入快照写进命令队列（`0xCBCA20`）→ 输入生成命令 `TryAddCommands`（`0xCC2520`）→ 推进队列 `UpdateCommands`（`0xCC3970`）→ 行走组件 tick（`0xCBAE40`）。
+- **命令 = 五条数据时间线**：`State / Ability / Move / FX / Sound`（`CommandAction.h` 字段 = `0xD29F90` 的五个初始化调用）。复制命令 = 五条通道同时到位。
+- **动画是推导出来的**：每角色一个 `USpineAnimationComponent`，按层（`LOCOMOTION / ACTION / REACTION / DEATH / EVENT`）从状态组件 + 行走 + 移动 + 输入推导；过渡表按“当前动画已播时长”决定。复制动画名 = 复制输出，必然丢相位 / 过渡 / 层。
+- **状态是类**：`UStateComponent` 维护 `UState` 子类集合并广播；命令只是产生状态的路径之一，坐椅 / 攀爬 / 死亡姿态另有入口。
+- **减法边界是结构性的**：`OnApplyEffect`（`0xD3BCB0`）/ `OnFinalizeEffect`（`0xD3BD40`）/ `StartDeathProcess`（`0xCBD9A0`）/ `DoDamage`（`0xCA0380`）/ `SaveGame`（`0xD25410`）/ AI 激活（`0xCCD8F0`）/ 交互 Pressed（`0xCE8BF0`），全部在“表现已经生成之后”。
 
-## 4. P4 猎人模式 + SDK
-- `native/modes/hunter`（C19 / F3.1–F3.6）：速通 = Host P1 友方，猎人 ≤4 敌方；15 s 宽限冻结；胜负与计时用单调时钟；猎人进度源 `mirror` 默认 / `preset` 可选；猎人 8 s 后在所在图 PlayerStart 复活；独立 travel；椅子只回满自己；指南针进 HUD；控制台 `elmp hunter …`。
-- `native/sdk`：C ABI `elmp_sdk.h` 版本化函数表 + 导出 `ELMP_GetApi(version)`；`elmp.json` 声明依赖与 slot 范围，重叠后加载者拒绝；向第三方 Lua Mod 注入 C 绑定、不注入任何 Lua 源码；事件订阅每 Mod 一个游标；第三方对象联机报未支持；示例 LilyFollower（1001）/ LilyEnemy（2001）放 `sdk/examples/`。
+**由此得到 P7-1 的结构性错误**：它以“命令”为单位复制，而不是“输入 + 角色组件栈”。所以 `TryAddCommands` 被抑制、非命令状态缺失、只能 `hold_host_pose` 打补丁；结算又按效果类白名单枚举，未知类 fail closed，覆盖率下降。
 
-门槛：猎人规则在 Host + 2 客人（或本地 PX 混合）上验收；两个示例 Mod 跑通；Shipping zip 零 `.lua` 断言。
+## 2. 本阶段假设（要被 V1–V3 证实或证伪）
 
-## 5. P5 发布
-- README（安装 / 使用 / 功能 / 控制台命令 / 已知限制 / 架构）、INSTALL.txt、`docs/adr/0005-cpp-rewrite.md` 定稿（采纳状态与实际偏差）。
-- `build.bat package` 产出 `-shipping.zip`（`main.dll` + `data/` + `elmp.json` + INSTALL；无 `.lua` / `.pdb` / 义肢）与 `-dev.zip`；`elmp.json` 版本升到 ≥ 0.3.0。
-- 最后用 Shipping 构建在三实例上冒烟一遍（本地多人 + 同图联机 + 后台图），结果进 kb。
+> 复制 **输入快照** 而不是命令；让远程角色的完整 tick 跑起来；只在 §1 的结算汇点上做减法。手感和完整性会同时成立，且不需要任何“按状态 / 按点位”的补丁。
 
-## 5b. P6 远程表现补全（2026-10-27 追加）
-缺口盘点（Host2/Client2 实测 + IDA，2026-10-27）：
-- 莉莉的攻击由精灵（`AZenithSpirit`，Owner = 座位 PC，池化隐藏）发动；Host P1 点按 ATTACK → Host 出现 `BP_s5060_Assassin` + `AbilityHitbox_s5060_Projectile`，Client 上 Host P1 副本**什么都没有**（精灵不呈现；动作通道 `send_acts` 只发 spawn-point 敌人，精灵 / 莉莉 / 动态敌人的技能全部丢弃）。
-- `UCommandAction` 每帧依次采样 State / Ability(`0xCBABE0`) / Move / **FX(`0xD24380`)** / **Sound(`0xD24B50`)** 五条时间线；Client 上被冻结的敌人与副本不跑命令 → FX 时间线特效与音效时间线音效全部缺失。FX 一律经 `UBaseFXComponent::SpawnFX`（BlueprintNativeEvent，实现 `0x7D0600`；FX 时间线、Spine 动画通知、技能 VisualCue、蓝图都走它）。
-- 技能结束不同步（Client 重放体 2 s 寿命上限，长技能被截断、短技能残留）。
-- 受击表现（`UHPComponent::DoDamage` `0xCA0380` 广播 `OnReceiveDamage` 等委托）在 Client 不发生（HP 直写）。
-实现：
-- 通用对象引用 `Ref{kind: enemy / dyn / lily / spirit, id, sub}`，动作 / 特效 / 音效 / 结束事件共用。
-- 精灵呈现：快照新段（座位 + 精灵类 + 位置 / 朝向 / 动画 / 可见）；Client 生成呈现用精灵 Actor（白名单冻结、无碰撞），精灵 / 莉莉 / 动态敌人的技能经同一入口重放。
-- 特效通道：Host 钩 `SpawnFX` 实现，网络对象拥有的特效可靠下发；Client 对呈现对象只放行重放的 `SpawnFX`（本地自发的一律拦截，避免重复）；时间线的 `DeactivateSystem` 同步为结束事件。
-- 音效通道：Host 钩音效时间线，跨过 From 的条目下发；Client 以 FMOD 原版入口在呈现对象处播放（距离过滤）。
-- 技能结束：Host 钩技能停止，按 (Ref, seq) 下发；Client 停掉对应重放体；寿命上限保留为兜底并放宽。
-- 受击表现：按 IDA / 实测选原版入口（委托广播或蓝图事件），只做表现、不结算。
-门槛：Host P1 / 其他客人的精灵攻击在 Client 可见（截图 + 计数）；敌人 FX 时间线特效、音效在 Client 出现（Host / Client 计数对账）；技能结束同步后 Client 残留重放体 ≈ Host；受击闪白 / 火花可见；Client / Host 帧时间 P99 仍 < 1.0 ms；kb + 需求树 §7.20 + README 已知限制更新。
+三个必须验证的分支：
+- **H1 输入足够**：`FInputSnapshot`（40 B）逐帧复制后，`TryAddCommands` 在 Client 生成的命令序列与 Host 一致（阈值：同一个 CommandAction 类 + 同一方向，误差 1 帧内）。
+- **H2 状态可校正**：长连段 / 受击 / 死亡时副本 `UStateComponent` 可能与 Host 分叉；用“状态类集合”快照校正（而不是动画名）足够收敛。
+- **H3 交互可分离**：坐椅 / 祈祷 / 梯子的“状态 + 动画”能留在 Client，而“存档 / 清除 / 治疗”等副作用能减掉。
 
-## 6. 全程硬规则
-- 拿走知识不照搬代码（`D:\CodeT\ELMP`、`D:\CodeT\LilyInEM` 只读）；Shipping 零 Lua；游戏线程入口只有 `RegisterEngineTickPreCallback`；缓存优先且每个缓存有失效源与审计计数；无座位无会话时 `g0.reflect_calls` 保持 0。
-- 原版管线优先、fail closed、Host 权威铁律（客人进程永不自行结算）、P1 只读；新 Hook 全部进 `EL.json`（前缀 + 来源）并经预检；能反射取地址不写 RVA；不 Hook `0xD150F0`；“没被调用”必须有 detour 计数或 IDA xref。
-- 不为测试而测试：验证在 Host2 / Client2（/ Client3）真实实例上用 `tools/bridge.py` + `elmp` 命令 + 截图 + `elmp perf` 完成；写世界的测试辅助登记并在报告列出；每轮实测前备份实例 `Saved/`，结束后还原并删除本轮产生的文件；不碰正式游戏目录 / 存档；未经确认不向我正在玩的游戏发输入；实例运行中不替换 DLL。
-- 文档先行：原版事实与文档冲突 → 先改 `docs/`（日期 + 证据标签）再改代码；每个子里程碑更新 `README.md`「当前阶段」并 commit（不 push）；需求树 §7 追加本阶段实施决定（标“可复议”）。
-- 每个阶段结束输出与 P0/P1 同格式的报告：构建了什么、门槛逐项实测数字与截图路径、更正过的事实、测试辅助清单、遗留问题、实例最终状态；并把下一阶段的产品问题批量列给我。
-- 需要我介入的事项（新实例目录、无法定位的原生入口、门槛屡试不过）在报告里单列“需要用户”一节，然后继续做不受阻塞的部分；全部可做的都做完仍受阻才报告 blocked。
+## 3. 验证步骤（一步一提交，做完一步再决定下一步）
 
-## 7. 进度登记（goal 完成 = 全部打勾）
-打勾格式：`- [x] 项目 —— 2026-MM-DD · 证据：<kb 文件#节 / 截图路径 / 命令输出摘要> · commit <hash>`。
-“实现”类条目打勾条件是模块编译通过并在实例上跑起来（`elmp status` 可见）；“门槛”类条目打勾条件是实测数字 / 截图已写入 kb。被判定为无法达成的条目不要删，改写为 `- [!] 项目 —— 原因、尝试、剩余选项`，并同步到顶部「需要用户」。
+**V1 输入驱动实验（单角色：远程莉莉副本）**
+- Host 侧：捕获 `FInputSnapshot`（`+224`，40 B）逐帧发出；先不做命令复制。
+- Client 侧：把快照喂进副本的 `InputComponent`，放开 `TryAddCommands`，`UpdateCommands` 正常跑；P6 通道保留但默认关闭，作为回退开关。
+- 量：命令序列一致率（类 / 方向 / 帧差）、动画变化沿一致率、位置差、非命令状态（坐椅、死亡姿态）是否自然出现、帧时间。
+- 判据：H1 成立；坐椅与死亡姿态**不需要** `hold_host_pose` 就出现。
 
-### P1 遗留
-- [x] pickup 闸门 off / on 实测，补进 §7.2 与 party-facts —— 2026-10-26 · 证据：party-facts「P1 遗留 / pickup」（旧碰撞忽略实现泄漏 → 改为关座位 AutoCollect 球体；off 掉落物飞 2100 UU 归 P1，on P2 当场收取）、需求树 §7.16.4 更正 · commit d7d685a
-- [x] 精灵升级收益同步到 PX（`SpiritLevels`）实测 —— 2026-10-26 · 证据：party-facts「P1 遗留 / 精灵升级收益」（P1 s5000 1→2→3，P2 一拍内镜像；P2 对 P3 一击 −54 → −63） · commit d7d685a
-- [x] 敌人激活入口：IDA 定位结果写入 `EL.json` + engine-facts（或记录“两原语闸 + CanBePaused + 1 Hz 复检”为唯一方案并实测泄漏数） —— 2026-10-26 · 证据：engine-facts「敌人激活入口重新定位」（AI 单汇点 `0xCCD8F0`，4 个调用者；Pawn 侧 `0xCCDAA0`；Dev2 预检 18 函数 + 9 偏移通过；church_07 24/24 敌人 `IsActive`） · commit b43f6c8
+**V2 状态校正**
+- 快照加“状态类集合”（`UStateComponent::ActiveStates` 的类名集合，按 Ref 发）。
+- Client 只在“类集合不一致且无进行中命令”时做校正；校正后看是否收敛、是否抖动。
+- 判据：H2 成立；连续 60 s 战斗后状态集合一致。
 
-### P2 同图联机 —— 实现
-- [x] `net`：UDP + CNG 握手 / 加密（配对码参与派生） —— 2026-10-26 · 证据：net-facts「传输层」（Host2/Client2 错码 → `pairing code mismatch`，正确码 connected RTT 1.1 ms；`test_net_handshake`） · commit a3ebf0f / b6ac40b
-- [x] `net`：可靠有序 + 不可靠最新双通道、ACK 位图、RTO、分片重组、`F_CLOSE`、多对端表、全部有界队列 —— 2026-10-26 · 证据：net-facts「传输层」（`test_net_transport` 20% 丢包 / 重复 / 乱序；Host 同时两条链路；leave → Host 1 s 内 F_CLOSE） · commit a3ebf0f / b6ac40b
-- [x] `coop`：typed 位掩码增量快照 + 名字表 + 预分配 `FrameSnapshot` —— 2026-10-26 · 证据：`test_net_codec`（全量 / 增量 / 删除 / 截断）+ net-facts「P2 首次联机切片」（Host seq 319 / acked 318、badSnaps 0） · commit 096b186 / 5304e2c
-- [x] `coop`：session / world_model / host capture / client takeover · apply · presenter · vitals —— 2026-10-27 · 证据：net-facts「coop 层与架构 §7.5 的对应」及各实测节 · commit b6ac40b / 9b58b34 / 8f0f5b5 / 253c705
-- [x] `coop/entities`：enemy / enemy_dyn / lily / worldobj / story / pickup 六个 `IEntityAdapter` —— 2026-10-27 · 证据：net-facts「entities 适配器重构 + pickup」「六个适配器齐备」（pickup / enemy_dyn / worldobj / story 实测，重构后 24 敌全等） · commit 253c705 / 本提交前一提交
-- [x] `guard`：结算拦截（DoDamage / 技能伤害）、`IsPlayer` 跳板、`SaveGame/SaveGameAsync` 存档保护、碰撞 / tick 原语闸 + 激活闸、回放窗口 —— 2026-10-26 · 证据：net-facts「guard 逐项」 · commit fbded06 / 1f50732
-- [x] 动作通道：`AbilityLaunchFromDesc` pre 取参 → 可靠下发 → Client 同入口重放（幂等 + 值域校验） —— 2026-10-26 · 证据：net-facts「动作通道」（captured 38 / replayed 38 / rejected 0） · commit 1693017
-- [x] 远程座位：kind=network 同构座位、500 ms 停滞松键、`map/mapReady` 跟图闸门、晚加入 / 断线重连保留座位 —— 2026-10-26 · 证据：net-facts「500 ms 停滞松键」「晚加入 + G1 复检」「非主动断线重连」 · commit c79f4ca / 9b58b34 / 1ec1742
-- [x] 客人进度与构筑归属（FR-NET-2c）+ Client 原版档只读 —— 2026-10-26 · 证据：net-facts「客人构筑归属」「guard 逐项」 · commit 本提交
-- [x] 客人装备通路（F2.10） —— 2026-10-26 · 证据：net-facts「客人装备通路」 · commit 本提交
-- [x] 管理器「联机」页（F2.1）+ FR-NET-8 版本一致 / 拒绝原因 / Full —— 2026-10-27 · 证据：net-facts「管理器 Online 页」「第三实例 + Full 拒绝原因」、`test_net_handshake`（版本 / EXE / 数据摘要不一致拒绝） · commit b2f1639 / 本提交
-- [x] Client 相机与伴随体规则（FR-NET-3c）、本地座位压制（FR-NET-3d）、Client 原版 HUD 显示 Host 数值 —— 2026-10-26 · 证据：net-facts「Client 相机 / 本地座位压制 / HUD」 · commit 0253ca0 之前一提交
-- [x] CTest：typed 编解码边界 / 传输状态机 / 握手（只此三类） —— 2026-10-26 · 证据：`build.bat base test` 7/7 通过（test_net_codec / test_net_transport / test_net_handshake） · commit a3ebf0f / 096b186 / 5304e2c
+**V3 交互减法**
+- CUE4Parse 读 `BP_Interactable_RestingPoint` 的 ubergraph（`OnInteract` → `ExecuteUbergraph[155]`）+ IDA 跟 `AInteractable::OnInteract`（`0xCE8BF0`）→ 状态 / 存档 / 清除的分界。
+- 目标：Client 跑交互的“给角色加状态 + 播动画”，减掉存档 / 清除 / 治疗；先只做休息点，再做梯子 / 祈祷。
+- 判据：H3 成立；Host / Client 两侧状态一致、Client 存档哈希不变。
 
-### P2 同图联机 —— 门槛（Host2 / Client2）
-- [x] G1 Client 无 AI 决策：三闸 + 1 Hz 复检计数可观测，泄漏 0 —— 2026-10-26 · 证据：net-facts「晚加入 + G1 复检」「guard 逐项」（AI 激活闸 24、tick / 碰撞原语闸、rechecks 20 aiLeaks 0、IsActive 0/26） · commit 1f50732 / 本提交
-- [x] G2 客人输入经 Host 原版管线（动画序列取证） —— 2026-10-26 · 证据：net-facts「P2 首次联机切片」G2（idle → run → jump_down → idle；攻击 → summon_DEFAULT_A 击杀 3 敌） · commit f5dfef7 / bb5630f
-- [x] G3 世界一致：敌人数量 / 位置 ≤5 UU / HP、门、宝箱、可破坏物（Client ⊆ Host）、剧情旗标、Boss 窗口 —— 2026-10-27 · 证据：net-facts「G3 世界一致汇总」（门 / 宝箱以同一 AInteractable 通路 + Tip 实测代证，Boss 窗口按 §7.1.3 fail closed、无可用存档，记「需要用户」） · commit 5ccb33b 及前
-- [x] G4 60 / 144 / 波动三档帧时间 + 截图可见 Spine 动画与弹体 —— 2026-10-26 · 证据：net-facts「Client 帧开销回归与修复 + G4 三档帧时间」（Client P99 303/191/208 µs、Host 490/371/407 µs；截图 g4a / g4b / g4p3） · commit 本提交 / ability 寿命修复前一提交
-- [x] 晚加入 —— 2026-10-26 · 证据：net-facts「晚加入 + G1 复检」 · commit 本提交
-- [x] 断线（非主动离开）重连，座位与构筑保留 —— 2026-10-26 · 证据：net-facts「非主动断线重连」 · commit 9b58b34 / 本提交
-- [x] Host P1 死亡重生 / 切图时 Client 不把卸载当死亡 —— 2026-10-26 · 证据：net-facts「Host P1 死亡重生不误判」 · commit 本提交
-- [x] 客人离开后 Host 本地 P1 数值还原 —— 2026-10-26 · 证据：net-facts「客人主动离开」 · commit 本提交
-- [x] 联机 PvP（命中门 + 倍率 + 击退） —— 2026-10-26 · 证据：net-facts「联机 PvP」 · commit 1f22913 / 本提交
-- [x] §7.2 矩阵「Host 上远程座位」列 —— 2026-10-27 · 证据：net-facts「§7.2 远程座位列：interact」「trigger.world + Client 列」「pickup 远程座位」「travel / rest 远程座位」（story 以机制证据，Host2 存档无未消耗剧情触发器） · commit 本提交 / interact 复查闸门 / 规则 1 排除网络座位
-- [x] §7.2 矩阵「Client 副本」列 —— 2026-10-27 · 证据：net-facts「§7.2 Client 副本列」 · commit 本提交 / P1 呈现模式
-- [x] 性能：Host+1 客人 ELMP P99 < 1.0 ms；Client 呈现 P99 < 1.0 ms；无会话时 G0 仍成立（`g0.reflect_calls = 0`，对裸 UE4SS P99 差 < 0.2 ms） —— 2026-10-26 · 证据：net-facts「性能（Host + 1 客人）」（Host P99 426 µs、Client P99 147 µs、g0.reflect_calls 0） · commit 本提交
-- [x] P2 阶段报告 + 需求树 §7 追加实施决定 + README「当前阶段」 —— 2026-10-27 · 证据：net-facts「P2 阶段报告」、需求树 §7.17、README「P2 同图联机已完成」 · commit 本提交
+**V4 横向推广（只在 V1–V3 全绿后）**
+- 同一套接到敌人 / 精灵 / 伴随精灵；P6 通道逐个降级为兜底，不删。
+- Boss / 世界对象 / 全局（时间缩放 / BGM）按需，不在本阶段开头做。
 
-### P3 多客人 + 多地图 —— 实现
-- [x] 第三个隔离实例 `client2`（`Win64_LAN_Client3` + `ELMP_Test_Data\client2`，devconfig 登记） —— 2026-10-27 · 证据：net-facts「第三实例 + Full 拒绝原因」 · commit 本提交
-- [x] 多对端：每对端独立会话 / 密钥 / 可靠层 / 基线 / epoch；快照公共部分 + 每对端 `me`；`l<seat>` 副本；满员 Full —— 2026-10-27 · 证据：net-facts「两客人同图 G1–G4」「第三实例 + Full 拒绝原因」 · commit b6ac40b / 9b58b34 / 4f5e8c9
-- [x] `world/level_instance`（`LoadLevelInstance` 反射参数校验、`ELMP_BG_<Map>__<Part>` 大 Y 偏移） —— 2026-10-27 · 证据：net-facts「world/level_instance」 · commit 本提交前两提交
-- [x] `world/map_context`（`0xCAAFF0` + `0xC997B0` 上下文窗口） —— 2026-10-27 · 证据：net-facts「world/map_context」（ClearedActors 键 map_village_04、remapped 51） · commit 本提交前两提交
-- [x] `coop/host/maps` 生命周期（首入加载、末离 10 s 宽限卸载、P1 进入先卸载再原版切图） —— 2026-10-27 · 证据：net-facts「coop/maps 首测」「后台图战斗 / 记账 / 宽限卸载 / Client 跟图」「P1 进入后台图的移交」 · commit 本提交及前
-- [x] 坐标按「图 id + 局部坐标」传输 + 兴趣过滤；远程座位切图只切自己的实例 —— 2026-10-27 · 证据：net-facts「coop/maps 首测」「后台图战斗 / 记账 / 宽限卸载 / Client 跟图」 · commit 本提交及前
-- [x] 后台图 Boss 房 fail closed（§7.1.3）；`OnOpenNewArea` 对 PX 的 PC 抑制 —— 2026-10-27 · 证据：net-facts「后台图 Boss 房 fail closed + OnOpenNewArea」（OnOpenNewArea 实测原版不对 PX 的 PC 发出，0 次） · commit 本提交及前
-- [x] §7.3 的 12 个 `CurrentGameMapID` 读者逐个 IDA 分类并写入 kb（`0xC98210 0xC98D80 0xC99770 0xC9A9F0 0xCA2820 0xCB6240 0xCCDD10 0xCCE900 0xCD5060 0xCD52D0 0xCDC950 0xCDD110`） —— 2026-10-27 · 证据：net-facts「§7.3 经 0xD0A850 的 12 个调用方逐个分类」（无一读 CurrentGameMapID：加载中闸门 / 切图就绪委托 / 缓存子系统） · commit 本提交
+## 4. 验收口径（每步都带）
 
-### P3 多客人 + 多地图 —— 门槛
-- [x] 两客人同图 G1–G4 —— 2026-10-27 · 证据：net-facts「P3 实测 / 两客人同图 G1–G4」 · commit 本提交
-- [x] 一客人在后台图被敌人攻击 / 击杀敌人，Host 存档清除记账落在正确的图 —— 2026-10-27 · 证据：net-facts「后台图战斗 / 记账 …」「world/map_context」 · commit 本提交及前
-- [x] P1 进入后台图的移交（先卸载再原版切图） —— 2026-10-27 · 证据：net-facts「P1 进入后台图的移交」（实施为清空后台 PlayerStart 标签 + 切图后移交再卸载，需求树 §7.18 记） · commit 本提交及前
-- [x] 满员第 N+1 个客人收到 Full —— 2026-10-27 · 证据：net-facts「第三实例 + Full 拒绝原因」（上限 1，第 2 个客人 `host is full`、Host `fullRejects=1`） · commit 4f5e8c9
-- [x] 后台图有人战斗时 Host 帧时间 P99 与性能门槛 —— 2026-10-27 · 证据：net-facts「后台图有人战斗时的帧时间」（Host P99 449 µs） · commit 本提交
-- [x] P3 阶段报告 + 需求树 §7 追加实施决定 + README「当前阶段」 —— 2026-10-27 · 证据：net-facts「P3 阶段报告」、需求树 §7.18、README「P3 … 已完成」 · commit 本提交
+- **手感**：远程对象相邻帧位移跳变（>50 UU 帧数 / 总帧）、动画起始相位（Client 从 t=0 开始的比例）、动作多样性（变化沿总数 + 按序匹配率）、输入到呈现延迟。
+- **正确性**：Client 结算泄漏 0（damage / skill / save / effect / death）；两侧敌人数量与 HP 全等；Client `Saved/` 哈希不变。
+- **性能**：Host / Client `elmp perf` P99 < 1 ms；无会话 G0 不变。
+- **完整性**：P6 的已知点位不得回退（用 P7-2 分支的 `sync-coverage.md` 当检查表，状态重测）。
 
-### P4 猎人模式 + SDK
-- [x] `modes/hunter` 实现（阵营、15 s 宽限冻结、胜负与单调计时、进度源 mirror / preset、8 s PlayerStart 复活、独立 travel、椅子只回满自己、指南针 HUD、`elmp hunter …`） —— 2026-10-27 · 证据：net-facts「P4 实测 / modes/hunter」 · commit 本提交及前
-- [x] 猎人规则在 Host + 2 客人（或本地 PX 混合）上验收 —— 2026-10-27 · 证据：net-facts「P4 实测 / modes/hunter」（1 网络客人 + 2 本地 PX 混合：宽限、PvP 阵营、指南针、8 s 入口复活、两种胜负） · commit 本提交
-- [x] `sdk`：C ABI `elmp_sdk.h` + `ELMP_GetApi` 版本化函数表；`elmp.json` 依赖与 slot 范围、重叠拒绝；事件订阅每 Mod 一个游标；第三方对象联机报未支持 —— 2026-10-27 · 证据：net-facts「sdk」 · commit b7b39f1 / 本提交
-- [x] 向第三方 Lua Mod 注入 C 绑定（不注入 Lua 源码） —— 2026-10-27 · 证据：net-facts「sdk」（17 个 ELMP_* C 函数，被拒 Mod 不注入） · commit 本提交
-- [x] 示例 LilyFollower（1001）/ LilyEnemy（2001）跑通 —— 2026-10-27 · 证据：net-facts「sdk」（跟随 / 敌方攻击 P1） · commit 本提交
-- [x] P4 阶段报告 + 需求树 §7 追加实施决定 + README「当前阶段」 —— 2026-10-27 · 证据：net-facts「P4 阶段报告」、需求树 §7.19、README · commit 本提交
+## 5. 铁律
 
-### P5 发布
-- [x] README（安装 / 使用 / 功能 / 控制台命令 / 已知限制 / 架构）+ INSTALL.txt —— 2026-10-27 · 证据：README.md 各节、INSTALL.txt（打包模板） · commit db531f1 / 36b1e66 前一提交
-- [x] `docs/adr/0005-cpp-rewrite.md` 定稿（采纳状态与实际偏差） —— 2026-10-27 · 证据：docs/adr/0005-cpp-rewrite.md · commit db531f1
-- [x] `elmp.json` 版本 ≥ 0.3.0；`build.bat package` 产出 `-shipping.zip`（零 `.lua` / `.pdb` / 义肢）与 `-dev.zip` —— 2026-10-27 · 证据：`dist\ELMP-0.3.0-shipping.zip` 79 项（0 个 .lua、0 个 .pdb；非 data 项只有 main.dll / elmp.json / sdk/elmp_sdk.h / INSTALL.txt）、`dist\ELMP-0.3.0-dev.zip` 84 项 · commit 本提交
-- [x] Shipping 构建三实例冒烟（本地多人 + 同图联机 + 后台图），结果进 kb —— 2026-10-27 · 证据：net-facts「P5 实测 / Shipping 构建三实例冒烟」 · commit 本提交
-- [x] 最终报告（全部阶段汇总、遗留清单、实例最终状态） —— 2026-10-27 · 证据：net-facts「最终报告」 · commit 本提交
+- P6 通道不删；每个被换掉的域都要有运行时开关（P6 仿造 / 执行层）。
+- 放开执行层前先闭合结算汇点，并带计数；未知一律 fail closed。
+- 文档先行：原版事实与文档冲突先改 `docs/`。
+- 不碰正式游戏目录 / 存档；测前备份实例 `Saved/`，测后还原；用户在用电脑时不做前台自动化。
+- 不在 `main` 上直接铺大改：每一步可单独回退。
 
-### P6 远程表现补全（2026-10-27 追加）
-- [x] 缺口盘点 + IDA 入口（SpawnFX 实现、FX / 音效时间线、技能停止、受击委托）写入 EL.json / kb —— 2026-10-27 · 证据：net-facts「P6 远程表现补全」「缺口盘点」（音效改钩 FMOD PlayEventAtLocation：时间线钩子 0 命中）、EL.json 5 项预检 ok · commit 本提交
-- [x] 通用 Ref + 动作通道扩展到精灵 / 莉莉 / 动态敌人 —— 2026-10-27 · 证据：net-facts「P6 远程表现补全」（技能 67/67，rejected 0） · commit 本提交
-- [x] 精灵呈现（快照段 + Client 呈现 Actor） —— 2026-10-27 · 证据：net-facts「P6 远程表现补全」（BP_s5060_Assassin 位置全等） · commit 本提交
-- [x] 特效通道（SpawnFX 捕获 / 重放 / 本地拦截 / 结束） —— 2026-10-27 · 证据：net-facts「P6 远程表现补全」（163/163、停用对账、本地抑制 18） · commit 本提交
-- [x] 音效通道（FMOD PlayEventAtLocation；时间线也经此） —— 2026-10-27 · 证据：net-facts「P6 远程表现补全」（91/92，距离过滤 0） · commit 本提交
-- [x] 技能结束同步 —— 2026-10-27 · 证据：net-facts「P6 远程表现补全」（ActStop 66/66、stopMissed 0；寿命上限 10 s 兜底） · commit 本提交
-- [x] 受击表现 —— 2026-10-27 · 证据：net-facts「P6 远程表现补全」（OnReceiveDamage 处理函数 28 次） · commit 本提交
-- [x] 门槛实测（截图 + 计数对账 + 帧时间）+ kb + 需求树 §7.20 + README —— 2026-10-27 · 证据：net-facts「P6 远程表现补全」（fx2-client/host.png；Host P99 428 µs / Client 277 µs）、需求树 §7.20、README 已知限制 · commit 本提交
+## 6. 进度
+
+### 6.1 调研
+- [x] 统一管线事实（Tick / 五时间线 / 动画单件 / 状态类 / 结算汇点）—— 2026-10-29 · 证据：`docs/kb/pipeline-facts.md`（`[E-IDA]` 0xCF3740 / 0xD29F90 / 0xD24CA0 / 0xCBAE40，`[E-SDK]` CommandAction.h / SpineAnimationComponent.h / StateComponent.h）· commit 本提交
+
+### 6.2 验证
+- [ ] V1 输入驱动实验（远程莉莉副本）
+- [ ] V2 状态校正
+- [ ] V3 交互减法
+- [ ] V4 横向推广
+
+### 6.3 收尾
+- [ ] 手感 / 正确性 / 性能三项达标
+- [ ] 文档 + 版本 + 打包 + 三实例冒烟
+- [ ] 阶段报告
+
+## 7. 历史
+
+- P0–P6（2026-10-25 ～ 2026-10-27）：见各 kb。
+- P7-1（2026-10-28，`explore/p7-failed-client-vanilla-execution`）：命令级复制 + 收束结算；手感好、完整性差。
+- P7-2（2026-10-28 ～ 29，`explore/p7-failed-snapshot-coverage`）：P6 + 覆盖矩阵；两头都输，目标过宽。
+- P8（2026-10-29 起，本文件）：输入驱动的统一管线，减法收束。
