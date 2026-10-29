@@ -28,6 +28,7 @@
 #include "party/storage.h"
 #include "core/catalog.h"
 #include "coop/client.h"
+#include "coop/fx.h"
 #include "modes/hunter.h"
 #include "sdk/sdk.h"
 #include "coop/host.h"
@@ -103,6 +104,7 @@ void deferred_init(const frame::Tick&) {
 void define_settings() {
     settings::define({.key = "verboseLog", .def = false, .help = "extra diagnostics in UE4SS.log"});
     party::config::define();
+    coop::fx::define_settings();
 }
 
 class ElmpMod final : public RC::CppUserModBase {
@@ -146,6 +148,7 @@ public:
         if (auto e = core::permission::load(g_data_dir / "gates.json"); !e.empty()) log::error("{}", e);
         registry::install();
         lifecycle::install();
+        coop::fx::install(); // 读图前就装 FX 钩子：会话前的持续特效要能被记下来（见 fx::record_early）
         console::install();
         console::register_p0_commands();
         core::install();

@@ -80,6 +80,7 @@ std::string g_trace_name;
 std::vector<float> g_trace;
 reflect::PropRef g_spawn_point;
 bool g_resolved = false;
+std::uint64_t g_engaged_rows = 0; // P8 Dev：本帧带 bit3（战斗中）的敌人行数，describe 里看得到
 metrics::Counter& c_snaps = metrics::counter("coop.host.snapshots");
 metrics::Histogram& h_capture = metrics::histogram("coop.host.capture_us");
 
@@ -100,6 +101,23 @@ void resolve() {
     reflect::Resolver r("ZenithCharacter", reflect::find_class(L"/Script/Zenith.ZenithCharacter"));
     g_spawn_point = r.prop(L"SourceSpawnPoint", reflect::Kind::Object);
     g_resolved = r.ok();
+}
+
+// P8：敌人“在战斗中”（拿到了目标）。原版由 AI 的 OnChangeTarget → BattleColor->SetBattleColorEnabled(true)
+// 打开材质参数的红光 + BP_FXComponent->TriggerFindEnemyFX()（PS_FindEnemy）+ enemy-find-enemy 音效。
+// 这条状态不在任何 FX 通道里（红光只是材质参数，不是粒子），客户端又因为 AI 闸永远拿不到目标，
+// 所以它必须随敌人快照过去（EnemyRow.flags bit3），由客户端调同一个原版事件在本地重现。
+reflect::PropRef& enemy_target() {
+    static reflect::PropRef p;
+    static bool tried = false;
+    if (!p.ok() && !tried) {
+        tried = true;
+        if (auto* cls = reflect::find_class(L"/Game/_Zenith/Core/Pawns/BP_Character_Enemy_Base.BP_Character_Enemy_Base_C"))
+            p = reflect::Resolver("EnemyBase", cls).prop(L"CurrentTarget", reflect::Kind::Object);
+        if (!p.ok()) log::warn("coop: enemy CurrentTarget unresolved — battle colour state will not replicate");
+        else log::info("coop: enemy CurrentTarget at +{}", p.offset);
+    }
+    return p;
 }
 
 // Spine track 0 (stage 1 of §4: GetCurrent + getAnimationName / GetTrackTime / GetLoop via ProcessEvent).
@@ -186,6 +204,8 @@ void write_enemies(HostCtx&) {
                 if (cur <= 0) row->flags |= 4; // dead only when the last sample says so (unload ≠ death)
             }
             row->type = e.class_id;
+            // bit3：敌人已拿到目标（原版 BattleColor 红光 / FindEnemy FX 的触发条件）
+            if (enemy_target().ok() && ue::alive(enemy_target().object(enemy))) row->flags |= 8, ++g_engaged_rows;
             if (auto* loco = s->zc_locomotion.object(enemy)) {
                 reflect::Frame fr(s->loco_facing_right);
                 if (fr.invoke(loco)) row->facing = fr.ret_bool() ? 1 : -1;
@@ -397,6 +417,13 @@ std::vector<SndEv> g_snd_pending;
 std::vector<std::pair<ObjHandle, std::uint8_t>> g_stop_pending;
 std::vector<std::uint32_t> g_deact_pending;
 std::unordered_map<ue::UObject*, std::pair<ObjHandle, std::uint32_t>> g_fx_live; // sent PSC → FX seq
+// P8：注册为 running 的持续特效（bit2）是“状态”不是“事件”。记录在场集合，新对端加入时补发一次（bit4 = 初始状态），
+// 否则像敌人身上的红光这种在加载/激活时 spawn 一次的特效，晚加入的客户端永远看不到。
+struct PersistFx {
+    ObjHandle owner, ps, psc;
+    fx::Spawn s;
+};
+std::vector<PersistFx> g_persist;
 std::uint32_t g_fx_seq = 0;
 
 // 命令启动沿（P8 敌人域）：只对可复制的敌人 / 动态敌人发；Lily 的副本将来走输入复制而不是命令复制
@@ -415,7 +442,10 @@ void on_cmd_start(const commands::Start& s) {
     g_cmd_pending.push_back({ObjHandle::of(s.owner), s.path, s.dir, s.cmd});
 }
 
-void on_fx(const fx::Spawn& s) {    if (g_peers.empty()) return;
+void on_fx(const fx::Spawn& s) {
+    // 持续特效要在“没有对端”时也记录：敌人红光往往在 Host 读图 / 激活时就 spawn 了，晚加入的客户端靠这份状态补
+    if ((s.msg.flags & 4) && g_persist.size() < 128) g_persist.push_back({ObjHandle::of(s.owner), ObjHandle::of(s.ps), ObjHandle::of(s.psc), s});
+    if (g_peers.empty()) return;
     if (g_fx_pending.size() >= 256) return void(++g_ev_dropped);
     g_fx_pending.push_back({ObjHandle::of(s.owner), ObjHandle::of(s.ps), ObjHandle::of(s.psc), s});
 }
@@ -424,6 +454,7 @@ void on_deactivate(ue::UObject* psc) {
     if (it == g_fx_live.end()) return;
     if (it->second.first.get() == psc && g_deact_pending.size() < 256) g_deact_pending.push_back(it->second.second);
     g_fx_live.erase(it);
+    std::erase_if(g_persist, [psc](const PersistFx& p) { return p.psc.get() == psc; });
 }
 void on_sound(const fx::Sound& s) {
     if (g_peers.empty()) return;
@@ -470,6 +501,7 @@ void send_events() {
         m.seq = ++g_fx_seq;
         m.ps = name(fx::path_of(ps));
         m.custom_bone = e.s.custom_bone.empty() || e.s.custom_bone == "None" ? 0 : name(e.s.custom_bone);
+        if (e.s.msg.flags & 4) m.flags |= 16; // 持续特效：实时也带“初始状态”位，客户端在本地模式下也补上
         if (!m.ps) continue;
         if (auto* psc = e.psc.get()) g_fx_live[psc] = {e.psc, m.seq};
         send_to(*r, m, g_fx_sent);
@@ -596,6 +628,22 @@ std::string seat_for(Peer& p) {
     }
     p.epoch = ++g_epoch;
     send_rel(p.id, proto::encode(proto::Welcome{static_cast<std::uint8_t>(p.slot), p.epoch, g_frame->map}, g_buf));
+    // 新对端：把当前在场的持续特效（敌人红光等）补发一次，作为初始状态（bit4）
+    for (auto& e : g_persist) {
+        auto* ps = e.ps.get();
+        const auto r = ps ? ref_of_owner(e.owner.get()) : std::nullopt;
+        if (!r || !wants(p, *r)) continue;
+        auto m = e.s.msg;
+        m.kind = static_cast<std::uint8_t>(r->kind);
+        m.net_id = r->id;
+        m.seq = ++g_fx_seq;
+        m.ps = name(fx::path_of(ps));
+        m.custom_bone = e.s.custom_bone.empty() || e.s.custom_bone == "None" ? 0 : name(e.s.custom_bone);
+        m.flags |= 16; // 新对端补发的就是初始状态
+        if (!m.ps) continue;
+        if (auto* psc = e.psc.get()) g_fx_live[psc] = {e.psc, m.seq};
+        send_rel(p.id, proto::encode(m, g_buf));
+    }
     return {};
 }
 
@@ -692,6 +740,9 @@ void tick(std::int64_t now_us) {
     capture(now_us);
     ability::host_enable(on_launch);
     fx::host_enable({on_fx, on_deactivate, on_sound, on_ability_stop});
+    // 会话开始前（读图 / 敌人激活）就 spawn 的持续特效：补进在场集合，新对端 Welcome 时补发
+    if (std::vector<fx::Spawn> early; fx::take_early(early) > 0)
+        for (auto& s : early) on_fx(s);
     commands::host_enable(on_cmd_start);
     refresh_lily_pawns();
     party::transit::set_stay([](std::int64_t seat) { return maps::slot_of_seat(seat) > 0; });
@@ -736,7 +787,7 @@ std::string trace(const std::string& name) {
 std::string describe() {
     std::string out = std::format("host: peers={} parked={} names={} epoch={} actsSent={} actsDropped={}\n", g_peers.size(), g_parked.size(), g_names.size(), g_epoch,
                                   g_acts_sent, g_acts_dropped) +
-                      std::format("events: fx={} fxStops={} sounds={} abilityStops={} dropped={} noOwner={} live fx={} abilities={}\n", g_fx_sent, g_fx_stops_sent, g_snd_sent, g_ab_stops_sent, g_ev_dropped, g_ev_noref, g_fx_live.size(), g_ab_live.size()) +
+                      std::format("events: fx={} fxStops={} sounds={} abilityStops={} dropped={} noOwner={} live fx={} abilities={} engaged={}\n", g_fx_sent, g_fx_stops_sent, g_snd_sent, g_ab_stops_sent, g_ev_dropped, g_ev_noref, g_fx_live.size(), g_ab_live.size(), g_engaged_rows) +
                       ability::describe() + commands::describe() + fx::describe() + std::format("cmds sent={} skipped={}\\n", g_cmds_sent, g_cmds_skipped);
     for (auto* a : adapters()) out += a->describe();
     out += maps::describe();

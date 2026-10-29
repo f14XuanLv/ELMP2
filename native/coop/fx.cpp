@@ -13,6 +13,7 @@
 #include <cstring>
 #include <format>
 #include <unordered_map>
+#include <vector>
 
 namespace elmp::coop::fx {
 
@@ -56,6 +57,12 @@ std::uint64_t g_cap_spawn = 0, g_cap_deact = 0, g_cap_sound = 0, g_cap_stop = 0;
 std::uint64_t g_cap_emitter = 0, g_local_emitter = 0, g_local_ok = 0, g_local_emitter_ok = 0;
 std::uint64_t g_rep_spawn = 0, g_rep_fail = 0, g_rep_sound = 0, g_rep_stop = 0, g_rep_deact = 0, g_local_blocked = 0, g_rep_emitter = 0;
 std::unordered_map<std::string, std::uint64_t> g_blocked_ps; // Dev: which local FX were suppressed (first 32 kinds)
+// 会话开始前就 spawn 的持续特效（见 record_early）；句柄化，避免资产/组件被卸载后悬空
+struct EarlyFx {
+    ObjHandle owner, ps, psc;
+    net::proto::Fx msg;
+    std::string custom;
+};
 
 void read_xf(const std::uint8_t* t, std::array<float, 10>& xf) {
     std::memcpy(&xf[0], t, 16);
@@ -81,6 +88,36 @@ void hide_now(UObject* psc) {
 
 UObject* fx_owner(UObject* o); // 定义在 emitter 钩子旁
 
+// P8：注册为 running 的持续特效（flags bit2 / `bRegisterAsRunningFX`）是“状态”不是“事件”：敌人红光里的
+// 常驻粒子、呼吸特效这类东西在进会话之前（读图 / 敌人激活）就 spawn 了，等 Host 开始联机再挂钩子已经太晚。
+// 所以钩子在 on_unreal_init 就装好，没有会话时只把这类持续特效记在 g_early 里，
+// Host 一开会话就把它们补进在场集合并发给（晚加入的）客户端。
+std::vector<EarlyFx> g_early;
+std::unordered_map<std::string, std::uint64_t> g_early_ps; // Dev: 会话前出现的持续特效种类（审计用）
+
+void record_early(UObject* owner, UObject* ps, UObject* psc, const net::proto::Fx& m, const std::string& custom) {
+    if (g_early.size() >= 128) return;
+    if (g_early_ps.size() < 32) ++g_early_ps[path_of(ps)];
+    g_early.push_back({ObjHandle::of(owner), ObjHandle::of(ps), ObjHandle::of(psc), m, custom});
+}
+
+std::size_t take_early_impl(std::vector<Spawn>& out) {
+    for (auto& e : g_early) {
+        auto* ps = e.ps.get();
+        if (!ps) continue; // 资产已经被卸载，重建没有意义
+        Spawn s;
+        s.owner = e.owner.get();
+        s.ps = ps;
+        s.psc = e.psc.get();
+        s.msg = e.msg;
+        s.custom_bone = e.custom;
+        out.push_back(s);
+    }
+    const auto n = out.size();
+    g_early.clear();
+    return n;
+}
+
 UObject* __fastcall d_spawn(UObject* comp, UObject* ps, std::uint8_t bone, std::uint64_t custom, const std::uint8_t* xf, bool attach, bool follow, std::int32_t sort,
                             std::uint8_t pool, bool reg) {
     g_in_spawn = true; // SpawnFX 内部会转调 SpawnEmitterAttached，别在 emitter 钩子上重复捕获
@@ -89,8 +126,9 @@ UObject* __fastcall d_spawn(UObject* comp, UObject* ps, std::uint8_t bone, std::
     if (!ue::on_game_thread() || !comp) return psc;
     auto* owner = comp->GetOuterPrivate();
     if (auto* resolved = fx_owner(owner)) owner = resolved; // 技能（AAbility）产生的特效归到它的 Owner 角色
-    if (g_host && g_sinks.spawn && ps && xf) {
-        Spawn s;
+    const bool have = ps && xf && (g_host || g_client || reg); // 没有会话时只关心持续特效（reg），别为别的付代价
+    Spawn s;
+    if (have) {
         s.owner = owner;
         s.ps = ps;
         s.psc = psc;
@@ -102,8 +140,12 @@ UObject* __fastcall d_spawn(UObject* comp, UObject* ps, std::uint8_t bone, std::
         ue::FName n;
         std::memcpy(&n, &custom, sizeof(n));
         s.custom_bone = ue::utf8(n);
+    }
+    if (g_host && g_sinks.spawn && have) {
         ++g_cap_spawn;
         g_sinks.spawn(s);
+    } else if (!g_client && have && (s.msg.flags & 4)) {
+        record_early(owner, ps, psc, s.msg, s.custom_bone); // 会话前的持续特效：留给 Host 补发
     } else if (g_client && owner && guard::marked(owner) && ue::alive(psc)) {
         // 呈现对象自己产生的 FX：fxLocal=1 时保留（表现由本地模拟生成）；否则拦下，等 Host 的那一份重放
         if (g_local_mode) {
@@ -215,17 +257,9 @@ void __fastcall d_stop(UObject* ability, std::uint8_t reason) {
     o_stop(ability, reason);
 }
 
-void install() {
+void install_hooks() {
     if (g_tried) return;
     g_tried = true;
-    settings::define({.key = "fxLocal", .def = false, .persist = false, .help = "P8: client emits FX locally (no replay, no suppression) — enemy-domain deletion test"});
-    settings::on_change([](const std::string& key) {
-        if (key != "fxLocal") return;
-        g_local_mode = settings::get_bool("fxLocal");
-        g_block = !g_local_mode;
-    });
-    g_local_mode = settings::get_bool("fxLocal");
-    g_block = !g_local_mode;
     g_spawn_ok = hook::install_manifest("SpawnFXImpl", reinterpret_cast<void*>(&d_spawn), reinterpret_cast<void**>(&o_spawn));
     g_em_ok = hook::install_manifest("SpawnEmitterAttached", reinterpret_cast<void*>(&d_em_attach), reinterpret_cast<void**>(&o_em_attach));
     g_deact_ok = hook::install_manifest("PSCDeactivateSystem", reinterpret_cast<void*>(&d_deactivate), reinterpret_cast<void**>(&o_deactivate));
@@ -254,8 +288,26 @@ ue::UObject* asset(const std::string& path) {
 
 } // namespace
 
+void install() { install_hooks(); }
+
+std::size_t take_early(std::vector<Spawn>& out) { return take_early_impl(out); }
+
+void define_settings() {
+    settings::define({.key = "fxLocal", .def = false, .persist = false, .help = "P8: client emits FX locally (no replay, no suppression) — enemy-domain deletion test"});
+    settings::on_change([](const std::string& key) {
+        if (key == "fxLocal") refresh();
+    });
+    refresh();
+}
+
+void refresh() {
+    g_local_mode = settings::get_bool("fxLocal");
+    g_block = !g_local_mode;
+}
+
 bool host_enable(const Sinks& s) {
     install();
+    refresh();
     g_sinks = s;
     g_host = g_spawn_ok || g_sound_ok || g_stop_ok || g_em_ok;
     return g_host;
@@ -265,6 +317,7 @@ void host_disable() { g_host = false, g_sinks = {}; }
 
 bool client_enable() {
     install();
+    refresh();
     g_client = g_spawn_ok || g_em_ok;
     return g_client;
 }
@@ -397,6 +450,8 @@ std::string describe() {
                                   g_spawn_ok, g_deact_ok, g_sound_ok, g_stop_ok, g_em_ok, g_local_mode ? " (fxLocal=1)" : "", g_cap_spawn, g_cap_deact, g_cap_sound, g_cap_stop,
                                   g_cap_emitter, g_rep_spawn, g_rep_fail, g_rep_deact, g_rep_sound, g_rep_stop, g_rep_emitter, g_local_blocked, g_local_sound_blocked, g_local_emitter, g_local_ok,
                                   g_local_emitter_ok, g_attached, g_block ? "" : " (blocking off)");
+    out += std::format("  early persistent fx: {}\n", g_early.size());
+    for (const auto& [p, n] : g_early_ps) out += std::format("  early {} x{}\n", p.substr(p.rfind('/') + 1), n);
     for (const auto& [p, n] : g_blocked_ps) out += std::format("  local {} x{}\n", p.substr(p.rfind('/') + 1), n);
     return out;
 }

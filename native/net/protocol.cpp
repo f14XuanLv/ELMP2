@@ -173,7 +173,7 @@ bool decode(std::span<const std::uint8_t> in, Fx& m) {
     m.flags = r.u8();
     m.sort = static_cast<std::int32_t>(r.u32());
     m.pool = r.u8();
-    return r.done() && m.ps != 0 && kind_ok(m.kind) && unit(m.xf) && !(m.flags & ~15u) && m.pool <= 3;
+    return r.done() && m.ps != 0 && kind_ok(m.kind) && unit(m.xf) && !(m.flags & ~31u) && m.pool <= 3;
 }
 std::size_t encode(const FxStop& m, std::span<std::uint8_t> out) {
     auto w = start(out, Msg::FxStop);

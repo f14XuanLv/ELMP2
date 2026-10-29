@@ -76,6 +76,7 @@ struct Taken {
     ObjHandle enemy, controller, spine;
     std::uint16_t anim = 0;
     bool killed = false, hidden = false;
+    bool engaged = false;    // 当前呈现的副本是否已开 BattleColor（红光）
     std::int8_t facing = 0;
     std::uint32_t frame = 0; // last snapshot that carried the row
     std::int32_t hp = -1;    // last presented HP (hit reaction on a drop)
@@ -213,7 +214,7 @@ void freeze(ue::UObject* enemy) {
                     // P8 敌人域：跑模拟时全部组件 tick 都开（命令队列要推进、状态机要读状态、动画要播）
                     if ((g_sim_local && cls != L"SpineAnimationComponent") || (g_anim_local && cls == L"SpineAnimationComponent") || cls == L"SpineSkeletonAnimationExComponent" || cls == L"SpineSkeletonRendererComponent" || cls == L"AbilityComponent" ||
                         cls == L"SpineBoneFollowerComponent" || cls == L"SpineBoneComponent" || cls == L"ParticleSystemComponent" || cls == L"WidgetComponent" ||
-                        cls == L"CommandQueueComponent") {
+                        cls == L"CommandQueueComponent" || cls == L"BattleColorComponent") {
                         // dormant enemies ship with the Spine animation / renderer ticks off → turn the
                         // presentation set on explicitly (v1 net-facts: else the mesh stays at its first frame)
                         reflect::Frame on(set_comp_tick);
@@ -249,6 +250,28 @@ void take(const std::string& name, ue::UObject* enemy) {
 
 void present_lilies(const snap::Frame& f, const core::schema::Script& s);
 
+// P8 敌人域：Host 的敌人拿到目标时，原版 BP_Character_Enemy_Base 的 OnChangeTarget 会：设 CurrentTarget →
+// BattleColor->SetBattleColorEnabled(true)（材质参数的红光，常驻）→ BP_FXComponent->TriggerFindEnemyFX()
+// （PS_FindEnemy）→ enemy-find-enemy 音效；目标失效时反过来关掉并 ClearColor。客户端的敌人 AI 被闸住，
+// 永远拿不到目标，于是整只是灰的、也没有红光。目标选择是决策（归 Host），所以“在战斗中”这个状态随快照
+// （EnemyRow.flags bit3）过来，客户端调同一个原版事件在本地重现 —— 不复制粒子，复制因。
+std::uint64_t g_engage_calls = 0;
+void apply_engage(ue::UObject* enemy, bool on) {
+    auto* cls = enemy ? enemy->GetClassPrivate() : nullptr;
+    if (!cls) return;
+    static std::unordered_map<ue::UClass*, reflect::FuncRef> per_class; // class → OnChangeTarget (fn null = none)
+    auto [it, fresh] = per_class.try_emplace(cls);
+    if (fresh) {
+        it->second = reflect::Resolver("EnemyBase", cls).func(L"OnChangeTarget", 1);
+        if (!it->second.ok()) log::warn("coop: {} has no OnChangeTarget — battle colour cannot follow the host", log::utf8(cls->GetName()));
+    }
+    if (!it->second.ok()) return;
+    ue::UObject* target = on ? world::p1_pawn() : nullptr; // 原版只看目标是否有效
+    reflect::Frame f(it->second);
+    f.arg(0, target);
+    if (f.invoke(enemy)) ++g_engage_calls;
+}
+
 // One enemy row (adapter enemy; also used by enemy_dyn for adopted / spawned copies): takeover on first
 // sight, facing, buffered position, HP, Spine pose.
 void present_enemy(const std::string& key, ue::UObject* enemy, const snap::EnemyRow& row, const snap::Frame& f, const core::schema::Script& s_) {
@@ -283,6 +306,10 @@ void present_enemy(const std::string& key, ue::UObject* enemy, const snap::Enemy
         if ((row.flags & 4) && !t.killed) t.killed = true, ++g_kills;
     }
     t.frame = g_latest;
+    if (const bool engaged = (row.flags & 8) != 0; engaged != t.engaged) { // 红光 + FindEnemy FX + 音效，本地重现
+        apply_engage(enemy, engaged);
+        t.engaged = engaged;
+    }
     if (row.anim && row.anim != t.anim && !g_anim_local) { // pose: switch track 0 only on an animation change (§16)
         const auto* anim = g_names.text(row.anim);
         if (!t.spine.get()) {
@@ -520,7 +547,7 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
     case proto::Msg::Fx: {
         proto::Fx m;
         if (!proto::decode(msg, m)) return ++g_fx_bad, EvResult::Done;
-        if (fx::local_mode()) return EvResult::Done; // fxLocal=1：表现由客户端自己的模拟生成，不重放
+        if (fx::local_mode() && !(m.flags & 16)) return EvResult::Done; // fxLocal=1：不重放；但持续特效的初始状态（bit4）仍要补
         const auto* ps = g_names.text(m.ps);
         const auto* bone = m.custom_bone ? g_names.text(m.custom_bone) : nullptr;
         if (!ps) return ++g_fx_bad, EvResult::Done;
@@ -1107,9 +1134,9 @@ ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id) {
 }
 
 std::string describe_events() {
-    return std::format("events(client): hitReacts={} spirits={} spawned={} failed={} retryQueue={} retried={} absent={} fxBad={} soundBad={} soundFar={} stopMissed={} live abilities={} fx={}\n",
+    return std::format("events(client): hitReacts={} spirits={} spawned={} failed={} retryQueue={} retried={} absent={} fxBad={} soundBad={} soundFar={} stopMissed={} live abilities={} fx={} engaged={}\n",
                        g_hit_reacts, g_spirits.size(), g_spirit_spawned, g_spirit_failed, g_ev_retry.size(), g_ev_retried, g_ev_absent, g_fx_bad, g_snd_bad, g_snd_far, g_stop_missed, g_ab_live.size(),
-                       g_fx_live.size());
+                       g_fx_live.size(), g_engage_calls);
 }
 
 void present_lily_rows(const ClientCtx& c) {

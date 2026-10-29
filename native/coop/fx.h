@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace elmp::coop::fx {
 
@@ -39,6 +40,13 @@ struct Sinks {
 };
 
 // Host: install (once) and route to `s`; host_disable stops reporting (detours stay, pass-through).
+// install() can be called at engine init: the detours then only record *persistent* FX (bRegisterAsRunningFX)
+// that appear before a session exists, so a host that starts hosting after the map load can still hand them
+// to a late joiner (take_early drains that list).
+void install();
+void define_settings();
+void refresh(); // re-read `fxLocal` (defaults / after settings load)
+std::size_t take_early(std::vector<Spawn>& out);
 bool host_enable(const Sinks& s);
 void host_disable();
 
