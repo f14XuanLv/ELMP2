@@ -155,6 +155,7 @@ void lily_row(std::uint16_t key, ue::UObject* pawn, const core::schema::Script& 
         if (f.invoke(loco)) row->facing = f.ret_bool() ? 1 : -1;
     }
     row->skin = static_cast<std::uint16_t>(std::max(0, core::skin::current(pawn)));
+    row->zoff = static_cast<std::int16_t>(std::lround(core::skin::renderer_z(pawn) * 10.0f)); // 踩地偏移随行发
     if (const auto* bp = core::schema::blueprint()) track0(bp->lily_spine.object(pawn), *row, s);
 }
 
@@ -204,6 +205,7 @@ void write_enemies(HostCtx&) {
                 if (cur <= 0) row->flags |= 4; // dead only when the last sample says so (unload ≠ death)
             }
             row->type = e.class_id;
+            row->zoff = static_cast<std::int16_t>(std::lround(core::skin::renderer_z(enemy) * 10.0f)); // 踩地偏移（敌人 -50 等）
             // bit3：敌人已拿到目标（原版 BattleColor 红光 / FindEnemy FX 的触发条件）
             if (enemy_target().ok() && ue::alive(enemy_target().object(enemy))) row->flags |= 8, ++g_engaged_rows;
             if (auto* loco = s->zc_locomotion.object(enemy)) {

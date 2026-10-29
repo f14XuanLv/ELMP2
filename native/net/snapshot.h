@@ -27,9 +27,13 @@ struct LilyRow { // key = seat slot (1 = host P1)
     std::uint8_t loop = 0;
     std::uint16_t skin = 0;
     std::uint16_t map = 0; // name id of the map the seat is in
+    // 呈现用的骨骼下移量（0.1 UU）：原版 USpineAnimationComponent 在 AfterBoneTransformUpdate 里按骨架把
+    // SpineSkeletonRenderer 往下挪（莉莉 -65、e2021 -50），这样精灵的脚才落在地面上。客户端不跑那条 tick，
+    // 于是自建 Pawn 的渲染器停在 0 → 整个人"高一个身位"。把 Host 的实测值随行发过来即可，不写死数值。
+    std::int16_t zoff = 0;
     static constexpr auto fields() {
         return std::make_tuple(&LilyRow::x, &LilyRow::y, &LilyRow::z, &LilyRow::facing, &LilyRow::alive, &LilyRow::hp, &LilyRow::mhp, &LilyRow::mp, &LilyRow::mmp,
-                               &LilyRow::heals, &LilyRow::mheals, &LilyRow::anim, &LilyRow::t, &LilyRow::loop, &LilyRow::skin, &LilyRow::map);
+                               &LilyRow::heals, &LilyRow::mheals, &LilyRow::anim, &LilyRow::t, &LilyRow::loop, &LilyRow::skin, &LilyRow::map, &LilyRow::zoff);
     }
 };
 
@@ -44,9 +48,10 @@ struct EnemyRow { // key = net id (spawn point name id) or dyn id (section ed)
     std::uint16_t anim = 0;
     float t = 0;
     std::uint8_t loop = 0;
+    std::int16_t zoff = 0; // 渲染组件的相对 Z（0.1 UU）：见 LilyRow 上的说明，敌人是 -50 这类"踩地"偏移
     static constexpr auto fields() {
         return std::make_tuple(&EnemyRow::x, &EnemyRow::y, &EnemyRow::z, &EnemyRow::vz, &EnemyRow::facing, &EnemyRow::flags, &EnemyRow::hp, &EnemyRow::mhp,
-                               &EnemyRow::type, &EnemyRow::anim, &EnemyRow::t, &EnemyRow::loop);
+                               &EnemyRow::type, &EnemyRow::anim, &EnemyRow::t, &EnemyRow::loop, &EnemyRow::zoff);
     }
 };
 

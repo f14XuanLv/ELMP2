@@ -6,6 +6,7 @@
 
 #include "base/log.h"
 
+#include <cmath>
 #include <cstring>
 #include <format>
 
@@ -81,7 +82,7 @@ void normalize(ue::UObject* pawn) {
     if (!s || !pawn) return;
     // 1) 渲染组件的相对变换：蓝图模板上 Lily 的 SpineSkeletonRenderer 是 -65（脚底对齐），
     //    我们复制出来的 Pawn 有时是 0 → 整个人高半身。抄 CDO 的值。
-    if (auto* mine = component_of(pawn, L"/Script/SpineExtensionPlugin.SpineSkeletonRendererComponent")) {
+    if (auto* mine = component_of(pawn, L"/Script/SpinePlugin.SpineSkeletonRendererComponent")) {
         static reflect::FuncRef set_rel;
         if (!set_rel.ok()) {
             static reflect::Resolver r("SceneComponent", reflect::find_class(L"/Script/Engine.SceneComponent"));
@@ -89,7 +90,7 @@ void normalize(ue::UObject* pawn) {
             if (!set_rel.ok()) set_rel = r.func(L"SetRelativeLocation", 4);
         }
         if (auto* def = cdo_of(pawn))
-            if (auto* theirs = component_of(def, L"/Script/SpineExtensionPlugin.SpineSkeletonRendererComponent"))
+            if (auto* theirs = component_of(def, L"/Script/SpinePlugin.SpineSkeletonRendererComponent"))
                 if (s->scene_rel_location.ok()) {
                     const float* v = s->scene_rel_location.at<float>(theirs);
                     float xyz[3];
@@ -130,8 +131,35 @@ void normalize(ue::UObject* pawn) {
         }
 }
 
-int current(ue::UObject* pawn) {
+float renderer_z(ue::UObject* actor) {
     const auto* s = schema::script();
+    auto* r = component_of(actor, L"/Script/SpinePlugin.SpineSkeletonRendererComponent");
+    if (!s || !r || !s->scene_rel_location.ok()) return 0.0f;
+    return s->scene_rel_location.at<float>(r)[2];
+}
+
+bool set_renderer_z(ue::UObject* actor, float z) {
+    return set_renderer_z_comp(component_of(actor, L"/Script/SpinePlugin.SpineSkeletonRendererComponent"), z);
+}
+
+bool set_renderer_z_comp(ue::UObject* r, float z) {
+    const auto* s = schema::script();
+    if (!s || !r || !s->scene_rel_location.ok()) return false;
+    float* v = s->scene_rel_location.at<float>(r);
+    if (std::fabs(v[2] - z) < 0.5f) return false;
+    v[2] = z;
+    static reflect::FuncRef set_rel;
+    if (!set_rel.ok()) set_rel = reflect::Resolver("SceneComponent", reflect::find_class(L"/Script/Engine.SceneComponent")).func(L"K2_SetRelativeLocation", 3);
+    if (set_rel.ok()) {
+        reflect::Frame f(set_rel);
+        if (auto* p = static_cast<float*>(f.raw(0))) p[0] = v[0], p[1] = v[1], p[2] = v[2];
+        f.arg_bool(1, false).arg_bool(2, false);
+        f.invoke(r);
+    }
+    return true;
+}
+
+int current(ue::UObject* pawn) {    const auto* s = schema::script();
     const auto* bp = schema::blueprint();
     auto* spine = (s && bp && pawn) ? bp->lily_spine.object(pawn) : nullptr;
     auto* atlas = spine ? s->sk_atlas.object(spine) : nullptr;

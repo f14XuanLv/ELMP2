@@ -75,6 +75,8 @@ struct Taken {
     std::array<Sample, 16> s{}; // ≥ 100 ms buffer at 60 Hz host capture (4 was too few: held the oldest sample, stepped on rotation)
     int head = 0, n = 0;
     ObjHandle enemy, controller, spine;
+    ObjHandle renderer;       // SpineSkeletonRenderer（踩地偏移用；一次解析）
+    std::int16_t zoff = 0x7fff; // 已应用的渲染器相对 Z（0.1 UU）
     std::uint16_t anim = 0;
     bool killed = false, hidden = false;
     bool engaged = false;    // 当前呈现的副本是否已开 BattleColor（红光）
@@ -307,6 +309,17 @@ void present_enemy(const std::string& key, ue::UObject* enemy, const snap::Enemy
         if ((row.flags & 4) && !t.killed) t.killed = true, ++g_kills;
     }
     t.frame = g_latest;
+    // 踩地偏移：原版 USpineAnimationComponent 在骨骼更新后把渲染器下移（e2021 是 -50）。客户端冻结了那条
+    // tick，所以拿 Host 的实测值直接对齐，否则整只敌人高一个身位。
+    if (row.zoff != t.zoff) {
+        if (!t.renderer.get()) {
+            static ObjHandle rcls = ObjHandle::of(reflect::find_object(L"/Script/SpinePlugin.SpineSkeletonRendererComponent"));
+            reflect::Frame fr(s->actor_component_by_class);
+            fr.arg(0, rcls.get());
+            if (fr.invoke(enemy)) t.renderer = ObjHandle::of(fr.ret<ue::UObject*>());
+        }
+        if (t.renderer.get() && core::skin::set_renderer_z_comp(t.renderer.get(), row.zoff * 0.1f)) t.zoff = row.zoff;
+    }
     if (const bool engaged = (row.flags & 8) != 0; engaged != t.engaged) { // 红光 + FindEnemy FX + 音效，本地重现
         apply_engage(enemy, engaged);
         t.engaged = engaged;
@@ -463,6 +476,7 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
         auto* p = core::pawn(c.slot);
         if (!p) continue;
         if (c.settle < 240 && (c.settle++ % 20) == 0) core::skin::normalize(p); // 新客/过图：把模板值抄回来
+        if (row.zoff) core::skin::set_renderer_z(p, row.zoff * 0.1f); // Host 实测的"踩地"偏移（-65 之类）
         if (auto at = core::location(p); at && (std::fabs(at->x - row.x) + std::fabs(at->y - row.y) + std::fabs(at->z - row.z)) > 0.5f) {
             reflect::Frame tp(s.actor_teleport);
             tp.arg(0, core::Vec3{row.x, row.y, row.z}).arg_bool(1, false).arg_bool(3, true);

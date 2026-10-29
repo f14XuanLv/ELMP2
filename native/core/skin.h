@@ -26,4 +26,11 @@ int current(ue::UObject* pawn);              // 0 = unknown
 // 幂等：值本来就对时什么也不改。
 void normalize(ue::UObject* pawn);
 
+// “踩地”偏移：原版 USpineAnimationComponent 会在骨骼更新后把 SpineSkeletonRenderer 往下挪（莉莉 -65、e2021 -50），
+// 客户端不跑那条 tick，自建副本/被冻结的敌人会停在 0 → 高一个身位。Host 用 renderer_z 采样，随快照下发；
+// 客户端用 set_renderer_z 应用。两者都不写死数值。
+float renderer_z(ue::UObject* actor);                     // 0 表示读不到
+bool set_renderer_z(ue::UObject* actor, float z);         // 变化超过 0.5 才写
+bool set_renderer_z_comp(ue::UObject* renderer, float z); // 已缓存渲染组件时用这个（每帧路径）
+
 } // namespace elmp::core::skin
