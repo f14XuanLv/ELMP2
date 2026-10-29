@@ -21,6 +21,7 @@
 #include "core/permission.h"
 #include "core/profile.h"
 #include "core/schema.h"
+#include "core/skin.h"
 #include "core/spawn.h"
 
 #include "engine/binary_checks.h"
@@ -391,6 +392,7 @@ struct Copy {
     std::int8_t facing = 0;
     bool seen = false;
     std::int32_t hp = -1;
+    std::uint16_t settle = 0; // 过图/读档时 Pawn 是"半初始化"建出来的：蓝图模板值可能接下来才被清掉，重抄几秒
 };
 std::map<std::uint16_t, Copy> g_copies;
 
@@ -454,11 +456,13 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
             freeze(p);
             guard::mark(p);
             guard::mark_not_player(p, true);
+            core::skin::normalize(p); // 复制出来的 Pawn 会丢蓝图模板（渲染组件 -65 偏移 / 颜色变黑），抄回 CDO 值
             c.anim = 0, c.facing = 0;
             log::info("coop: presenting host P{} as local slot {}", row.key, slot);
         }
         auto* p = core::pawn(c.slot);
         if (!p) continue;
+        if (c.settle < 240 && (c.settle++ % 20) == 0) core::skin::normalize(p); // 新客/过图：把模板值抄回来
         if (auto at = core::location(p); at && (std::fabs(at->x - row.x) + std::fabs(at->y - row.y) + std::fabs(at->z - row.z)) > 0.5f) {
             reflect::Frame tp(s.actor_teleport);
             tp.arg(0, core::Vec3{row.x, row.y, row.z}).arg_bool(1, false).arg_bool(3, true);

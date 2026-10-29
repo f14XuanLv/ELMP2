@@ -2,6 +2,7 @@
 
 #include "core/player.h"
 #include "core/schema.h"
+#include "core/skin.h"
 
 #include "engine/handle.h"
 #include "engine/reflect.h"
@@ -55,7 +56,9 @@ ue::UObject* spawn_copy(ue::UClass* cls, float x, float y, float z) {
     fin.arg(0, a);
     if (auto* t = static_cast<std::uint8_t*>(fin.raw(1))) write_xf(t, x, y, z);
     fin.invoke(cdo);
-    return ue::alive(a) ? a : nullptr;
+    if (!ue::alive(a)) return nullptr;
+    core::skin::normalize(a); // 复制出来的 Actor 会丢蓝图模板（渲染组件相对偏移 / 颜色变黑）
+    return a;
 }
 
 void destroy_copy(ue::UObject* a) {
