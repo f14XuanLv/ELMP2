@@ -186,9 +186,20 @@ void send_input() {
     if (const auto n = proto::encode(g_input, g_buf)) coop::send_unreliable(0, proto::kInputStream, std::span(g_buf.data(), n));
 }
 
-// Freeze every component except presentation (v1 net-facts「会话与呈现」whitelist); the Spine state
-// machines (enemy SpineAnimationComponent / Lily animation logic) would otherwise overwrite track 0.
-void freeze(ue::UObject* enemy) {
+// Two very different things shared this helper until 2026-10-30, and that conflation is what made the host's Lily
+// copy float/sink on the client:
+//   Presentation — a mirror of somebody else's actor (another player's Lily, adopted spirits / world objects).
+//     Everything about it is *decided elsewhere*: position, animation, state. Nothing of its own may tick except
+//     the Spine presentation components, otherwise the local movement component keeps simulating gravity behind
+//     the replicated position (during jumps the mirror sank up to a body height) — host authority for transforms.
+//   Simulated — the enemy domain with `simLocal`: the actor runs the vanilla command / state / ability ticks
+//     locally so presentation comes out of the same pipeline. Its transform is still host-authoritative, so the
+//     character movement component stays off and the position keeps coming from the snapshot.
+enum class Mode { Presentation, Simulated };
+
+const wchar_t* kMovement[] = {L"ZenithCharacterMovementComponent", L"CharacterMovementComponent"};
+
+void freeze(ue::UObject* enemy, Mode mode) {
     static reflect::FuncRef set_comp_tick;
     static ObjHandle comp_cls;
     if (!set_comp_tick.ok()) {
@@ -197,11 +208,12 @@ void freeze(ue::UObject* enemy) {
         comp_cls = ObjHandle::of(reflect::find_object(L"/Script/Engine.ActorComponent"));
     }
     const auto* s = core::schema::script();
-    if (g_sim_local) {
+    const bool sim = mode == Mode::Simulated && g_sim_local;
+    if (mode == Mode::Simulated) {
         // 跑模拟：只放行原版激活（默认状态集合来自 Activate），不主动调 —— Activate 内部是
         // FindFunctionChecked("OnActivate")，没有这个事件的 BP（实测 BP_s5050_Giant_C）会直接崩。
         // 由游戏自己的激活体积在玩家靠近时触发即可。
-        guard::allow_activate(enemy, true);
+        guard::allow_activate(enemy, sim);
     } else {
         guard::allow_activate(enemy, false);
     }
@@ -214,10 +226,14 @@ void freeze(ue::UObject* enemy) {
                 for (int i = 0; i < arr->num; ++i) {
                     if (!ue::alive(items[i])) continue;
                     const auto cls = ue::class_name_of(items[i]);
-                    // P8 敌人域：跑模拟时全部组件 tick 都开（命令队列要推进、状态机要读状态、动画要播）
-                    if ((g_sim_local && cls != L"SpineAnimationComponent") || (g_anim_local && cls == L"SpineAnimationComponent") || cls == L"SpineSkeletonAnimationExComponent" || cls == L"SpineSkeletonRendererComponent" || cls == L"AbilityComponent" ||
-                        cls == L"SpineBoneFollowerComponent" || cls == L"SpineBoneComponent" || cls == L"ParticleSystemComponent" || cls == L"WidgetComponent" ||
-                        cls == L"CommandQueueComponent" || cls == L"BattleColorComponent") {
+                    bool movement = false;
+                    for (const auto* m : kMovement) movement |= cls == m;
+                    // 呈现集合：Spine 单件 + 粒子 + HUD 组件（原版休眠时它们是关的，这里显式打开）
+                    const bool presentation = cls == L"SpineSkeletonAnimationExComponent" || cls == L"SpineSkeletonRendererComponent" || cls == L"ParticleSystemComponent" ||
+                                              cls == L"WidgetComponent" || cls == L"SpineBoneFollowerComponent" || cls == L"SpineBoneComponent" || cls == L"BattleColorComponent";
+                    // 跑模拟的敌人额外打开命令/状态/技能这些；**位移一律不开**（变换由 Host 决定）
+                    const bool simulated = sim && !movement && cls != L"SpineAnimationComponent";
+                    if (presentation || simulated || (g_anim_local && cls == L"SpineAnimationComponent")) {
                         // dormant enemies ship with the Spine animation / renderer ticks off → turn the
                         // presentation set on explicitly (v1 net-facts: else the mesh stays at its first frame)
                         reflect::Frame on(set_comp_tick);
@@ -232,9 +248,9 @@ void freeze(ue::UObject* enemy) {
             }
     }
     if (g_set_tick.ok()) {
-        guard::allow_tick(enemy, g_sim_local); // tick 闸只拦“开启”，跑模拟时要放行
+        guard::allow_tick(enemy, sim); // tick 闸只拦“开启”
         reflect::Frame f(g_set_tick);
-        f.arg_bool(0, !g_sim_local); // 跑模拟时 Pawn Tick 必须开：UpdateCommands 由它驱动
+        f.arg_bool(0, sim); // 呈现副本永不自走：Pawn Tick 关掉，位置只由快照写
         f.invoke(enemy);
     }
 }
@@ -243,7 +259,7 @@ void take(const std::string& name, ue::UObject* enemy) {
     auto* controller = core::schema::script() ? core::schema::script()->pawn_controller.object(enemy) : nullptr;
     guard::mark(enemy);
     guard::mark(controller);
-    freeze(enemy);
+    freeze(enemy, Mode::Simulated);
     if (g_sim_local && !commands::suppress(enemy, true)) log::warn("coop: simLocal: TryAddCommands suppression unavailable");
     Taken t;
     t.enemy = ObjHandle::of(enemy);
@@ -406,6 +422,7 @@ struct Copy {
     bool seen = false;
     std::int32_t hp = -1;
     std::uint16_t settle = 0; // 过图/读档时 Pawn 是"半初始化"建出来的：蓝图模板值可能接下来才被清掉，重抄几秒
+    std::int16_t zoff = 0x7fff; // 已应用的渲染器相对 Z（0.1 UU）；不变就不写
 };
 std::map<std::uint16_t, Copy> g_copies;
 
@@ -466,7 +483,7 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
                 fc.invoke(p);
             }
             resolve();
-            freeze(p);
+            freeze(p, Mode::Presentation);
             guard::mark(p);
             guard::mark_not_player(p, true);
             core::skin::normalize(p); // 复制出来的 Pawn 会丢蓝图模板（渲染组件 -65 偏移 / 颜色变黑），抄回 CDO 值
@@ -476,7 +493,7 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
         auto* p = core::pawn(c.slot);
         if (!p) continue;
         if (c.settle < 240 && (c.settle++ % 20) == 0) core::skin::normalize(p); // 新客/过图：把模板值抄回来
-        if (row.zoff) core::skin::set_renderer_z(p, row.zoff * 0.1f); // Host 实测的"踩地"偏移（-65 之类）
+        if (row.zoff != c.zoff && core::skin::set_renderer_z(p, row.zoff * 0.1f)) c.zoff = row.zoff; // Host 实测的"踩地"偏移（-65 之类）
         if (auto at = core::location(p); at && (std::fabs(at->x - row.x) + std::fabs(at->y - row.y) + std::fabs(at->z - row.z)) > 0.5f) {
             reflect::Frame tp(s.actor_teleport);
             tp.arg(0, core::Vec3{row.x, row.y, row.z}).arg_bool(1, false).arg_bool(3, true);
@@ -809,7 +826,7 @@ void recheck(std::int64_t now_us) {
         const bool pawn = e && *(reinterpret_cast<const std::uint8_t*>(e) + *pawn_off) & 1;
         if (ai) {
             ++g_leaks;
-            freeze(e);
+            freeze(e, Mode::Simulated);
         }
         g_pawn_activated += pawn; // informative: vanilla sets bActivated on spawn (presentation only)
     }
@@ -1083,7 +1100,7 @@ void present_spirits(const ClientCtx& c) {
                 fc.arg_bool(0, false);
                 fc.invoke(a);
             }
-            freeze(a);
+            freeze(a, Mode::Presentation);
             guard::mark(a);
             reflect::Frame sf(s->actor_component_by_class);
             sf.arg(0, spine_cls.get());
@@ -1199,7 +1216,7 @@ void apply_sim_local(bool on) {
     for (auto& [k, t] : g_taken) {
         auto* e = t.enemy.get();
         if (!ue::alive(e)) continue;
-        freeze(e); // 按新开关重新决定 actor tick / 组件 tick
+        freeze(e, Mode::Simulated); // 按新开关重新决定 actor tick / 组件 tick
         commands::suppress(e, on);
     }
     if (!on) commands::clear_suppressed();

@@ -84,13 +84,53 @@ HOST  : y=-1957.1 actorZ=467.2 relZ=-65.0 worldZ=402.2
 CLIENT: y=-1957.1 actorZ=467.2 relZ=-65.0 worldZ=402.2   ← 完全一致
 ```
 
-## 8. 还没解释的
+## 8. 回归分析：4972eb0..HEAD 里到底是哪一刀把权威弄丢的
+
+用 `git log -S` 定位到唯一一处：**`e230434`（P8 模拟模式）改了 `freeze()` 这个被两种对象共用的辅助函数**。
+
+P6（4972eb0）的 `freeze()`：只放行呈现白名单（`SpineSkeletonAnimationEx` / `SpineSkeletonRenderer` /
+`ParticleSystem` / `Widget` / `Bone*`），其余一律关，并且 `SetActorTickEnabled(false)` **无条件**——
+任何副本的 Pawn Tick 都关，位置只能由快照写。
+
+`e230434` 之后：
+
+```cpp
+if ((g_sim_local && cls != L"SpineAnimationComponent") || ...) 开   // 除 SpineAnimation 外全开
+f.arg_bool(0, !g_sim_local);                                       // simLocal 时 Pawn Tick 也开
+```
+
+`freeze()` 被 `take()`（敌人）和 `present_lilies()`（玩家副本）**共用**。于是打开 `simLocal` 做敌人域实验时，
+Host 莉莉的副本也被一起解冻：`ZenithCharacterMovementComponent` 开始逐帧跑重力/落地，与每帧的快照传送互相
+拉扯——站着看不出来，跳跃/下落时副本被本地重力多拉一段，实测偏低 **69–85 UU**（约一个身位）。这就是
+"有时候偏低一个身位"。
+
+而"一直偏高一个身位"是另一个更老、与这次无关的问题：渲染器"踩地"偏移（`USpineAnimationComponent` 在骨骼
+更新后把 `SpineSkeletonRenderer` 下移 -65）因为副本被冻结而从不发生——P6 起就存在，只是没人量过；我第一次
+修它时又被 16 位掩码吃掉（见上一节）。
+
+**修法（结构，不是补丁）**：`freeze()` 拆成两种模式，语义写进类型：
+
+| 模式 | 谁用 | 放行什么 | Pawn Tick | 位移 |
+|---|---|---|---|---|
+| `Mode::Presentation` | 其它玩家的莉莉副本、接管的精灵/世界物 | 只有 Spine 单件 + 粒子 + HUD 组件 | 关 | 只由快照写 |
+| `Mode::Simulated` | 敌人域（`simLocal`） | 上面的 + 命令队列/状态/技能 | 开（`UpdateCommands` 要它） | **仍然关**：变换归 Host |
+
+关键一条：**位移组件在任何模式下都不开**。`simLocal` 只允许"命令/表现"在本地跑，**变换始终是 Host 权威**。
+
+验证（部署后两端同一时刻逐字段）：
+
+```
+HOST  : y=-1957.1 z=467.2 relZ=-65.0 tick=true
+CLIENT: y=-1957.1 z=467.2 relZ=-65.0 tick=false   ← 副本 tick 已关，三项完全一致
+```
+
+## 9. 还没解释的
 
 **为什么模板值会丢**：`elmp spawn 101 baseline`（走同一个 `core::spawn` 路径）出生就是 `-65`，
 只有"会话中、过图窗口里"新建的副本会变成 `0`。目前用"出生后重抄 + 数秒重试"绕过去；
 真正的机制要等一次带日志的过图复现（怀疑与过图时 CDO/组件模板的可用时机有关），先记录在案。
 
-## 9. 同一类问题的清单（后续按这个查）
+## 10. 同一类问题的清单（后续按这个查）
 
 | 表现载体 | 归属 | 现状 |
 |---|---|---|
