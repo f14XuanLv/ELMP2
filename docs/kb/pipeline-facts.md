@@ -104,3 +104,45 @@ sub_140D4A260(this)                      // 收尾
 3. **交互的减法**：坐椅 / 祈祷 / 梯子由 `AInteractable::OnInteract` 进入，Client 跑它会产生世界副作用（存档 / 清除 / 治疗）。需要把“状态与动画”留在 Client、“权威副作用”减掉 —— 这是减法边界最大的一块，需要单独 IDA + CUE 调研 `BP_Interactable_RestingPoint` 的 ubergraph。
 4. **非角色对象**：特效 / 弹体 / 掉落由技能时间线生成，跑执行层后是否还需要 P6 的 Fx/Snd 通道（预期：只有“蓝图直接生成、不走技能”的那些还需要）。
 5. **性能**：Client 同时跑 N 个远程角色的完整 tick 的 CPU 代价，与 P6 的快照呈现比（P7-1 实测 Client P99 344 µs，但那是命令级复制）。
+
+## 8. FX 生成漏斗与实测缺口（2026-10-29，P6 构建 + Host2/Client2）
+
+### 8.1 漏斗：[`UGameplayStatics::SpawnEmitterAttached/AtLocation`] 才是汇点 `[E-IDA]`
+
+`xrefs_to` 的结果（`0x1425463A0` / `0x142546070`，基址 `0x140000000`）：
+
+| 调用者 | 性质 |
+|---|---|
+| `0x7D0600` | `UBaseFXComponent::SpawnFX_Implementation`（P6 钩的这一个） |
+| `0x7D0E60` | Spine 插件里另一个粒子生成函数（146 行，仅 vtable 引用 → 虚函数） |
+| `0x7D1380` | 同上的第三个（137 行，仅 vtable 引用） |
+| `0x142320530` | `UAnimNotify_PlayParticleEffect::SpawnParticleSystem`（引擎动画通知） |
+| `execSpawnEmitterAttached` / 内部转发 | 蓝图直接调用 |
+
+插件头里有 `SpineAnimNotify_PlayParticleEffect` 与 `SpineAnimNotifyState_TimedParticleEffect`（都声明 `UParticleSystemComponent*` 与 `CustomizeParticleEffect`），与 `0x7D0E60 / 0x7D1380` 只被 vtable 引用这一点吻合：**动画通知粒子是两个独立的 spawn 路径，不经过 `SpawnFX`**。
+
+结论：FX 的“大块头”不是 `SpawnFX`，是 `UGameplayStatics::SpawnEmitterAttached / SpawnEmitterAtLocation`。钩这两个函数 = 覆盖全部 FX（含动画通知、蓝图直调、技能时间线）。
+
+### 8.2 实测：P6 的 FX 捕获确实漏（Host2 / Client2，church_07，P6 main 构建）
+
+计数器取自 `elmp lan status` 的 `fx:` 行（`host captured spawn/deact`、`client replayed spawn`）。
+
+| 操作 | host captured spawn | host captured deact | client replayed spawn | 结论 |
+|---|---|---|---|---|
+| 注入 `CA_e2010_Slime_Attack` 到最近史莱姆（`AddNewImmediateCommand`） | 1 → 2（+1） | 19 → 20（+1） | 0 → 2 | 敌人攻击的 `SpawnFX` 类特效能被捕获并重放 |
+| 注入 `CACS_s5060_Combo_LV3` 到 P1（`AddNewImmediateCommand`） | 1 → 1（**+0**） | 16 → 19（**+3**） | 0 → 1（旧事件） | 召唤连段的 FX **绕过了 `SpawnFX`**：三个粒子组件被创建又销毁，但捕获计数不动 |
+
+第二行是“莉莉技能特效不全”的直接证据：特效确实产生了（deact +3），但 P6 的钩子看不见它们。
+
+### 8.3 P7-2 的 emitter 钩子为什么仍然不全 `[E-源码]`
+
+`explore/p7-failed-snapshot-coverage:native/coop/fx.cpp` 已经钩了 `SpawnEmitter*`，但：
+
+1. owner 由 `actor_owner(worldContext)` 沿 outer 链推 —— 蓝图 / 动画通知传入的是 **World** 或非 Actor 组件，推不出 Actor → 直接丢；正确的 owner 应取 `SpawnEmitterAttached` 的 **AttachToComponent 的 Owner**。
+2. 注释写明“Ability-owned ones are skipped (the client's replayed ability spawns its own)” —— 但 Client 重放的 ability 只保证 `LaunchAbilityFromDescription` 这一层，能力内部的 FX 未必自己生成；这句假设就是漏点的来源。
+
+### 8.4 下一刀（FX 专项）
+
+- 钩 `SpawnEmitterAttached`（`0x1425463A0`）与 `SpawnEmitterAtLocation`（`0x142546070`）：前者 owner 取 AttachToComponent 的 Owner；后者无 owner，按**世界坐标**发（客户端在对应地图的同一世界坐标生成，不跟随），并在消息里区分“附着 / 世界”两种。
+- `SpawnFX` 与这两者存在调用嵌套（`SpawnFX` → `SpawnEmitter*`），用重入标志去重，否则一条特效发两遍。
+- **持续性特效（自身发光）** 仍是状态不是事件：需要在 takeover / 新客人加入时同步 `USpineFXComponent::RunningFXs`（粒子资产 + 骨骼 + 变换），否则只在 spawn 那一刻有事件、错过就永远没有。
