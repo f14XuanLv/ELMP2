@@ -31,6 +31,11 @@ void host_disable();
 // Client: 在该敌人身上用原版 AddNewImmediateCommand 重放一条命令（false 时 *why 给原因）。
 bool replay(ue::UObject* enemy, const std::string& cls_path, std::uint8_t dir, std::uint8_t cmd, std::string* why);
 
+// Client 跑模拟时：抑制该 Pawn 由本地输入生成命令（TryAddCommands 0xCC2520 返回 -1），
+// 命令只来自 Host 的 Cmd。P7-1 已证过入口，这里只做逐对象开关。
+bool suppress(ue::UObject* enemy, bool on);
+void clear_suppressed();
+
 std::string describe();
 
 } // namespace elmp::coop::commands

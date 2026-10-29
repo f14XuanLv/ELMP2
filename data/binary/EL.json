@@ -155,6 +155,14 @@
       "source": "[E-IDA] v2 2026-10-29（源自 explore 分支 P7-1 的同一入口，结论沿用）：队列处理 0xCC2BA0 与自身覆盖分支调用；UCommand.CurrentResult == NONE 即启动沿",
       "note": "Host 在网络对象的命令启动沿捕获（UCommand.CommandAction 的类 / CommandInputType / GetInvokedByDirectionInputType），Client 用原版 AddNewImmediateCommand 重放"
     },
+    "CommandTryAddFromInput": {
+      "rva": "0x00CC2520",
+      "prefix": "48896C2418488974242041564883EC208BB140010000",
+      "signature": "int32 UCommandQueueComponent::TryAddCommands(this, const FInputSnapshot&, const UCommandSet*)",
+      "owner": "coop/commands",
+      "source": "[E-IDA] v2 2026-10-29（源自 explore 分支 P7-1 的同一入口）：由 Pawn Tick（ZenithCharacter::Tick 0xCF3740 / 0xCEF190）调用",
+      "note": "Client 跑模拟时抑制该 Pawn 由本地输入生成命令（返回 -1）；命令只来自 Host 的 Cmd"
+    },
     "PSCDeactivateSystem": {
       "rva": "0x0269A040",
       "prefix": "405341544883EC584C8BA1A8000000488BD94D85E47508E8",

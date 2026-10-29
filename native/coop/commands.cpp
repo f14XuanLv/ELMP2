@@ -6,6 +6,7 @@
 #include "base/log.h"
 
 #include <format>
+#include <unordered_set>
 #include <unordered_map>
 
 namespace elmp::coop::commands {
@@ -68,8 +69,20 @@ char __fastcall d_process(UObject* queue, void* a2, UObject* command) {
     return o_process(queue, a2, command);
 }
 
-ue::UObject* component_of(ue::UObject* actor, const wchar_t* cls_path) {
-    static reflect::FuncRef by_class = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).func(L"GetComponentByClass", 1);
+// int32 UCommandQueueComponent::TryAddCommands(this, const FInputSnapshot&, const UCommandSet*) — 0xCC2520
+// 由 Pawn Tick 调用；客户端跑模拟时必须抑制本地输入生成命令（命令只来自 Host 的 Cmd）。
+using TryAddFn = std::int32_t(__fastcall*)(UObject*, const void*, const void*);
+TryAddFn o_try_add{};
+bool g_try_ok = false, g_try_tried = false;
+std::unordered_set<UObject*> g_suppressed;
+std::uint64_t g_suppressed_calls = 0;
+
+std::int32_t __fastcall d_try_add(UObject* queue, const void* snapshot, const void* set) {
+    if (!g_suppressed.empty() && queue && g_suppressed.count(queue->GetOuterPrivate())) return ++g_suppressed_calls, -1;
+    return o_try_add(queue, snapshot, set);
+}
+
+ue::UObject* component_of(ue::UObject* actor, const wchar_t* cls_path) {    static reflect::FuncRef by_class = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).func(L"GetComponentByClass", 1);
     auto* cls = reflect::find_class(cls_path);
     if (!by_class.ok() || !cls || !actor) return nullptr;
     reflect::Frame f(by_class);
@@ -110,8 +123,21 @@ bool replay(ue::UObject* enemy, const std::string& cls_path, std::uint8_t dir, s
     return true;
 }
 
+bool suppress(ue::UObject* enemy, bool on) {
+    if (!g_try_tried) {
+        g_try_ok = hook::install_manifest("CommandTryAddFromInput", reinterpret_cast<void*>(&d_try_add), reinterpret_cast<void**>(&o_try_add));
+        g_try_tried = true;
+    }
+    if (!g_try_ok || !ue::alive(enemy)) return false;
+    if (on) g_suppressed.insert(enemy);
+    else g_suppressed.erase(enemy);
+    return true;
+}
+
+void clear_suppressed() { g_suppressed.clear(); }
+
 std::string describe() {
-    return std::format("cmds: hook={} captured={} replayed={} rejected={}\n", g_installed ? "armed" : "off", g_captured, g_replayed, g_rejected);
+    return std::format("cmds: hook={} captured={} replayed={} rejected={} tryAdd={} suppressed={} calls={}\n", g_installed ? "armed" : "off", g_captured, g_replayed, g_rejected, g_try_ok ? "armed" : "off", g_suppressed.size(), g_suppressed_calls);
 }
 
 } // namespace elmp::coop::commands

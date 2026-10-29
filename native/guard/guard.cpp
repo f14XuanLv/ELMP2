@@ -16,7 +16,7 @@ namespace {
 using RC::Unreal::UObject;
 
 bool g_installed = false, g_install_failed = false, g_armed = false;
-std::unordered_set<UObject*> g_marked, g_not_player, g_replay;
+std::unordered_set<UObject*> g_marked, g_not_player, g_replay, g_tick_allow;
 Counters g_c{};
 
 using DoDamageFn = void(__fastcall*)(UObject*, UObject*, int, bool, bool);
@@ -100,7 +100,7 @@ void __fastcall d_collision(UObject* actor, bool on) {
 }
 
 void __fastcall d_tick(UObject* actor, bool on) {
-    if (g_armed && on && g_marked.count(actor)) return void(++g_c.tick_blocked);
+    if (g_armed && on && g_marked.count(actor) && !g_tick_allow.count(actor)) return void(++g_c.tick_blocked);
     o_tick(actor, on);
 }
 
@@ -147,8 +147,14 @@ void unmark_all() {
     g_marked.clear();
     g_not_player.clear();
     g_replay.clear();
+    g_tick_allow.clear();
 }
 bool marked(ue::UObject* a) { return g_marked.count(a) != 0; }
+void allow_tick(ue::UObject* a, bool on) {
+    if (!a) return;
+    if (on) g_tick_allow.insert(a);
+    else g_tick_allow.erase(a);
+}
 void mark_not_player(ue::UObject* a, bool on) {
     if (!a) return;
     if (on) g_not_player.insert(a);

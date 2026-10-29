@@ -117,7 +117,7 @@ reflect::PropRef g_spawn_point;
 reflect::FuncRef g_set_tick, g_set_collision, g_set_rotation;
 bool g_resolved = false;
 std::uint64_t g_unknown_names = 0, g_bad_snaps = 0, g_applied = 0, g_anim_sets = 0, g_anim_fail = 0, g_kills = 0, g_act_bad = 0, g_act_absent = 0, g_rechecks = 0, g_leaks = 0, g_pawn_activated = 0;
-bool g_anim_local = false; // P8 动画域删除测试：敌人动画由状态机产生，而不是快照写轨道名
+bool g_sim_local = false; // P8 敌人域：客户端敌人跑模拟（Pawn Tick），动画由状态机产生，而不是快照写轨道名
 std::unordered_map<std::uint32_t, std::uint32_t> g_act_last; // kind << 16 | owner id → last act seq
 metrics::Histogram& h_apply = metrics::histogram("coop.client.apply_us");
 metrics::Histogram& h_motion = metrics::histogram("coop.client.motion_us");
@@ -201,9 +201,10 @@ void freeze(ue::UObject* enemy) {
                 for (int i = 0; i < arr->num; ++i) {
                     if (!ue::alive(items[i])) continue;
                     const auto cls = ue::class_name_of(items[i]);
-                    if (cls == L"SpineSkeletonAnimationExComponent" || cls == L"SpineSkeletonRendererComponent" || cls == L"AbilityComponent" ||
+                    // P8 敌人域：跑模拟时全部组件 tick 都开（命令队列要推进、状态机要读状态、动画要播）
+                    if (g_sim_local || cls == L"SpineSkeletonAnimationExComponent" || cls == L"SpineSkeletonRendererComponent" || cls == L"AbilityComponent" ||
                         cls == L"SpineBoneFollowerComponent" || cls == L"SpineBoneComponent" || cls == L"ParticleSystemComponent" || cls == L"WidgetComponent" ||
-                        cls == L"CommandQueueComponent" || (cls == L"SpineAnimationComponent" && g_anim_local)) {
+                        cls == L"CommandQueueComponent" || (cls == L"SpineAnimationComponent" && g_sim_local)) {
                         // dormant enemies ship with the Spine animation / renderer ticks off → turn the
                         // presentation set on explicitly (v1 net-facts: else the mesh stays at its first frame)
                         reflect::Frame on(set_comp_tick);
@@ -218,8 +219,9 @@ void freeze(ue::UObject* enemy) {
             }
     }
     if (g_set_tick.ok()) {
+        guard::allow_tick(enemy, g_sim_local); // tick 闸只拦“开启”，跑模拟时要放行
         reflect::Frame f(g_set_tick);
-        f.arg_bool(0, false);
+        f.arg_bool(0, !g_sim_local); // 跑模拟时 Pawn Tick 必须开：UpdateCommands 由它驱动
         f.invoke(enemy);
     }
 }
@@ -229,6 +231,7 @@ void take(const std::string& name, ue::UObject* enemy) {
     guard::mark(enemy);
     guard::mark(controller);
     freeze(enemy);
+    if (g_sim_local && !commands::suppress(enemy, true)) log::warn("coop: simLocal: TryAddCommands suppression unavailable");
     Taken t;
     t.enemy = ObjHandle::of(enemy);
     t.controller = ObjHandle::of(controller);
@@ -271,7 +274,7 @@ void present_enemy(const std::string& key, ue::UObject* enemy, const snap::Enemy
         if ((row.flags & 4) && !t.killed) t.killed = true, ++g_kills;
     }
     t.frame = g_latest;
-    if (row.anim && row.anim != t.anim && !g_anim_local) { // pose: switch track 0 only on an animation change (§16)
+    if (row.anim && row.anim != t.anim && !g_sim_local) { // pose: switch track 0 only on an animation change (§16)
         const auto* anim = g_names.text(row.anim);
         if (!t.spine.get()) {
             static ObjHandle cls = ObjHandle::of(reflect::find_object(L"/Script/SpineExtensionPlugin.SpineSkeletonAnimationExComponent"));
@@ -1134,24 +1137,21 @@ ue::UObject* spine_state_comp(ue::UObject* actor) {
     return f.invoke(actor) ? f.ret<ue::UObject*>() : nullptr;
 }
 
-void apply_anim_local(bool on) {
-    g_anim_local = on;
-    static reflect::FuncRef set_tick = reflect::Resolver("ActorComponent", reflect::find_class(L"/Script/Engine.ActorComponent")).func(L"SetComponentTickEnabled", 1);
-    if (!set_tick.ok()) return;
+void apply_sim_local(bool on) {
+    g_sim_local = on;
     for (auto& [k, t] : g_taken) {
-        if (auto* e = t.enemy.get())
-            if (auto* comp = spine_state_comp(e)) {
-                reflect::Frame f(set_tick);
-                f.arg_bool(0, on);
-                f.invoke(comp);
-            }
+        auto* e = t.enemy.get();
+        if (!ue::alive(e)) continue;
+        freeze(e); // 按新开关重新决定 actor tick / 组件 tick
+        commands::suppress(e, on);
     }
+    if (!on) commands::clear_suppressed();
 }
 
 void install() {
-    settings::define({.key = "animLocal", .def = false, .persist = false, .help = "P8: client enemies animate from the state machine (command StateTimeline), not snapshot track names"});
+    settings::define({.key = "simLocal", .def = false, .persist = false, .help = "P8: client enemies run the full pawn tick (actor tick + component ticks), local input commands suppressed, animation from the state machine"});
     settings::on_change([](const std::string& key) {
-        if (key == "animLocal") apply_anim_local(settings::get_bool("animLocal"));
+        if (key == "simLocal") apply_sim_local(settings::get_bool("simLocal"));
     });
     coop::set_handlers(Role::Client, {on_connected, on_closed, on_reliable, on_unreliable, tick, stop});
 }
