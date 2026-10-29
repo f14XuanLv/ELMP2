@@ -30,21 +30,21 @@ T get(Reader& r) {
 }
 
 template <class Row>
-std::uint16_t diff(const Row& a, const Row* b) {
-    std::uint16_t mask = 0, bit = 1;
+std::uint32_t diff(const Row& a, const Row* b) {
+    std::uint32_t mask = 0, bit = 1;
     std::apply([&](auto... f) { ((mask |= (!b || std::memcmp(&(a.*f), &(b->*f), sizeof(a.*f)) != 0) ? bit : 0, bit <<= 1), ...); }, Row::fields());
     return mask;
 }
 
 template <class Row>
-void write_fields(Writer& w, const Row& r, std::uint16_t mask) {
-    std::uint16_t bit = 1;
+void write_fields(Writer& w, const Row& r, std::uint32_t mask) {
+    std::uint32_t bit = 1;
     std::apply([&](auto... f) { ((mask & bit ? put(w, r.*f) : void(), bit <<= 1), ...); }, Row::fields());
 }
 
 template <class Row>
-void read_fields(Reader& rd, Row& r, std::uint16_t mask) {
-    std::uint16_t bit = 1;
+void read_fields(Reader& rd, Row& r, std::uint32_t mask) {
+    std::uint32_t bit = 1;
     std::apply([&](auto... f) { ((mask & bit ? void(r.*f = get<std::remove_reference_t<decltype(r.*f)>>(rd)) : void(), bit <<= 1), ...); }, Row::fields());
 }
 
@@ -66,7 +66,7 @@ void enc_section(Writer& w, Tag tag, const Section<Row, Cap>& cur, const Section
         const auto mask = diff(r, b);
         if (b && !mask) continue;
         w.u16(r.key);
-        w.u16(mask);
+        w.var(mask);
         write_fields(w, r, mask);
     }
     w.var(removed);
@@ -79,10 +79,10 @@ template <class Row, std::size_t Cap>
 bool dec_section(Reader& rd, Section<Row, Cap>& s) {
     const auto changed = rd.var();
     if (!rd.ok() || changed > Cap) return false;
-    constexpr std::uint16_t all = static_cast<std::uint16_t>((1u << std::tuple_size_v<decltype(Row::fields())>) - 1);
+    constexpr std::uint32_t all = static_cast<std::uint32_t>((1ull << std::tuple_size_v<decltype(Row::fields())>) - 1);
     for (std::uint32_t i = 0; i < changed; ++i) {
         const auto key = rd.u16();
-        const auto mask = rd.u16();
+        const auto mask = rd.var();
         if (!rd.ok() || (mask & ~all)) return false;
         Row* r = nullptr;
         for (std::uint16_t k = 0; k < s.n; ++k)

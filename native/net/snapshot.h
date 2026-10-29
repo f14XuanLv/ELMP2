@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <span>
 #include <tuple>
+#include <type_traits>
 
 namespace elmp::net::snap {
 
@@ -82,9 +83,17 @@ struct SpiritRow { // key = seat << 8 | per-seat index; only visible (summoned) 
     }
 };
 
+// The delta codec carries one mask bit per field (snapshot.cpp). It used to be 16 bits: LilyRow grew past 16
+// and the extra field was silently never transmitted (zoff, 2026-10-30) — the mask is 32 bits now, and these
+// asserts keep a future field from falling off the end again.
+static_assert(std::tuple_size_v<decltype(LilyRow::fields())> <= 32, "LilyRow exceeds the 32-field mask");
+static_assert(std::tuple_size_v<decltype(EnemyRow::fields())> <= 32, "EnemyRow exceeds the 32-field mask");
+static_assert(std::tuple_size_v<decltype(WorldRow::fields())> <= 32, "WorldRow exceeds the 32-field mask");
+static_assert(std::tuple_size_v<decltype(PickRow::fields())> <= 32, "PickRow exceeds the 32-field mask");
+static_assert(std::tuple_size_v<decltype(SpiritRow::fields())> <= 32, "SpiritRow exceeds the 32-field mask");
+
 template <class Row, std::size_t Cap>
-struct Section {
-    std::array<Row, Cap> rows;
+struct Section {    std::array<Row, Cap> rows;
     std::uint16_t n = 0;
     void clear() { n = 0; }
     Row* add(std::uint16_t key) {
