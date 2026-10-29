@@ -499,6 +499,7 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
     case proto::Msg::Fx: {
         proto::Fx m;
         if (!proto::decode(msg, m)) return ++g_fx_bad, EvResult::Done;
+        if (fx::local_mode()) return EvResult::Done; // fxLocal=1：表现由客户端自己的模拟生成，不重放
         const auto* ps = g_names.text(m.ps);
         const auto* bone = m.custom_bone ? g_names.text(m.custom_bone) : nullptr;
         if (!ps) return ++g_fx_bad, EvResult::Done;
@@ -515,6 +516,7 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
     case proto::Msg::FxStop: {
         proto::FxStop m;
         if (!proto::decode(msg, m)) return EvResult::Done;
+        if (fx::local_mode()) return EvResult::Done;
         auto it = g_fx_live.find(m.seq);
         if (it == g_fx_live.end()) return EvResult::Done; // never replayed here (other map / own seat / dropped)
         fx::deactivate(it->second.get());

@@ -46,6 +46,9 @@ void host_disable();
 bool client_enable();
 void client_disable();
 void set_block_local(bool on); // Dev comparison (default on)
+// P8 判决性实验：`elmp set fxLocal 1` = 客户端不重放 Host 的 FX、也不抑制本地生成，
+// 让表现由客户端自己的模拟产生（敌人域的删除测试）；0 = P6 行为（抑制 + 重放）。
+bool local_mode();
 
 // Client replays (false on failure, reason in *why).
 ue::UObject* replay_spawn(ue::UObject* actor, const net::proto::Fx& m, const std::string& ps_path, const std::string& custom_bone, std::string* why);

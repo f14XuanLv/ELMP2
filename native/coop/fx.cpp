@@ -2,6 +2,8 @@
 
 #include "guard/guard.h"
 
+#include "base/settings.h"
+
 #include "engine/handle.h"
 #include "engine/reflect.h"
 
@@ -47,10 +49,11 @@ std::uint64_t g_attached = 0, g_local_sound_blocked = 0;
 
 Sinks g_sinks;
 bool g_host = false, g_client = false, g_block = true, g_replaying = false;
+bool g_local_mode = false;
 bool g_spawn_ok = false, g_deact_ok = false, g_sound_ok = false, g_stop_ok = false, g_tried = false;
 bool g_em_ok = false, g_in_spawn = false;
 std::uint64_t g_cap_spawn = 0, g_cap_deact = 0, g_cap_sound = 0, g_cap_stop = 0;
-std::uint64_t g_cap_emitter = 0, g_local_emitter = 0;
+std::uint64_t g_cap_emitter = 0, g_local_emitter = 0, g_local_ok = 0, g_local_emitter_ok = 0;
 std::uint64_t g_rep_spawn = 0, g_rep_fail = 0, g_rep_sound = 0, g_rep_stop = 0, g_rep_deact = 0, g_local_blocked = 0, g_rep_emitter = 0;
 std::unordered_map<std::string, std::uint64_t> g_blocked_ps; // Dev: which local FX were suppressed (first 32 kinds)
 
@@ -101,11 +104,15 @@ UObject* __fastcall d_spawn(UObject* comp, UObject* ps, std::uint8_t bone, std::
         s.custom_bone = ue::utf8(n);
         ++g_cap_spawn;
         g_sinks.spawn(s);
-    } else if (g_client && g_block && !g_replaying && owner && guard::marked(owner) && ue::alive(psc)) {
-        // a presented actor's own FX (anim notify / leftover timeline): the host's copy is replayed instead
-        ++g_local_blocked;
-        if (ps && g_blocked_ps.size() < 32) ++g_blocked_ps[path_of(ps)];
-        hide_now(psc);
+    } else if (g_client && owner && guard::marked(owner) && ue::alive(psc)) {
+        // 呈现对象自己产生的 FX：fxLocal=1 时保留（表现由本地模拟生成）；否则拦下，等 Host 的那一份重放
+        if (g_local_mode) {
+            ++g_local_ok;
+        } else if (g_block && !g_replaying) {
+            ++g_local_blocked;
+            if (ps && g_blocked_ps.size() < 32) ++g_blocked_ps[path_of(ps)];
+            hide_now(psc);
+        }
     }
     return psc;
 }
@@ -152,15 +159,20 @@ UObject* __fastcall d_em_attach(UObject* ps, UObject* attach_to, std::uint64_t p
         s.custom_bone = ue::utf8(attach_to->GetFName()); // 客户端只做诊断用（重放挂到根组件）
         ++g_cap_emitter;
         g_sinks.spawn(s);
-    } else if (g_client && g_block && !g_replaying && ue::alive(psc) && guard::marked(owner)) {
-        // 呈现对象自己的动画通知 / 蓝图粒子：Host 的同一份会重放过来，先隐藏本地的
-        ++g_local_emitter;
-        hide_now(psc);
+    } else if (g_client && ue::alive(psc) && guard::marked(owner)) {
+        // 呈现对象自己的动画通知 / 蓝图粒子
+        if (g_local_mode) {
+            ++g_local_emitter_ok;
+        } else if (g_block && !g_replaying) {
+            ++g_local_emitter;
+            hide_now(psc);
+        }
     }
     return psc;
 }
 
-void __fastcall d_deactivate(UObject* psc) {    if (g_host && g_sinks.deactivate && psc && ue::on_game_thread()) ++g_cap_deact, g_sinks.deactivate(psc);
+void __fastcall d_deactivate(UObject* psc) {
+    if (g_host && g_sinks.deactivate && psc && ue::on_game_thread()) ++g_cap_deact, g_sinks.deactivate(psc);
     o_deactivate(psc);
 }
 
@@ -206,6 +218,14 @@ void __fastcall d_stop(UObject* ability, std::uint8_t reason) {
 void install() {
     if (g_tried) return;
     g_tried = true;
+    settings::define({.key = "fxLocal", .def = false, .persist = false, .help = "P8: client emits FX locally (no replay, no suppression) — enemy-domain deletion test"});
+    settings::on_change([](const std::string& key) {
+        if (key != "fxLocal") return;
+        g_local_mode = settings::get_bool("fxLocal");
+        g_block = !g_local_mode;
+    });
+    g_local_mode = settings::get_bool("fxLocal");
+    g_block = !g_local_mode;
     g_spawn_ok = hook::install_manifest("SpawnFXImpl", reinterpret_cast<void*>(&d_spawn), reinterpret_cast<void**>(&o_spawn));
     g_em_ok = hook::install_manifest("SpawnEmitterAttached", reinterpret_cast<void*>(&d_em_attach), reinterpret_cast<void**>(&o_em_attach));
     g_deact_ok = hook::install_manifest("PSCDeactivateSystem", reinterpret_cast<void*>(&d_deactivate), reinterpret_cast<void**>(&o_deactivate));
@@ -251,6 +271,7 @@ bool client_enable() {
 
 void client_disable() { g_client = false; }
 void set_block_local(bool on) { g_block = on; }
+bool local_mode() { return g_local_mode; }
 
 std::string path_of(ue::UObject* a) {
     static std::unordered_map<ue::UObject*, std::pair<ObjHandle, std::string>> paths;
@@ -372,9 +393,10 @@ bool stop_ability(ue::UObject* ability, std::uint8_t reason) {
 }
 
 std::string describe() {
-    std::string out = std::format("fx: hooks spawn={} deact={} sound={} stop={} emitter={} | host captured spawn={} deact={} sound={} stop={} emitter={} | client replayed spawn={} fail={} deact={} sound={} stop={} emitter={} localBlocked fx={} sound={} emitter={} | attachedSounds={}{}\n",
-                                  g_spawn_ok, g_deact_ok, g_sound_ok, g_stop_ok, g_em_ok, g_cap_spawn, g_cap_deact, g_cap_sound, g_cap_stop, g_cap_emitter, g_rep_spawn, g_rep_fail,
-                                  g_rep_deact, g_rep_sound, g_rep_stop, g_rep_emitter, g_local_blocked, g_local_sound_blocked, g_local_emitter, g_attached, g_block ? "" : " (blocking off)");
+    std::string out = std::format("fx: hooks spawn={} deact={} sound={} stop={} emitter={}{} | host captured spawn={} deact={} sound={} stop={} emitter={} | client replayed spawn={} fail={} deact={} sound={} stop={} emitter={} localBlocked fx={} sound={} emitter={} localKept fx={} emitter={} | attachedSounds={}{}\n",
+                                  g_spawn_ok, g_deact_ok, g_sound_ok, g_stop_ok, g_em_ok, g_local_mode ? " (fxLocal=1)" : "", g_cap_spawn, g_cap_deact, g_cap_sound, g_cap_stop,
+                                  g_cap_emitter, g_rep_spawn, g_rep_fail, g_rep_deact, g_rep_sound, g_rep_stop, g_rep_emitter, g_local_blocked, g_local_sound_blocked, g_local_emitter, g_local_ok,
+                                  g_local_emitter_ok, g_attached, g_block ? "" : " (blocking off)");
     for (const auto& [p, n] : g_blocked_ps) out += std::format("  local {} x{}\n", p.substr(p.rfind('/') + 1), n);
     return out;
 }
