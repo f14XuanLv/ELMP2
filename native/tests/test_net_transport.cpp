@@ -93,20 +93,72 @@ TEST_MAIN({
             }
         CHECK(count == 1);
     }
-    { // queue bounds: 256 pending messages, message size cap
+    { // A final reliable lifecycle event cannot be rejected while retaining an active session.
         Net n;
         n.step(20);
-        n.cut = true;
-        int ok = 0;
-        for (int i = 0; i < 400; ++i) ok += n.a.send_reliable(msg(i, 10));
-        CHECK(ok == 256);
+        for (std::size_t i = 0; i < Link::kMaxPendingMsgs; ++i) CHECK(n.a.send_reliable(msg(static_cast<std::uint32_t>(i), 10)));
+        CHECK(n.a.established());
+        CHECK(!n.a.send_reliable(msg(257, 10))); // the would-be final Stop exceeds the pending limit
+        CHECK(n.a.closed());
+        CHECK(!n.a.send_reliable(msg(258, 10)));
+        n.a.close("again");
+        n.step(3);
+        CHECK(n.b.closed());
+        for (const auto* events : {&n.ea, &n.eb}) {
+            int closed = 0;
+            for (const auto& e : *events) if (e.kind == LinkEvent::Kind::Closed) {
+                ++closed;
+                CHECK(e.text.find("reliable send queue overloaded") != std::string::npos);
+            }
+            CHECK(closed == 1);
+        }
+        CHECK(Net::rel(n.eb).empty());
+    }
+    { // A stalled event consumer must observe one terminal event, never a reliable sequence gap.
+        Net n;
+        n.step(20);
+        for (std::size_t i = 0; i <= Link::kMaxEvents; ++i) {
+            CHECK(n.a.send_reliable(msg(static_cast<std::uint32_t>(i), 10)));
+            n.now += 0.001;
+            n.a.poll(n.now);
+            n.hop(n.a, n.b);
+            n.b.poll(n.now);
+            n.hop(n.b, n.a); // ACKs progress; b's application intentionally does not drain its events
+        }
+        CHECK(n.a.closed() && n.b.closed());
+        const auto terminal = n.b.take_events();
+        CHECK(terminal.size() == 1 && terminal[0].kind == LinkEvent::Kind::Closed);
+        CHECK(terminal[0].text.find("reliable event queue overloaded") != std::string::npos);
+        n.step(3);
+        CHECK(n.b.take_events().empty());
+    }
+    { // size rejection is nonfatal, but missing ACK progress still closes within the stall timeout
+        Net n;
+        n.step(20);
         CHECK(!n.a.send_reliable(Bytes(Link::kMaxMessage + 1)));
+        CHECK(n.a.established());
+        n.cut = true;
+        CHECK(n.a.send_reliable(msg(1, 10)));
         n.step(200, 0.05); // 10 s cut: stall / timeout closes the link
         CHECK(n.a.closed());
     }
-    { // F_CLOSE reaches the peer immediately
+    { // Protocol 4 full pose snapshots need >64 KiB; the exact cap has a short final fragment.
+        Net n; n.step(20); n.reorder = true; n.dup = 0.2;
+        const auto large = msg(17, Link::kMaxMessage);
+        n.a.send_unreliable(2, large);
+        n.step(12);
+        int count = 0;
+        for (const auto& e : n.eb) if (e.kind == LinkEvent::Kind::Unreliable) { ++count; CHECK(e.data == large); }
+        CHECK(count == 1 && n.a.established() && n.b.established());
+    }
+    { // F_CLOSE reaches the peer immediately even when unsent datagrams fill the outbox.
         Net n;
         n.step(20);
+        for (std::size_t i = 0; i <= Link::kMaxOutbox; ++i) {
+            n.a.send_unreliable(1, msg(static_cast<std::uint32_t>(i), 1000));
+            n.a.poll(n.now += 0.0001); // deliberately do not drain the sender outbox
+        }
+        CHECK(n.a.stats().outbox_drops > 0);
         n.a.close("bye");
         n.step(3);
         CHECK(n.b.closed());

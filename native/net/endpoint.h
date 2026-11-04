@@ -4,7 +4,8 @@
 // F2.11: multi-peer from the start). Host: every guest address gets its own Link (own handshake, keys,
 // reliable state); more than `max_peers` → plaintext Reject::Full to that address. Client: one Link to
 // the host, datagrams from other addresses ignored. Peer ids are monotonic from 1 and never reused.
-// The game thread talks to the network thread only through two bounded mutex queues.
+// The game thread talks to the network thread through two bounded mutex queues. Reliable/control
+// overload latches a queue-independent, one-shot peer=0 Closed and terminates the whole endpoint.
 
 #include "net/transport.h"
 
@@ -71,6 +72,7 @@ private:
     void run();
     void push_in(Inbound in);
     void flush(Peer& p);
+    void overload_locked(std::string_view reason); // mu_ held; permanent until endpoint destruction
 
     bool host_ = false;
     std::uintptr_t sock_ = ~std::uintptr_t{0};
@@ -81,10 +83,12 @@ private:
     std::vector<std::unique_ptr<Peer>> peers_; // network thread only
     std::uint32_t next_id_ = 1;
 
-    mutable std::mutex mu_; // guards cmds_, inbox_, status_
+    mutable std::mutex mu_; // guards cmds_, inbox_, status_, fatal_ and fatal_reported_
     std::vector<Cmd> cmds_;
     std::vector<Inbound> inbox_;
     EndpointStatus status_;
+    std::string fatal_;
+    bool fatal_reported_ = false;
     std::atomic<bool> stop_{false};
     std::thread thread_;
 };

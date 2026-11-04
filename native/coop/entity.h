@@ -4,7 +4,7 @@
 // Host side writes its rows into the frame being captured; client side presents decoded rows (idempotent:
 // a row applied twice changes nothing) and may run per-frame presentation work. `reset` = map change /
 // session end (client: drop everything presented for the old map; host: forget per-map bookkeeping).
-// All six adapters are in coop/entities/; the enemy / lily halves call into coop/host.cpp + coop/client.cpp
+// Adapters are in coop/entities/; the enemy / lily halves call into coop/host.cpp + coop/client.cpp
 // (they share the takeover / seat state there).
 
 #include "net/snapshot.h"
@@ -50,6 +50,7 @@ IEntityAdapter& story();
 IEntityAdapter& pickup();
 IEntityAdapter& enemy_dyn();
 IEntityAdapter& spirit(); // P6: summoned spirits (section sp)
+IEntityAdapter& companion(); // ADR0008: independent following companions (section cp)
 std::uint16_t dyn_id_of(const ObjHandle& enemy); // host: ed key of a dynamic enemy (0 = none)
 } // namespace entities
 

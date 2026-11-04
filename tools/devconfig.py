@@ -4,7 +4,15 @@ Strings may contain {game}, expanded to the "game" value. Instances are resolved
 """
 
 import json
+import sys
 from pathlib import Path
+
+# All repository CLIs import this module. Only adjust their own streams; do not
+# change environment variables inherited by subprocesses or the user's shell.
+for _stream in (sys.stdout, sys.stderr):
+    _reconfigure = getattr(_stream, "reconfigure", None)
+    if callable(_reconfigure):
+        _reconfigure(encoding="utf-8")
 
 REPO = Path(__file__).resolve().parents[1]
 EXE = "EnderLiliesSteam-Win64-Shipping.exe"

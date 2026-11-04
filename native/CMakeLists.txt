@@ -85,13 +85,16 @@ set(ELMP_MOD_SOURCES
     coop/client.cpp
     coop/ability.cpp
     coop/fx.cpp
-    coop/commands.cpp
+    coop/presentation.cpp
+    coop/presentation_policy.cpp
+    coop/visual_state.cpp
     coop/entities/clearable.cpp
     coop/entities/enemy.cpp
     coop/entities/worldobj.cpp
     coop/entities/story.cpp
     coop/entities/pickup.cpp
     coop/entities/enemy_dyn.cpp
+    coop/entities/companion.cpp
     coop/entities/spawn.cpp
     guard/guard.cpp
     dev/lua_bridge.cpp

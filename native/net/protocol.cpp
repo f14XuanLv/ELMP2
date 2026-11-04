@@ -158,6 +158,10 @@ std::size_t encode(const Fx& m, std::span<std::uint8_t> out) {
     w.u8(m.flags);
     w.u32(static_cast<std::uint32_t>(m.sort));
     w.u8(m.pool);
+    w.u8(m.attach_kind);
+    w.u16(m.attach_component);
+    w.u16(m.attach_socket);
+    w.u8(m.emitter_flags);
     return done(w);
 }
 bool decode(std::span<const std::uint8_t> in, Fx& m) {
@@ -173,7 +177,17 @@ bool decode(std::span<const std::uint8_t> in, Fx& m) {
     m.flags = r.u8();
     m.sort = static_cast<std::int32_t>(r.u32());
     m.pool = r.u8();
-    return r.done() && m.ps != 0 && kind_ok(m.kind) && unit(m.xf) && !(m.flags & ~31u) && m.pool <= 3;
+    m.attach_kind = r.u8();
+    m.attach_component = r.u16();
+    m.attach_socket = r.u16();
+    m.emitter_flags = r.u8();
+    if (!r.done() || !m.ps || !kind_ok(m.kind) || (m.flags & ~31u) || m.pool > 3) return false;
+    if (!(m.flags & 8)) return unit(m.xf) && !m.attach_kind && !m.attach_component && !m.attach_socket && !m.emitter_flags;
+    const bool path = m.attach_kind == static_cast<std::uint8_t>(FxAttach::Component) || m.attach_kind == static_cast<std::uint8_t>(FxAttach::SpineBone);
+    const bool bone = m.attach_kind == static_cast<std::uint8_t>(FxAttach::SpineBone);
+    return (m.flags & 1) && m.attach_kind >= 1 && m.attach_kind <= 4 && path == (m.attach_component != 0) &&
+           (bone ? valid_attach_bone(m.bone) : (!m.bone && !(m.flags & 2))) &&
+           !m.custom_bone && !(m.emitter_flags & ~3u) && m.sort >= 0 && m.sort <= 3 && m.xf[3] == 1.0f;
 }
 std::size_t encode(const FxStop& m, std::span<std::uint8_t> out) {
     auto w = start(out, Msg::FxStop);
@@ -219,27 +233,6 @@ bool decode(std::span<const std::uint8_t> in, ActStop& m) {
     m.seq = r.u32();
     m.reason = r.u8();
     return r.done() && kind_ok(m.kind) && m.reason < 16;
-}
-std::size_t encode(const Cmd& m, std::span<std::uint8_t> out) {
-    auto w = start(out, Msg::Cmd);
-    w.u8(m.kind);
-    w.u16(m.net_id);
-    w.u32(m.seq);
-    w.u8(m.dir);
-    w.u8(m.cmd);
-    w.u16(m.cls);
-    return done(w);
-}
-bool decode(std::span<const std::uint8_t> in, Cmd& m) {
-    Reader r(in);
-    if (!open(r, Msg::Cmd)) return false;
-    m.kind = r.u8();
-    m.net_id = r.u16();
-    m.seq = r.u32();
-    m.dir = r.u8();
-    m.cmd = r.u8();
-    m.cls = r.u16();
-    return r.done() && kind_ok(m.kind) && m.cls != 0 && m.dir < 8 && m.cmd < 16;
 }
 bool decode(std::span<const std::uint8_t> in, Json& m) {    Reader r(in);
     const auto t = r.u8();

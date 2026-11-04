@@ -1,3 +1,5 @@
+> 2026-11-04 更正：本文保留历史观察；统一输入充分性、现有 guard 覆盖、renderer 偏移来源等推断已重新核验。当前事实以 [玩家图谱](player-sync-graph-v2.md)、[敌人图谱](enemy-sync-graph-v2.md) 和 [ADR 0008](../adr/0008-authoritative-presentation.md) 为准。
+
 # 敌人红光为什么在客户端消失：从 AI 到像素的完整图谱（2026-10-30，P8）
 
 > 这篇的原因：之前每次只补一点（补 spawn 钩子、补 owner 映射、补持续状态），都没有命中。这一次把

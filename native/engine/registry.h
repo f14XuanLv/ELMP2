@@ -35,6 +35,7 @@ enum class Kind : std::uint8_t {
     ActivationVolume,
     Menu, // non-actor (UserWidgetNavigable); maintained only while wanted
     Spirit, // AZenithSpirit (pooled per equipped spirit, Owner = the summoner's controller)
+    Companion, // AZenithCompanionCharacter (own AIC -> LeaderPawn -> player PC; Owner changes on possess)
     Count
 };
 inline constexpr std::size_t kKinds = static_cast<std::size_t>(Kind::Count);

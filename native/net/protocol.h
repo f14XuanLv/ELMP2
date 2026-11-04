@@ -44,7 +44,7 @@ enum class Msg : std::uint8_t {
     FxStop = 11,    // host → client: DeactivateSystem of a replicated SpawnFX result
     Snd = 12,       // host → client: sound timeline event on a replicated actor
     ActStop = 13,   // host → client: AAbility::Stop of a replicated launch
-    Cmd = 14,       // host → client: command start edge on a replicated enemy (P8 enemy-domain test)
+    // 14 was the removed experimental Cmd channel; never reuse its wire id.
 };
 
 // Owner of a replicated event (P6): which presented actor on the client it belongs to.
@@ -53,8 +53,9 @@ enum class RefKind : std::uint8_t {
     Dyn = 2,    // id = dyn id (section ed key)
     Lily = 3,   // id = seat key (section l key; 1 = host P1)
     Spirit = 4, // id = spirit row key (section sp: seat << 8 | index)
+    Companion = 5, // id = independent companion row key (section cp; seat is explicit)
 };
-inline constexpr std::uint8_t kRefKindMax = 4;
+inline constexpr std::uint8_t kRefKindMax = 5;
 
 struct Welcome { std::uint8_t seat = 0; std::uint16_t epoch = 0; std::uint16_t map = 0; };
 struct NameDef { std::uint16_t id = 0; std::string text; };
@@ -71,6 +72,14 @@ struct Act {
     std::uint16_t custom_spawn = 0, custom_attach = 0;        // name ids (0 = None)
     std::uint8_t flags = 0;     // bit0 follow spawn rot, bit1 follow attach rot, bit2 fire-and-forget
 };
+enum class FxAttach : std::uint8_t { None = 0, Root = 1, Component = 2, CompanionFx = 3, SpineBone = 4 };
+inline constexpr bool valid_attach_bone(std::uint8_t bone) {
+    switch (bone) {
+    case 10: case 50: case 60: case 70: case 71: case 72: case 100: case 110: case 120: case 130:
+    case 180: case 181: case 182: case 200: case 210: case 230: case 231: case 232: return true;
+    default: return false; // None uses explicit Root; custom names have no proven enum mapping.
+    }
+}
 struct Fx {
     std::uint8_t kind = 1;  // RefKind of the FX component's owner
     std::uint16_t net_id = 0;
@@ -79,9 +88,13 @@ struct Fx {
     std::uint8_t bone = 0;  // ESpineBone
     std::uint16_t custom_bone = 0; // name id (0 = None)
     std::array<float, 10> xf{0, 0, 0, 1, 0, 0, 0, 1, 1, 1}; // Offset
-    std::uint8_t flags = 0; // bit0 attach, bit1 follow bone rotation, bit2 register as running FX, bit3 emitter (SpawnEmitterAttached capture: xf = rotator/loc/scale), bit4 initial state (persistent FX, applied even in local mode)
-    std::int32_t sort = 0;  // TranslucencySortPriority
-    std::uint8_t pool = 0;  // EPSCPoolMethod
+    std::uint8_t flags = 0; // bit0 attach, bit1 follow bone rotation, bit2 running baseline (BaseFX register / active emitter), bit3 emitter (xf = relative rotator/loc/scale), bit4 initial state
+    std::int32_t sort = 0;  // BaseFX TranslucencySortPriority; emitter original EAttachLocation (audit)
+    std::uint8_t pool = 0;  // Host EPSCPoolMethod (audit); remote replay always uses None
+    std::uint8_t attach_kind = 0; // FxAttach; emitter only, no implicit root fallback
+    std::uint16_t attach_component = 0; // owner-relative component path; Component/SpineBone only
+    std::uint16_t attach_socket = 0; // exact AttachPointName; 0 = None
+    std::uint8_t emitter_flags = 0; // bit0 original AutoDestroy, bit1 original AutoActivate
 };
 struct FxStop { std::uint32_t seq = 0; };struct Snd {
     std::uint8_t kind = 1;
@@ -94,16 +107,6 @@ struct ActStop {
     std::uint16_t net_id = 0;
     std::uint32_t seq = 0; // the Act.seq of that owner
     std::uint8_t reason = 0; // EAbilityStopReason
-};
-// P8 敌人域：命令启动沿（UCommandQueueComponent::ProcessCommand，CurrentResult == NONE）。
-// Client 用原版 AddNewImmediateCommand 重放，让 CommandAction 的五条时间线自己跑。
-struct Cmd {
-    std::uint8_t kind = 1;
-    std::uint16_t net_id = 0;
-    std::uint32_t seq = 0;  // per-owner, monotonic (idempotent)
-    std::uint8_t dir = 0;   // GetInvokedByDirectionInputType
-    std::uint8_t cmd = 0;   // ECommandInputTypes
-    std::uint16_t cls = 0;  // CommandAction class path name id
 };
 struct Json { std::string text; };
 struct Control { std::uint8_t code = 0; std::string text; };
@@ -120,12 +123,10 @@ std::size_t encode(const Fx& m, std::span<std::uint8_t> out);
 std::size_t encode(const FxStop& m, std::span<std::uint8_t> out);
 std::size_t encode(const Snd& m, std::span<std::uint8_t> out);
 std::size_t encode(const ActStop& m, std::span<std::uint8_t> out);
-std::size_t encode(const Cmd& m, std::span<std::uint8_t> out);
 bool decode(std::span<const std::uint8_t> in, Fx& m);
 bool decode(std::span<const std::uint8_t> in, FxStop& m);
 bool decode(std::span<const std::uint8_t> in, Snd& m);
 bool decode(std::span<const std::uint8_t> in, ActStop& m);
-bool decode(std::span<const std::uint8_t> in, Cmd& m);
 
 Msg type_of(std::span<const std::uint8_t> in); // 0 cast when empty
 bool decode(std::span<const std::uint8_t> in, Welcome& m);

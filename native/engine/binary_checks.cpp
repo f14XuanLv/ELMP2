@@ -19,6 +19,13 @@ Status check_offset(const binary::Offset& o) {
     const auto& c = o.check;
     const auto size = o.size > 0 ? o.size : 0;
     switch (c.kind) {
+    case binary::OffsetCheck::Kind::NativeOffset: {
+        // The parser matched the value to the instruction displacement; preflight matched the entire
+        // containing prefix to this EXE. No native layout is inferred from unrelated reflected fields.
+        s.ok = preflight::address(c.function) != nullptr;
+        s.detail = std::format("verified {} prefix displacement byte {} width {}", c.function, c.byte, c.width);
+        return s;
+    }
     case binary::OffsetCheck::Kind::Equals: {
         auto* p = reflect::find_property(reflect::find_class(log::wide(c.cls)), log::wide(c.property));
         if (!p) return s.detail = "reflected " + c.cls + "." + c.property + " not found", s;

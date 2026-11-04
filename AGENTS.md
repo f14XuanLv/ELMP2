@@ -49,6 +49,9 @@
 - 任何缓存必须带失效源与审计方式（`docs/ARCHITECTURE-V2.md` §16.1）。
 
 ## 常用命令（仓库根目录；Python = `C:\Dev\miniconda\python.exe`）
+- 工具链入口：先读 `docs/TOOLCHAIN.md`；`python tools\toolchain.py doctor` 检查依赖，`... smoke --out build\toolchain-smoke\report.json` 实测 CUE / IDA / 运行实例的 UEBridge（不启动游戏、不发输入）。IDA 后台服务未就绪时用 `python tools\ida_service.py start`，工作库为副本，不改原 `.i64`。
+- 当前会话没有原生 MCP 工具时：`python tools\mcp_client.py cue4parse|ida list|schema|call|batch ...` 直接调用已有 MCP；参数用 `--args-file`，大结果用 `--out`。CUE 自动挂 paks/usmap，每次进程新会话；IDA 的函数工具必须带 `database: "elmp"`（以配置 session 为准），先查 `idb_list` / `server_health` 核对库身份。不要把“写了 Codex 配置”当作“当前会话已有原生工具”。
+- UEBridge 同一实例请求必须串行（固定单份 request/response 文件）；不同实例可并行。`capture.py` 遇最小化窗口会明确跳过，不能恢复窗口来补截图。`extract.py --help` 只显示帮助；未指定 `--dump` / `--triggers` 时会全量生成发布素材（包括 `--size`）。
 - 构建 + CTest：`cmd /c build.bat test`（首次配置约数分钟；离线依赖目录写在 `devconfig.local.json` 的 `fetchCache`）；只编 base + CTest：`build.bat base test`；发布包：`build.bat package`（Shipping zip 断言零 `.lua`）。
 - 产物：`build\Game__Shipping__Win64\{dev,shipping,frameprobe}\dlls\main.dll`。
 - 部署（实例必须已停止）：`python tools\deploy.py dev [--flavor shipping] [--elmp on|off] [--probe on|off]`；`--elmp off --probe on` = 裸 UE4SS 帧时间基线。

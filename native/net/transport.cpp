@@ -130,14 +130,20 @@ void Link::push_out(Bytes pkt) {
 }
 
 void Link::emit(LinkEvent e) {
+    if (e.kind == LinkEvent::Kind::Closed || e.kind == LinkEvent::Kind::Rejected) {
+        // Once closed, queued gameplay is stale. A terminal event must never be dropped or delayed.
+        events_.clear();
+        events_.push_back(std::move(e));
+        return;
+    }
     if (events_.size() >= kMaxEvents) {
-        // latest-only data yields first; control / reliable events last
+        // Only latest-only data may be sacrificed while the link remains established.
         auto it = std::find_if(events_.begin(), events_.end(), [](const LinkEvent& x) { return x.kind == LinkEvent::Kind::Unreliable; });
         if (it == events_.end() && e.kind == LinkEvent::Kind::Unreliable) {
             ++st_.event_drops;
             return;
         }
-        if (it == events_.end()) it = events_.begin();
+        if (it == events_.end()) return close("reliable event queue overloaded");
         events_.erase(it);
         ++st_.event_drops;
     }
@@ -381,6 +387,7 @@ void Link::on_rel(std::uint32_t seq, bool last, std::span<const std::uint8_t> da
         if (is_last) {
             emit({LinkEvent::Kind::Reliable, 0, Reject::None, std::move(rx_msg_)});
             rx_msg_.clear();
+            if (closed()) return;
         }
         rx_pending_.erase(it);
         ++rx_expect_;
@@ -409,7 +416,7 @@ void Link::on_ack(std::uint32_t base, std::uint64_t mask, double now) {
 }
 
 void Link::on_unrel(std::uint8_t stream, std::uint32_t seq, std::uint8_t idx, std::uint8_t cnt, std::span<const std::uint8_t> data, double now) {
-    if (cnt == 0 || idx >= cnt) {
+    if (cnt == 0 || idx >= cnt || cnt > (kMaxMessage + kSegment - 1) / kSegment || data.size() > kSegment) {
         ++st_.bad;
         return;
     }
@@ -427,7 +434,7 @@ void Link::on_unrel(std::uint8_t stream, std::uint32_t seq, std::uint8_t idx, st
     auto g = std::find_if(groups_.begin(), groups_.end(), [&](const Group& x) { return x.stream == stream && x.seq == seq; });
     if (g == groups_.end()) {
         std::erase_if(groups_, [&](const Group& x) { return now - x.born > kGroupAge; });
-        if (groups_.size() >= kMaxGroups || static_cast<std::size_t>(cnt) * kSegment > kMaxMessage) {
+        if (groups_.size() >= kMaxGroups) {
             ++st_.bad;
             return;
         }
@@ -441,7 +448,10 @@ void Link::on_unrel(std::uint8_t stream, std::uint32_t seq, std::uint8_t idx, st
     g->parts[idx].assign(data.begin(), data.end());
     if (++g->got < g->count) return;
     Bytes msg;
-    for (auto& p : g->parts) msg.insert(msg.end(), p.begin(), p.end());
+    for (auto& p : g->parts) {
+        if (p.size() > kMaxMessage - msg.size()) { groups_.erase(g); ++st_.bad; return; }
+        msg.insert(msg.end(), p.begin(), p.end());
+    }
     deliver(std::move(msg));
 }
 
@@ -457,7 +467,11 @@ void Link::send_unreliable(std::uint8_t stream, std::span<const std::uint8_t> ms
 }
 
 bool Link::send_reliable(std::span<const std::uint8_t> msg) {
-    if (phase_ == Phase::Closed || phase_ == Phase::Hello || msg.empty() || msg.size() > kMaxMessage || pending_msgs_ >= kMaxPendingMsgs) return false;
+    if (phase_ == Phase::Closed || phase_ == Phase::Hello || msg.empty() || msg.size() > kMaxMessage) return false;
+    if (pending_msgs_ >= kMaxPendingMsgs) {
+        close("reliable send queue overloaded");
+        return false;
+    }
     for (std::size_t off = 0; off < msg.size(); off += kSegment) {
         const auto n = std::min(kSegment, msg.size() - off);
         segs_.push_back({rel_next_++, Bytes(msg.begin() + static_cast<std::ptrdiff_t>(off), msg.begin() + static_cast<std::ptrdiff_t>(off + n)), off + n == msg.size()});
@@ -468,6 +482,7 @@ bool Link::send_reliable(std::span<const std::uint8_t> msg) {
 
 void Link::close(std::string_view reason) {
     if (phase_ == Phase::Closed) return;
+    outbox_.clear(); // never let queued data crowd out F_CLOSE or precede it after local shutdown
     if (phase_ == Phase::Established) {
         std::array<std::uint8_t, 160> f;
         Writer w(f.data(), f.size());

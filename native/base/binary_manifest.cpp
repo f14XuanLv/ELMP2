@@ -50,6 +50,15 @@ bool parse_check(const std::string& name, const json::Value* c, OffsetCheck& out
     } else if (const auto* s = c->get("struct_size"); s && s->is_string()) {
         out.kind = OffsetCheck::Kind::StructSize;
         out.cls = s->str;
+    } else if (const auto* n = c->get("native_offset")) {
+        out.kind = OffsetCheck::Kind::NativeOffset;
+        out.function = str_field(*n, "function");
+        const auto* b = n->get("byte");
+        const auto* w = n->get("width");
+        if (out.function.empty() || !b || !b->is_number() || b->num < 0 || b->num > 4096 ||
+            !w || !w->is_number() || (w->num != 1 && w->num != 4)) return err = name + ": native_offset needs function + byte + width(1|4)", false;
+        out.byte = static_cast<std::uint32_t>(b->num);
+        out.width = static_cast<std::uint32_t>(w->num);
     } else {
         return err = name + ": unknown check", false;
     }
@@ -102,6 +111,14 @@ std::optional<Manifest> parse(std::string_view text, std::string* err) {
             off.source = str_field(o, "source");
             if (off.source.empty()) return fail(name + ": source tag missing");
             if (!parse_check(name, o.get("check"), off.check, why)) return fail(why);
+            if (off.check.kind == OffsetCheck::Kind::NativeOffset) {
+                const auto* fn = m.fn(off.check.function);
+                const auto pos = off.check.byte, width = off.check.width;
+                if (!fn || pos + width > fn->prefix.size()) return fail(name + ": native_offset outside verified prefix");
+                std::uint32_t value = 0;
+                for (std::uint32_t i = 0; i < width; ++i) value |= std::uint32_t(fn->prefix[pos + i]) << (i * 8);
+                if (value != off.value) return fail(name + ": native_offset displacement differs from value");
+            }
             m.offsets.emplace(name, std::move(off));
         }
     }

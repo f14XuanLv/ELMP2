@@ -5,11 +5,13 @@
 // under the guest key for reconnection (FR-NET-2c); an explicit leave removes it.
 
 #include "coop/host.h"
+#include "coop/presentation.h"
+#include "coop/visual_state.h"
 
 #include "coop/ability.h"
-#include "coop/commands.h"
 #include "coop/fx.h"
 #include "coop/entity.h"
+#include "coop/entities/companion.h"
 #include "coop/maps.h"
 #include "coop/session.h"
 
@@ -73,7 +75,7 @@ std::map<std::uint32_t, Peer> g_peers;
 std::map<std::string, std::int64_t> g_parked; // guest key → seat kept after an unexpected disconnect
 proto::NameTable g_names;
 std::unique_ptr<snap::Frame> g_frame = std::make_unique<snap::Frame>();
-std::array<std::uint8_t, 64 * 1024> g_buf;
+std::array<std::uint8_t, 128 * 1024> g_buf;
 std::uint16_t g_epoch = 1;
 std::uint16_t g_adapter_map = 0;
 std::string g_trace_name;
@@ -82,6 +84,7 @@ reflect::PropRef g_spawn_point;
 bool g_resolved = false;
 std::uint64_t g_engaged_rows = 0; // P8 Dev：本帧带 bit3（战斗中）的敌人行数，describe 里看得到
 metrics::Counter& c_snaps = metrics::counter("coop.host.snapshots");
+metrics::Counter& c_snap_fail = metrics::counter("coop.host.snapshot_encode_failed");
 metrics::Histogram& h_capture = metrics::histogram("coop.host.capture_us");
 
 void send_rel(std::uint32_t peer, std::size_t n) {
@@ -109,32 +112,13 @@ void resolve() {
 // 所以它必须随敌人快照过去（EnemyRow.flags bit3），由客户端调同一个原版事件在本地重现。
 reflect::PropRef& enemy_target() {
     static reflect::PropRef p;
-    static bool tried = false;
-    if (!p.ok() && !tried) {
-        tried = true;
+    if (!p.ok()) {
         if (auto* cls = reflect::find_class(L"/Game/_Zenith/Core/Pawns/BP_Character_Enemy_Base.BP_Character_Enemy_Base_C"))
             p = reflect::Resolver("EnemyBase", cls).prop(L"CurrentTarget", reflect::Kind::Object);
         if (!p.ok()) log::warn("coop: enemy CurrentTarget unresolved — battle colour state will not replicate");
         else log::info("coop: enemy CurrentTarget at +{}", p.offset);
     }
     return p;
-}
-
-// Spine track 0 (stage 1 of §4: GetCurrent + getAnimationName / GetTrackTime / GetLoop via ProcessEvent).
-template <class Row>
-void track0(ue::UObject* spine, Row& row, const core::schema::Script& s) {
-    if (!spine) return;
-    reflect::Frame cur(s.sp_get_current);
-    cur.arg(0, 0);
-    if (!cur.invoke(spine)) return;
-    auto* entry = cur.ret<ue::UObject*>();
-    if (!ue::alive(entry)) return;
-    reflect::Frame nm(s.te_animation_name);
-    if (nm.invoke(entry)) row.anim = name(log::utf8(nm.ret_string()));
-    reflect::Frame t(s.te_track_time);
-    if (t.invoke(entry)) row.t = t.ret<float>();
-    reflect::Frame lp(s.te_loop);
-    if (lp.invoke(entry)) row.loop = lp.ret_bool();
 }
 
 void lily_row(std::uint16_t key, ue::UObject* pawn, const core::schema::Script& s) {
@@ -155,25 +139,30 @@ void lily_row(std::uint16_t key, ue::UObject* pawn, const core::schema::Script& 
         if (f.invoke(loco)) row->facing = f.ret_bool() ? 1 : -1;
     }
     row->skin = static_cast<std::uint16_t>(std::max(0, core::skin::current(pawn)));
-    row->zoff = static_cast<std::int16_t>(std::lround(core::skin::renderer_z(pawn) * 10.0f)); // 踩地偏移随行发
-    if (const auto* bp = core::schema::blueprint()) track0(bp->lily_spine.object(pawn), *row, s);
+    presentation::capture(pawn, name, row->pose);
+    visual_state::capture(pawn, row->visual);
 }
 
-// the enemy spine component is cached per enemy handle — invalidated when the handle dies
-std::unordered_map<std::int32_t, std::pair<ObjHandle, ObjHandle>> g_spine; // actor index → (actor, spine comp)
-
-template <class Row>
-void pose(ue::UObject* enemy, const ObjHandle& h, Row& row, const core::schema::Script& s) {
-    auto& c = g_spine[h.index];
-    if (c.first != h) {
-        static ObjHandle cls = ObjHandle::of(reflect::find_object(L"/Script/SpineExtensionPlugin.SpineSkeletonAnimationExComponent"));
-        reflect::Frame f(s.actor_component_by_class);
-        f.arg(0, cls.get());
-        c = {h, f.invoke(enemy) ? ObjHandle::of(f.ret<ue::UObject*>()) : ObjHandle{}};
-    }
-    track0(c.second.get(), row, s);
-}
 } // namespace
+
+std::uint8_t enemy_flags(ue::UObject* actor) {
+    if (!ue::alive(actor)) return 0;
+    static reflect::PropRef hidden;
+    static reflect::FuncRef ticking;
+    static ObjHandle enemy_base;
+    if (!hidden.ok() || !ticking.ok()) {
+        reflect::Resolver r("EnemyOutputActor", reflect::find_class(L"/Script/Engine.Actor"));
+        hidden = r.prop(L"bHidden", reflect::Kind::Bool);
+        ticking = r.func(L"IsActorTickEnabled", 0);
+    }
+    if (!enemy_base.valid()) enemy_base = ObjHandle::of(reflect::find_class(L"/Game/_Zenith/Core/Pawns/BP_Character_Enemy_Base.BP_Character_Enemy_Base_C"));
+    std::uint8_t flags = hidden.ok() && hidden.read_bool(actor) ? 2 : 0;
+    reflect::Frame f(ticking);
+    if (f.invoke(actor) && f.ret_bool()) flags |= 1;
+    if (auto* cls = static_cast<ue::UClass*>(enemy_base.get()); cls && actor->GetClassPrivate()->IsChildOf(cls))
+        if (enemy_target().ok() && enemy_target().object(actor)) flags |= 8;
+    return flags;
+}
 
 // adapter lily (host half): P1 + every seat
 void write_lilies(HostCtx&) {
@@ -196,6 +185,7 @@ void write_enemies(HostCtx&) {
             const auto spn = ue::utf8_name(sp);
             auto* row = g_frame->e.add(name(spn));
             if (!row) break;
+            row->flags = enemy_flags(enemy);
             if (auto at = core::location(enemy)) row->x = at->x, row->y = at->y, row->z = at->z;
             if (spn == g_trace_name && g_trace.size() < 240) g_trace.push_back(row->y); // Dev: raw host Y per frame
             if (auto* hp = s->zc_hp.object(enemy)) {
@@ -205,14 +195,14 @@ void write_enemies(HostCtx&) {
                 if (cur <= 0) row->flags |= 4; // dead only when the last sample says so (unload ≠ death)
             }
             row->type = e.class_id;
-            row->zoff = static_cast<std::int16_t>(std::lround(core::skin::renderer_z(enemy) * 10.0f)); // 踩地偏移（敌人 -50 等）
             // bit3：敌人已拿到目标（原版 BattleColor 红光 / FindEnemy FX 的触发条件）
-            if (enemy_target().ok() && ue::alive(enemy_target().object(enemy))) row->flags |= 8, ++g_engaged_rows;
+            if (row->flags & 8) ++g_engaged_rows;
             if (auto* loco = s->zc_locomotion.object(enemy)) {
                 reflect::Frame fr(s->loco_facing_right);
                 if (fr.invoke(loco)) row->facing = fr.ret_bool() ? 1 : -1;
             }
-            pose(enemy, e.handle, *row, *s);
+            presentation::capture(enemy, name, row->pose);
+            visual_state::capture(enemy, row->visual);
         }
 }
 
@@ -262,7 +252,8 @@ void write_spirits(HostCtx&) {
             reflect::Frame fr(s->loco_facing_right);
             if (fr.invoke(loco)) row->facing = fr.ret_bool() ? 1 : -1;
         }
-        pose(a, e.handle, *row, *s);
+        presentation::capture(a, name, row->pose);
+        visual_state::capture(a, row->visual);
     }
 }
 
@@ -282,6 +273,8 @@ void capture(std::int64_t now_us) {
     if (!s) return;
     // adapters (lily / enemy / enemy_dyn / worldobj / story / pickup); per-map bookkeeping resets on a map change
     if (g_adapter_map != g_frame->map) {
+        presentation::reset();
+        visual_state::reset();
         for (auto* a : adapters()) a->reset();
         g_adapter_map = g_frame->map;
     }
@@ -299,6 +292,7 @@ struct Ref {
     proto::RefKind kind{};
     std::uint16_t id = 0;
     int slot = 0;
+    std::uint8_t seat = 0; // Companion ownership survives row retirement for deferred FX/ability stops.
 };
 
 std::vector<std::pair<ue::UObject*, std::uint16_t>> g_lily_pawns; // refreshed once per flush
@@ -318,6 +312,8 @@ std::optional<Ref> ref_of(ue::UObject* owner) {
         if (p == owner) return r.kind = proto::RefKind::Lily, r.id = seat, r;
     const auto h = ObjHandle::of(owner);
     if (auto it = g_spirit_keys.find(h); it != g_spirit_keys.end()) return r.kind = proto::RefKind::Spirit, r.id = it->second, r;
+    if (const auto id = entities::companion_id_of(h))
+        return r.kind = proto::RefKind::Companion, r.id = id, r.seat = entities::companion_seat_of(id), r;
     // SourceSpawnPoint is a ZenithCharacter property: other owners must not be read with it (access violation
     // 0x40000000d when a lily's spirit launched an ability)
     static ue::UClass* zc = reflect::find_class(L"/Script/Zenith.ZenithCharacter");
@@ -348,6 +344,7 @@ std::optional<Ref> ref_of_owner(ue::UObject* o) {
 bool wants(const Peer& p, const Ref& r) {    if (!p.slot || std::max(0, maps::slot_of_seat(p.slot)) != r.slot) return false;
     if (r.kind == proto::RefKind::Lily && r.id == p.slot) return false;
     if (r.kind == proto::RefKind::Spirit && (r.id >> 8) == p.slot) return false;
+    if (r.kind == proto::RefKind::Companion && r.seat == p.slot) return false;
     return true;
 }
 
@@ -400,63 +397,69 @@ void send_acts() {
     g_pending.clear();
 }
 
-// FX / sound / ability-stop events (coop/fx detours, game thread) queued per frame, flushed after the acts
-struct FxEv {
+// One activation of one host PSC owns one wire ID. Pending delivery, owner-resolution retry,
+// late-join state and stop all refer to this record; pooled PSC reuse creates a new activation ID.
+// Invalidators: native DeactivateSystem, inactive/destroyed component, owner/asset destruction,
+// one-shot owner-resolution timeout, peer/map/ref departure, and session stop. Persistent records stay
+// bounded by kFxCapacity while their weak owner/asset/PSC remain live. Audited in describe().
+struct FxDelivery {
+    std::uint32_t peer = 0;
+    std::uint16_t map = 0, net_id = 0;
+    proto::RefKind kind = proto::RefKind::Enemy;
+    std::int64_t next_baseline_us = 0;
+};
+struct FxLive {
     ObjHandle owner, ps, psc;
-    fx::Spawn s;
+    proto::Fx msg;
+    std::string custom_bone;
+    std::string attach_component, attach_socket;
+    std::vector<FxDelivery> delivered;
+    std::uint16_t waiting = 0;
+    bool stopped = false, first_flush = true, ever_delivered = false;
 };
-std::vector<FxEv> g_fx_pending;
-struct FxRetry {
-    FxEv ev;
-    std::uint32_t age = 0;
-};
-std::vector<FxRetry> g_fx_retry; // owner 还没映射到 Ref 的 FX（地图加载 / 敌人激活瞬间 spawn 的持续特效）
+constexpr std::size_t kFxCapacity = 1024;
+constexpr std::int64_t kFxBaselineUs = 1'000'000;
+std::unordered_map<std::uint32_t, FxLive> g_fx_live; // wire ID -> activation; stopped entries remain until their stops are flushed
+std::unordered_map<ObjHandle, std::uint32_t> g_fx_by_psc; // weak component -> current activation only
+std::uint32_t g_fx_seq = 0; // not reset on role stop; IDs are never reused by this process
+std::uint64_t g_fx_canceled = 0, g_fx_retired = 0, g_fx_initial = 0, g_fx_retry_ready = 0;
+std::uint64_t g_fx_baselines = 0, g_fx_bindings_closed = 0, g_fx_companion_owned = 0;
 struct SndEv {
     ObjHandle owner, event;
     bool is2d = false;
 };
 std::vector<SndEv> g_snd_pending;
 std::vector<std::pair<ObjHandle, std::uint8_t>> g_stop_pending;
-std::vector<std::uint32_t> g_deact_pending;
-std::unordered_map<ue::UObject*, std::pair<ObjHandle, std::uint32_t>> g_fx_live; // sent PSC → FX seq
-// P8：注册为 running 的持续特效（bit2）是“状态”不是“事件”。记录在场集合，新对端加入时补发一次（bit4 = 初始状态），
-// 否则像敌人身上的红光这种在加载/激活时 spawn 一次的特效，晚加入的客户端永远看不到。
-struct PersistFx {
-    ObjHandle owner, ps, psc;
-    fx::Spawn s;
-};
-std::vector<PersistFx> g_persist;
-std::uint32_t g_fx_seq = 0;
-
-// 命令启动沿（P8 敌人域）：只对可复制的敌人 / 动态敌人发；Lily 的副本将来走输入复制而不是命令复制
-struct CmdEv {
-    ObjHandle owner;
-    std::string path;
-    std::uint8_t dir = 0, cmd = 0;
-};
-std::vector<CmdEv> g_cmd_pending;
-std::uint32_t g_cmd_seq = 0;
-std::uint64_t g_cmds_sent = 0, g_cmds_skipped = 0;
-
-void on_cmd_start(const commands::Start& s) {
-    if (g_peers.empty() || !s.owner || s.path.empty()) return;
-    if (g_cmd_pending.size() >= 128) return void(++g_ev_dropped);
-    g_cmd_pending.push_back({ObjHandle::of(s.owner), s.path, s.dir, s.cmd});
-}
 
 void on_fx(const fx::Spawn& s) {
-    // 持续特效要在“没有对端”时也记录：敌人红光往往在 Host 读图 / 激活时就 spawn 了，晚加入的客户端靠这份状态补
-    if ((s.msg.flags & 4) && g_persist.size() < 128) g_persist.push_back({ObjHandle::of(s.owner), ObjHandle::of(s.ps), ObjHandle::of(s.psc), s});
-    if (g_peers.empty()) return;
-    if (g_fx_pending.size() >= 256) return void(++g_ev_dropped);
-    g_fx_pending.push_back({ObjHandle::of(s.owner), ObjHandle::of(s.ps), ObjHandle::of(s.psc), s});
+    if (entities::companion_owns_fx(s.owner, s.psc)) return void(++g_fx_companion_owned);
+    if (g_peers.empty() && !(s.msg.flags & 4)) return;
+    if (!ue::alive(s.owner) || !ue::alive(s.ps) || !fx::active(s.psc)) return void(++g_ev_dropped);
+    const auto psc = ObjHandle::of(s.psc);
+    if (auto old = g_fx_by_psc.find(psc); old != g_fx_by_psc.end()) {
+        if (auto it = g_fx_live.find(old->second); it != g_fx_live.end()) it->second.stopped = true;
+        g_fx_by_psc.erase(old);
+    }
+    // Never evict an already-delivered record to admit a spawn: its Stop still needs to be sent.
+    if (g_fx_live.size() >= kFxCapacity || g_fx_seq == ~std::uint32_t{0}) return void(++g_ev_dropped);
+    FxLive record;
+    record.owner = ObjHandle::of(s.owner);
+    record.ps = ObjHandle::of(s.ps);
+    record.psc = psc;
+    record.msg = s.msg;
+    record.msg.seq = ++g_fx_seq;
+    record.custom_bone = s.custom_bone;
+    record.attach_component = s.attach_component;
+    record.attach_socket = s.attach_socket;
+    g_fx_by_psc[psc] = record.msg.seq;
+    g_fx_live.emplace(record.msg.seq, std::move(record));
 }
 void on_deactivate(ue::UObject* psc) {
-    auto it = g_fx_live.find(psc);
-    if (it == g_fx_live.end()) return;
-    if (it->second.first.get() == psc && g_deact_pending.size() < 256) g_deact_pending.push_back(it->second.second);
-    g_fx_live.erase(it);
-    std::erase_if(g_persist, [psc](const PersistFx& p) { return p.psc.get() == psc; });
+    const auto h = ObjHandle::of(psc);
+    auto current = g_fx_by_psc.find(h);
+    if (current == g_fx_by_psc.end()) return;
+    if (auto it = g_fx_live.find(current->second); it != g_fx_live.end()) it->second.stopped = true;
+    g_fx_by_psc.erase(current);
 }
 void on_sound(const fx::Sound& s) {
     if (g_peers.empty()) return;
@@ -469,73 +472,92 @@ void on_ability_stop(ue::UObject* ability, std::uint8_t reason) {
     g_stop_pending.emplace_back(ObjHandle::of(ability), reason);
 }
 
-void send_events() {
-    for (auto it = g_fx_retry.begin(); it != g_fx_retry.end();) {
-        if (++it->age > 120) {
-            ++g_ev_dropped;
-            it = g_fx_retry.erase(it);
-        } else if (ref_of_owner(it->ev.owner.get())) {
-            g_fx_pending.push_back(it->ev);
-            it = g_fx_retry.erase(it);
-        } else {
-            ++it;
-        }
+void send_fx_stop(std::uint32_t peer, std::uint32_t seq) {
+    if (auto it = g_peers.find(peer); it != g_peers.end() && it->second.slot) {
+        if (const auto n = proto::encode(proto::FxStop{seq}, g_buf)) send_rel(peer, n), ++g_fx_stops_sent;
     }
-    for (auto& e : g_fx_pending) {
-        auto* ps = e.ps.get();
-        const auto r = ps ? ref_of_owner(e.owner.get()) : std::nullopt;
-        if (!r) {
-            ++g_ev_noref;
-            if (g_ev_noref <= 5) log::info("coop: fx owner unmapped: {} owner={}", fx::path_of(ps), e.owner.get() ? log::utf8(ue::class_name_of(e.owner.get())) : "-");
-            // 地图刚加载时敌人/世界对象还没绑定 Ref（自身发光等 FX 恰在这一刻 spawn）：
-            // 放进重试队列，等注册表把 owner 映射出来再发，别直接丢。
-            if (g_ev_noref <= 4096 && g_fx_retry.size() < 256) {
-                FxRetry q;
-                q.ev = e;
-                q.age = 0;
-                g_fx_retry.push_back(std::move(q));
-            }
-            continue;
-        }
-        auto m = e.s.msg;
-        m.kind = static_cast<std::uint8_t>(r->kind);
-        m.net_id = r->id;
-        m.seq = ++g_fx_seq;
-        m.ps = name(fx::path_of(ps));
-        m.custom_bone = e.s.custom_bone.empty() || e.s.custom_bone == "None" ? 0 : name(e.s.custom_bone);
-        if (e.s.msg.flags & 4) m.flags |= 16; // 持续特效：实时也带“初始状态”位，客户端在本地模式下也补上
-        if (!m.ps) continue;
-        if (auto* psc = e.psc.get()) g_fx_live[psc] = {e.psc, m.seq};
-        send_to(*r, m, g_fx_sent);
-    }
-    g_fx_pending.clear();
-    for (auto& e : g_cmd_pending) {
+}
+
+void flush_fx(std::int64_t now_us) {
+    for (auto it = g_fx_live.begin(); it != g_fx_live.end();) {
+        const auto seq = it->first;
+        auto& e = it->second;
         auto* owner = e.owner.get();
-        const auto r = owner ? ref_of_owner(owner) : std::nullopt;
-        if (!r || (r->kind != proto::RefKind::Enemy && r->kind != proto::RefKind::Dyn)) {
-            ++g_cmds_skipped;
+        auto* ps = e.ps.get();
+        if (!owner || !ps || !fx::active(e.psc.get())) e.stopped = true;
+        // SpawnEmitterAttached returns before BP assigns its FX field. Check again after that assignment
+        // so the exact companion baseline PSC is never also kept in the generic event stream.
+        if (!e.stopped && entities::companion_owns_fx(owner, e.psc.get())) e.stopped = true, ++g_fx_companion_owned;
+        const bool persistent = (e.msg.flags & 4) != 0;
+        const auto r = !e.stopped ? ref_of_owner(owner) : std::nullopt;
+        if (!e.stopped && !r) {
+            if (!e.waiting) ++g_ev_noref;
+            if (e.waiting <= 120) ++e.waiting;
+            for (const auto& delivery : e.delivered) send_fx_stop(delivery.peer, seq), ++g_fx_bindings_closed;
+            e.delivered.clear();
+            if (!persistent && e.waiting > 120) e.stopped = true, ++g_ev_dropped;
+        }
+        if (e.stopped) {
+            for (const auto& delivery : e.delivered) send_fx_stop(delivery.peer, seq);
+            if (!e.ever_delivered) ++g_fx_canceled;
+            ++g_fx_retired;
+            if (auto at = g_fx_by_psc.find(e.psc); at != g_fx_by_psc.end() && at->second == seq) g_fx_by_psc.erase(at);
+            it = g_fx_live.erase(it);
             continue;
         }
-        proto::Cmd m;
-        m.kind = static_cast<std::uint8_t>(r->kind);
-        m.net_id = r->id;
-        m.seq = ++g_cmd_seq;
-        m.dir = e.dir;
-        m.cmd = e.cmd;
-        m.cls = name(e.path);
-        if (!m.cls) {
-            ++g_cmds_skipped;
-            continue;
+        if (!r) { ++it; continue; }
+        if (e.waiting) ++g_fx_retry_ready, e.waiting = 0;
+        const auto map = r->slot == 0 ? g_frame->map : name(maps::map_id(r->slot));
+        // A live PSC can outlast its presented owner identity. Stop the old binding before reusing the
+        // same activation ID with a new Ref/map; a missing Ref above likewise clears every delivery.
+        std::erase_if(e.delivered, [&](const FxDelivery& d) {
+            auto peer = g_peers.find(d.peer);
+            if (peer == g_peers.end()) return true;
+            if (d.map == map && d.kind == r->kind && d.net_id == r->id && peer->second.map_sent == map &&
+                peer->second.map_ready == map && wants(peer->second, *r)) return false;
+            send_fx_stop(d.peer, seq);
+            ++g_fx_bindings_closed;
+            return true;
+        });
+        if (e.first_flush || persistent) {
+            auto m = e.msg;
+            m.kind = static_cast<std::uint8_t>(r->kind);
+            m.net_id = r->id;
+            bool named = false;
+            for (auto& [id, peer] : g_peers) {
+                if (!wants(peer, *r) || peer.map_sent != map || peer.map_ready != map) continue;
+                FxDelivery* delivery = nullptr;
+                for (auto& d : e.delivered) if (d.peer == id) { delivery = &d; break; }
+                if (delivery && (!persistent || now_us < delivery->next_baseline_us)) continue;
+                if (!named) {
+                    m.ps = name(fx::path_of(ps));
+                    m.custom_bone = e.custom_bone.empty() || e.custom_bone == "None" ? 0 : name(e.custom_bone);
+                    m.attach_component = e.attach_component.empty() ? 0 : name(e.attach_component);
+                    m.attach_socket = e.attach_socket.empty() || e.attach_socket == "None" ? 0 : name(e.attach_socket);
+                    if ((!e.attach_component.empty() && !m.attach_component) || (!e.attach_socket.empty() && e.attach_socket != "None" && !m.attach_socket)) break;
+                    if (!m.ps) break;
+                    named = true;
+                }
+                if (!e.first_flush) m.flags |= 16; // late join / recovery / periodic baseline always reuse seq
+                if (const auto n = proto::encode(m, g_buf)) {
+                    send_rel(id, n);
+                    if (delivery) delivery->next_baseline_us = now_us + kFxBaselineUs, ++g_fx_baselines;
+                    else {
+                        e.delivered.push_back({id, map, r->id, r->kind, now_us + kFxBaselineUs});
+                        if (!e.first_flush) ++g_fx_initial;
+                    }
+                    e.ever_delivered = true;
+                    ++g_fx_sent;
+                }
+            }
+            e.first_flush = false;
         }
-        send_to(*r, m, g_cmds_sent);
+        ++it;
     }
-    g_cmd_pending.clear();
-    for (auto seq : g_deact_pending) { // the client ignores seqs it never replayed
-        const auto n = proto::encode(proto::FxStop{seq}, g_buf);
-        for (auto& [id, peer] : g_peers)
-            if (peer.slot && n) send_rel(id, n), ++g_fx_stops_sent;
-    }
-    g_deact_pending.clear();
+}
+
+void send_events(std::int64_t now_us) {
+    flush_fx(now_us);
     for (auto& e : g_snd_pending) {
         auto* ev = e.event.get();
         const auto r = ev ? ref_of_owner(e.owner.get()) : std::nullopt;
@@ -554,7 +576,6 @@ void send_events() {
         g_ab_live.erase(it);
     }
     g_stop_pending.clear();
-    if (g_fx_live.size() > 1024) std::erase_if(g_fx_live, [](const auto& kv) { return !kv.second.first.get(); });
     if (g_ab_live.size() > 1024) std::erase_if(g_ab_live, [](const auto& kv) { return !kv.second.h.get(); });
 }
 
@@ -586,6 +607,7 @@ void send_snapshots() {
         band(g_frame->ed, v.ed, slot, off);
         band(g_frame->pk, v.pk, slot, off);
         band(g_frame->sp, v.sp, slot, off);
+        band(g_frame->cp, v.cp, slot, off);
         v.w = g_frame->w;
         const snap::Frame* base = nullptr;
         if (p.acked) {
@@ -597,7 +619,7 @@ void send_snapshots() {
         if (n) {
             coop::send_unreliable(id, proto::kSnapStream, std::span(g_buf.data(), n));
             ++c_snaps;
-        }
+        } else ++c_snap_fail;
         if (p.map_sent != v.map) { // follow the seat's map (client replies MapReady)
             p.map_sent = v.map;
             std::string tag = slot == 0 ? std::string{} : maps::tag_of_seat(p.slot);
@@ -630,22 +652,8 @@ std::string seat_for(Peer& p) {
     }
     p.epoch = ++g_epoch;
     send_rel(p.id, proto::encode(proto::Welcome{static_cast<std::uint8_t>(p.slot), p.epoch, g_frame->map}, g_buf));
-    // 新对端：把当前在场的持续特效（敌人红光等）补发一次，作为初始状态（bit4）
-    for (auto& e : g_persist) {
-        auto* ps = e.ps.get();
-        const auto r = ps ? ref_of_owner(e.owner.get()) : std::nullopt;
-        if (!r || !wants(p, *r)) continue;
-        auto m = e.s.msg;
-        m.kind = static_cast<std::uint8_t>(r->kind);
-        m.net_id = r->id;
-        m.seq = ++g_fx_seq;
-        m.ps = name(fx::path_of(ps));
-        m.custom_bone = e.s.custom_bone.empty() || e.s.custom_bone == "None" ? 0 : name(e.s.custom_bone);
-        m.flags |= 16; // 新对端补发的就是初始状态
-        if (!m.ps) continue;
-        if (auto* psc = e.psc.get()) g_fx_live[psc] = {e.psc, m.seq};
-        send_rel(p.id, proto::encode(m, g_buf));
-    }
+    // flush_fx supplies persistent activations after MapReady. It reuses each existing ID and
+    // remembers delivery per peer, so joining while a spawn is pending cannot duplicate it.
     return {};
 }
 
@@ -745,23 +753,26 @@ void tick(std::int64_t now_us) {
     // 会话开始前（读图 / 敌人激活）就 spawn 的持续特效：补进在场集合，新对端 Welcome 时补发
     if (std::vector<fx::Spawn> early; fx::take_early(early) > 0)
         for (auto& s : early) on_fx(s);
-    commands::host_enable(on_cmd_start);
     refresh_lily_pawns();
     party::transit::set_stay([](std::int64_t seat) { return maps::slot_of_seat(seat) > 0; });
     maps::tick(now_us);
     send_acts();
-    send_events();
+    send_events(now_us);
     send_snapshots();
 }
 
 void stop() {
+    // Detach sinks before releasing seats: cleanup must not refill event queues for a dead session.
+    ability::host_disable();
+    fx::host_disable();
     for (auto& [id, p] : g_peers)
         if (p.slot) party::leave(p.slot);
     for (auto& [k, slot] : g_parked) party::leave(slot);
-    ability::host_disable();
-    fx::host_disable();
     reset_spirits();
-    g_fx_pending.clear(), g_snd_pending.clear(), g_stop_pending.clear(), g_deact_pending.clear(), g_fx_live.clear(), g_ab_live.clear();
+    entities::companion_end_session();
+    presentation::reset();
+    visual_state::reset();
+    g_snd_pending.clear(), g_stop_pending.clear(), g_fx_live.clear(), g_fx_by_psc.clear(), g_ab_live.clear();
     party::transit::set_stay(nullptr);
     maps::reset();
     g_pending.clear();
@@ -769,6 +780,7 @@ void stop() {
     g_peers.clear();
     g_parked.clear();
     g_names.clear();
+    fx::host_disable(); // discard any persistent FX produced by seat/map teardown after sinks were detached
 }
 
 } // namespace
@@ -790,9 +802,10 @@ std::string describe() {
     std::string out = std::format("host: peers={} parked={} names={} epoch={} actsSent={} actsDropped={}\n", g_peers.size(), g_parked.size(), g_names.size(), g_epoch,
                                   g_acts_sent, g_acts_dropped) +
                       std::format("events: fx={} fxStops={} sounds={} abilityStops={} dropped={} noOwner={} live fx={} abilities={} engaged={}\n", g_fx_sent, g_fx_stops_sent, g_snd_sent, g_ab_stops_sent, g_ev_dropped, g_ev_noref, g_fx_live.size(), g_ab_live.size(), g_engaged_rows) +
-                      ability::describe() + commands::describe() + fx::describe() + std::format("cmds sent={} skipped={}\\n", g_cmds_sent, g_cmds_skipped);
+                      std::format("fx lifecycle: ids={} active={} canceledBeforeDelivery={} retired={} initialReplays={} retryReady={} baselines={} bindingsClosed={} companionOwned={}\n", g_fx_seq,
+                                  g_fx_by_psc.size(), g_fx_canceled, g_fx_retired, g_fx_initial, g_fx_retry_ready, g_fx_baselines, g_fx_bindings_closed, g_fx_companion_owned) + ability::describe() + fx::describe();
     for (auto* a : adapters()) out += a->describe();
-    out += maps::describe();
+    out += maps::describe() + presentation::describe() + visual_state::describe();
     for (const auto& [id, p] : g_peers)
         out += std::format("  peer {} -> P{} key={} seq={} acked={} input={} mapReady={} build=[{}]\n", id, p.slot, p.guest_key, p.seq, p.acked, p.stalled ? "stalled" : "live", p.map_ready, p.build_report);
     return out;

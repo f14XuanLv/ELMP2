@@ -69,8 +69,8 @@ void tick(const frame::Tick& t) {
         case net::LinkEvent::Kind::Closed:
             g_error = in.text;
             log::info("coop: peer {} {}: {}", in.peer, in.kind == net::LinkEvent::Kind::Rejected ? "rejected" : "closed", in.text);
-            if (hh.closed) hh.closed(in.peer, in.text, in.reason);
-            if (g_role == Role::Client) { // the client's only link is gone: the session ends
+            if (in.peer && hh.closed) hh.closed(in.peer, in.text, in.reason);
+            if (!in.peer || g_role == Role::Client) { // endpoint overload ends either role, even while joining
                 stop_role();
                 return;
             }

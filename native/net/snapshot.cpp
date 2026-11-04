@@ -6,13 +6,39 @@
 
 namespace elmp::net::snap {
 
+bool valid_pose(const Pose& p) noexcept {
+    if ((p.flags & ~7) || p.count > kPoseTracks || (!(p.flags & 1) && (p.count || p.flags))) return false;
+    for (std::size_t i = 0; i < p.count; ++i) {
+        const auto& t = p.tracks[i];
+        if ((t.flags & ~3) || !t.generation || (!(t.flags & 2) && !t.anim) || (i && t.index <= p.tracks[i - 1].index)) return false;
+        const float values[] = {t.t, t.alpha, t.time_scale, t.mix_time, t.mix_duration, t.animation_start, t.animation_end, t.track_end};
+        for (float f : values) if (!std::isfinite(f) || f < 0) return false;
+        if (t.animation_end < t.animation_start) return false;
+    }
+    return true;
+}
+
 namespace {
 
-enum Tag : std::uint8_t { T_END = 0, T_L = 1, T_E = 2, T_ED = 3, T_W = 4, T_PK = 5, T_SP = 6 };
+enum Tag : std::uint8_t { T_END = 0, T_L = 1, T_E = 2, T_ED = 3, T_W = 4, T_PK = 5, T_SP = 6, T_CP = 7 };
 
 template <class T>
 void put(Writer& w, T v) {
-    if constexpr (std::is_same_v<T, float>) w.f32(v);
+    if constexpr (std::is_same_v<T, Pose>) {
+        w.u8(v.flags); w.u8(v.count);
+        for (std::size_t i = 0; i < v.count && i < kPoseTracks; ++i) {
+            const auto& t = v.tracks[i];
+            w.u8(t.index); w.u8(t.flags); w.u16(t.anim); w.u32(t.generation);
+            w.f32(t.t); w.f32(t.alpha); w.f32(t.time_scale); w.f32(t.mix_time); w.f32(t.mix_duration);
+            w.f32(t.animation_start); w.f32(t.animation_end); w.f32(t.track_end);
+        }
+    } else if constexpr (std::is_same_v<T, Visual>) {
+        w.u8(v.valid);
+        if (v.valid & 1) for (float f : v.pivot) w.f32(f);
+        if (v.valid & 2) for (float f : v.renderer) w.f32(f);
+        if (v.valid & 4) for (float f : v.color) w.f32(f);
+        if (v.valid & 8) w.f32(v.dissolve);
+    } else if constexpr (std::is_same_v<T, float>) w.f32(v);
     else if constexpr (sizeof(T) == 1) w.u8(static_cast<std::uint8_t>(v));
     else if constexpr (sizeof(T) == 2) w.u16(static_cast<std::uint16_t>(v));
     else w.u32(static_cast<std::uint32_t>(v));
@@ -20,7 +46,32 @@ void put(Writer& w, T v) {
 
 template <class T>
 T get(Reader& r) {
-    if constexpr (std::is_same_v<T, float>) {
+    if constexpr (std::is_same_v<T, Pose>) {
+        Pose p;
+        p.flags = r.u8(); p.count = r.u8();
+        if (p.count > kPoseTracks) { r.fail(); return {}; }
+        for (std::size_t i = 0; i < p.count; ++i) {
+            auto& t = p.tracks[i];
+            t.index = r.u8(); t.flags = r.u8(); t.anim = r.u16(); t.generation = r.u32();
+            t.t = r.f32(); t.alpha = r.f32(); t.time_scale = r.f32(); t.mix_time = r.f32(); t.mix_duration = r.f32();
+            t.animation_start = r.f32(); t.animation_end = r.f32(); t.track_end = r.f32();
+        }
+        if (!valid_pose(p)) r.fail();
+        return p;
+    } else if constexpr (std::is_same_v<T, Visual>) {
+        Visual v;
+        v.valid = r.u8();
+        if (v.valid & ~15) { r.fail(); return {}; }
+        const auto read = [&](auto& values) { for (float& f : values) { f = r.f32(); if (!std::isfinite(f)) r.fail(); } };
+        if (v.valid & 1) read(v.pivot);
+        if (v.valid & 2) read(v.renderer);
+        if (v.valid & 4) read(v.color);
+        if (v.valid & 8) {
+            v.dissolve = r.f32();
+            if (!std::isfinite(v.dissolve)) r.fail();
+        }
+        return v;
+    } else if constexpr (std::is_same_v<T, float>) {
         const float f = r.f32();
         if (!std::isfinite(f)) r.fail();
         return f;
@@ -29,10 +80,19 @@ T get(Reader& r) {
     else return static_cast<T>(r.u32());
 }
 
+template <class T>
+bool field_equal(const T& a, const T& b) {
+    if constexpr (std::is_same_v<T, Pose>) return a == b;
+    else if constexpr (std::is_same_v<T, Visual>)
+        return a.valid == b.valid && (!(a.valid & 1) || a.pivot == b.pivot) && (!(a.valid & 2) || a.renderer == b.renderer) &&
+               (!(a.valid & 4) || a.color == b.color) && (!(a.valid & 8) || a.dissolve == b.dissolve);
+    else return std::memcmp(&a, &b, sizeof(T)) == 0;
+}
+
 template <class Row>
 std::uint32_t diff(const Row& a, const Row* b) {
     std::uint32_t mask = 0, bit = 1;
-    std::apply([&](auto... f) { ((mask |= (!b || std::memcmp(&(a.*f), &(b->*f), sizeof(a.*f)) != 0) ? bit : 0, bit <<= 1), ...); }, Row::fields());
+    std::apply([&](auto... f) { ((mask |= (!b || !field_equal(a.*f, b->*f)) ? bit : 0, bit <<= 1), ...); }, Row::fields());
     return mask;
 }
 
@@ -79,16 +139,19 @@ template <class Row, std::size_t Cap>
 bool dec_section(Reader& rd, Section<Row, Cap>& s) {
     const auto changed = rd.var();
     if (!rd.ok() || changed > Cap) return false;
+    // A full section may replace keys in the same delta. Stage bounded changed rows so old keys can
+    // be removed before capacity is consumed by new ones; unchanged fields still come from the base.
+    Section<Row, Cap> updates;
     constexpr std::uint32_t all = static_cast<std::uint32_t>((1ull << std::tuple_size_v<decltype(Row::fields())>) - 1);
     for (std::uint32_t i = 0; i < changed; ++i) {
         const auto key = rd.u16();
         const auto mask = rd.var();
         if (!rd.ok() || (mask & ~all)) return false;
-        Row* r = nullptr;
-        for (std::uint16_t k = 0; k < s.n; ++k)
-            if (s.rows[k].key == key) r = &s.rows[k];
-        if (!r && !(r = s.add(key))) return false;
+        if (updates.find(key)) return false;
+        auto* r = updates.add(key);
+        if (const auto* old = s.find(key)) *r = *old;
         read_fields(rd, *r, mask);
+        if (!rd.ok()) return false;
     }
     const auto removed = rd.var();
     if (!rd.ok() || removed > Cap) return false;
@@ -99,6 +162,13 @@ bool dec_section(Reader& rd, Section<Row, Cap>& s) {
                 s.rows[k] = s.rows[--s.n];
                 break;
             }
+    }
+    for (const auto& update : updates.view()) {
+        Row* row = nullptr;
+        for (std::uint16_t k = 0; k < s.n; ++k)
+            if (s.rows[k].key == update.key) row = &s.rows[k];
+        if (!row && !(row = s.add(update.key))) return false;
+        *row = update;
     }
     return rd.ok();
 }
@@ -119,6 +189,7 @@ std::size_t encode(const Frame& cur, const Frame* base, std::uint32_t base_seq, 
     enc_section(w, T_W, cur.w, base ? &base->w : nullptr);
     enc_section(w, T_PK, cur.pk, base ? &base->pk : nullptr);
     enc_section(w, T_SP, cur.sp, base ? &base->sp : nullptr);
+    enc_section(w, T_CP, cur.cp, base ? &base->cp : nullptr);
     w.u8(T_END);
     return w.ok() ? w.size() : 0;
 }
@@ -149,7 +220,7 @@ bool decode(std::span<const std::uint8_t> in, const Frame* base, Frame& out) {
     while (r.ok()) {
         const auto tag = r.u8();
         if (tag == T_END) break;
-        if (tag <= last || tag > T_SP) return false; // each section at most once, in order
+        if (tag <= last || tag > T_CP) return false; // each section at most once, in order
         last = tag;
         bool ok = false;
         switch (tag) {
@@ -159,6 +230,7 @@ bool decode(std::span<const std::uint8_t> in, const Frame* base, Frame& out) {
         case T_W: ok = dec_section(r, out.w); break;
         case T_PK: ok = dec_section(r, out.pk); break;
         case T_SP: ok = dec_section(r, out.sp); break;
+        case T_CP: ok = dec_section(r, out.cp); break;
         }
         if (!ok) return false;
     }

@@ -6,6 +6,23 @@
   "usmap": "{game}\\Binaries\\Win64_For_Mod_Dev2\\ue4ss\\EnderLilies-4.26.2-0+++UE4+Release-4.26-0c574377.usmap",
   "cue4parse": "C:\\Code2\\Ender5\\CUE4ParseProject\\CUE4Parse",
   "fetchCache": "",
+  "toolchain": {
+    "mcp": {
+      "cue4parse": {
+        "command": "C:\\Code2\\Ender5\\CUE4ParseProject\\CUE4Parse-MCP\\publish\\win-x64\\CUE4Parse.Mcp.exe"
+      },
+      "ida": {
+        "url": "http://127.0.0.1:8745/mcp"
+      }
+    },
+    "ida": {
+      "python": "C:\\Code2\\Ender5\\CUE4ParseProject\\ida-pro-mcp\\.venv\\Scripts\\python.exe",
+      "cwd": "C:\\Code2\\Ender5\\CUE4ParseProject\\ida-pro-mcp",
+      "sourceDatabase": "{game}\\Binaries\\Win64\\EnderLiliesSteam-Win64-Shipping.exe.i64",
+      "workDatabase": "build/toolchain-smoke/ida/EnderLiliesSteam-Win64-Shipping.exe.i64",
+      "session": "elmp"
+    }
+  },
   "instances": {
     "dev": {
       "root": "{game}\\Binaries\\Win64_For_Mod_Dev2",

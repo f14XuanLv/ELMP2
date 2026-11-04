@@ -104,7 +104,6 @@ void deferred_init(const frame::Tick&) {
 void define_settings() {
     settings::define({.key = "verboseLog", .def = false, .help = "extra diagnostics in UE4SS.log"});
     party::config::define();
-    coop::fx::define_settings();
 }
 
 class ElmpMod final : public RC::CppUserModBase {

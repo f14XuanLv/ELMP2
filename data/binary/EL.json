@@ -55,6 +55,30 @@
       "source": "[E-IDA] v1 data/RVA.json（IDA 2026-10-11）；LilyInEM AEDamageApply",
       "note": "技能伤害应用：直写目标 HPComponent+276 CurrHP 并广播；无反射入口"
     },
+    "GuardEffectApply": {
+      "rva": "0x00D3BCB0",
+      "prefix": "4053565741564881EC68010000",
+      "signature": "void UAbilityEffectComponent::OnApplyEffect(this, AActor* From, AActor* To, const FHitInfos* /*288B*/)",
+      "owner": "guard",
+      "source": "[E-IDA][E-SDK] ELMP v2 2026-11-04 docs/kb/enemy-sync-graph-v2.md §4.1；标准 Effect 队列 CBB110 的原生事件 thunk 调用与 SDK void 声明交叉核验",
+      "note": "原生调用转发 ProcessEvent 的事件 thunk，不是反射 exec 桩；第四参数为 288B HitInfos 指针。Client armed 时无条件拒绝，不继承 damage replay；仅覆盖已证标准路径，直接 _Implementation/蓝图旁路不在此保证内"
+    },
+    "GuardEffectFinalize": {
+      "rva": "0x00D3BD40",
+      "prefix": "4053565741564881EC68010000",
+      "signature": "void UAbilityEffectComponent::OnFinalizeEffect(this, AActor* From, AActor* To, const FHitInfos* /*288B*/)",
+      "owner": "guard",
+      "source": "[E-IDA][E-SDK] ELMP v2 2026-11-04 docs/kb/enemy-sync-graph-v2.md §4.1；收尾 CA6E40 的原生事件 thunk 调用与 SDK void 声明交叉核验",
+      "note": "原生调用转发 ProcessEvent 的事件 thunk，不是反射 exec 桩；收尾不以 Apply 已执行为条件，必须与 Apply 一致拒绝。Client armed 时不继承 damage replay；未登记旁路仍未闭合"
+    },
+    "GuardDeathStart": {
+      "rva": "0x00CBD9A0",
+      "prefix": "40574883EC2080B99002000000",
+      "signature": "void UDeathComponent::StartDeathProcess(this)",
+      "owner": "guard",
+      "source": "[E-IDA][E-SDK] ELMP v2 2026-11-04 docs/kb/enemy-sync-graph-v2.md §5；CB2740 OnReceiveDeadEvent 与 CA76E0 ForceDeath 调用交叉核验",
+      "note": "标准死亡启动入口：+656 防重，清理组件，分派 DeathStyle/BP/委托；Client armed 时无条件拒绝，不借 damage replay 放行。没有证明所有敌人/Boss/脚本旁路均经过此函数"
+    },
     "GuardIsPlayerThunk": {
       "rva": "0x00CE3C90",
       "prefix": "E95B140300CC",
@@ -218,58 +242,148 @@
       "owner": "world/map_context",
       "source": "[E-IDA] v1 data/RVA.json（IDA 2026-10-25）",
       "note": "前台 IsLoading 时只挂 OnGameMapReady 委托"
+    },
+    "SpineCurrentLayout": {
+      "rva": "0x007E7E30",
+      "prefix": "48895C2420564883EC60488B01488BF14863DAFF9000040000488B86080200004885C00F84C2000000488B8888000000488B8090000000482BC148897C247848C1F803483BD8720433FFEB12488B3CD94885FF7409488B47104885C0757A",
+      "signature": "UTrackEntry* USpineSkeletonAnimationComponent::GetCurrent(this, int index); read-only layout proof, not a hook",
+      "owner": "coop/presentation",
+      "source": "[E-IDA] ELMP v2 2026-11-04 execGetCurrent 0x820AE0 -> 0x7E7E30; component state+520; native tracks begin+136/end+144. research-spine/SkeletonGetCurrentNative.c, layout-proof.json"
     }
   },
   "offsets": {
     "ZenithInputComponent.PawnOwner": {
       "value": 176,
-      "check": { "equals": { "class": "/Script/Zenith.ZenithInputComponent", "property": "PawnOwner" } },
+      "check": {
+        "equals": {
+          "class": "/Script/Zenith.ZenithInputComponent",
+          "property": "PawnOwner"
+        }
+      },
       "source": "[E-IDA] LilyInEM data/binary/EL.json；v1 core-facts（输入）"
     },
     "ZenithInputComponent.NextInputSnapshot": {
       "value": 184,
-      "check": { "equals": { "class": "/Script/Zenith.ZenithInputComponent", "property": "NextInputSnapshot" } },
+      "check": {
+        "equals": {
+          "class": "/Script/Zenith.ZenithInputComponent",
+          "property": "NextInputSnapshot"
+        }
+      },
       "source": "[E-IDA] LilyInEM data/binary/EL.json；v1 core-facts（输入）"
     },
     "ZenithInputComponent.InputSnapshot": {
       "value": 224,
-      "check": { "equals": { "class": "/Script/Zenith.ZenithInputComponent", "property": "InputSnapshot" } },
+      "check": {
+        "equals": {
+          "class": "/Script/Zenith.ZenithInputComponent",
+          "property": "InputSnapshot"
+        }
+      },
       "source": "[E-IDA] LilyInEM data/binary/EL.json；v1 core-facts（输入）"
     },
     "InputSnapshot.size": {
       "value": 40,
-      "check": { "struct_size": "/Script/Zenith.InputSnapshot" },
+      "check": {
+        "struct_size": "/Script/Zenith.InputSnapshot"
+      },
       "source": "[E-IDA] LilyInEM data/binary/EL.json"
     },
     "ZenithSpirit.ActivationState": {
       "value": 1464,
       "size": 1,
-      "check": { "within": { "class": "/Script/Zenith.ZenithSpirit", "after": "MovementComponent", "before": "<end>" } },
+      "check": {
+        "within": {
+          "class": "/Script/Zenith.ZenithSpirit",
+          "after": "MovementComponent",
+          "before": "<end>"
+        }
+      },
       "source": "[E-IDA][E-实测] v2 2026-10-25：0xCCFCB0（AZenithSpirit::Appear）读写 +1464（!=2 → 置 2）；v1 net-facts 2026-10-14 误记为 ZenithCharacter（Dev2 反射：ZenithCharacter+1464 = OnParryDelegate）"
     },
     "ZenithSpirit.bActive": {
       "value": 1465,
       "size": 1,
-      "check": { "within": { "class": "/Script/Zenith.ZenithSpirit", "after": "MovementComponent", "before": "<end>" } },
+      "check": {
+        "within": {
+          "class": "/Script/Zenith.ZenithSpirit",
+          "after": "MovementComponent",
+          "before": "<end>"
+        }
+      },
       "source": "[E-IDA][E-实测] v2 2026-10-25：0xCEFAE0（AZenithSpirit::SetActive）写 +1465；同上更正"
     },
     "ZenithAIController.bActive": {
       "value": 856,
       "size": 1,
-      "check": { "within": { "class": "/Script/Zenith.ZenithAIController", "after": "BehaviourTree_NGPlus", "before": "<end>" } },
+      "check": {
+        "within": {
+          "class": "/Script/Zenith.ZenithAIController",
+          "after": "BehaviourTree_NGPlus",
+          "before": "<end>"
+        }
+      },
       "source": "[E-IDA][E-实测] v2 2026-10-26：0xCCD8F0 守卫 / 写入、IsActive exec 读 +856；Dev2 反射 BehaviourTree_NGPlus@848"
     },
     "ZenithCharacter.bActivated": {
       "value": 1280,
       "size": 1,
-      "check": { "within": { "class": "/Script/Zenith.ZenithCharacter", "after": "SourceSpawnPoint", "before": "LastAttackerDirection" } },
+      "check": {
+        "within": {
+          "class": "/Script/Zenith.ZenithCharacter",
+          "after": "SourceSpawnPoint",
+          "before": "LastAttackerDirection"
+        }
+      },
       "source": "[E-IDA][E-实测] v2 2026-10-26：0xCCDAA0 守卫 / 写入、IsActivated exec 读 +1280；Dev2 反射 SourceSpawnPoint@1272、LastAttackerDirection@1288"
     },
     "HealComponent.RemainingHealCount": {
       "value": 296,
       "size": 4,
-      "check": { "within": { "class": "/Script/Zenith.HealComponent", "after": "HealPowerPercentageBonus", "before": "<end>" } },
+      "check": {
+        "within": {
+          "class": "/Script/Zenith.HealComponent",
+          "after": "HealPowerPercentageBonus",
+          "before": "<end>"
+        }
+      },
       "source": "[E-IDA] v1 net-facts「重构后联机验收」2026-10-24：UseHeal exec 0x140D64BA0 / GetRemainingHealCount 0x140CAAAE0 读 +296"
+    },
+    "SpineSkeletonAnimation.state": {
+      "value": 520,
+      "size": 8,
+      "check": {
+        "native_offset": {
+          "function": "SpineCurrentLayout",
+          "byte": 28,
+          "width": 4
+        }
+      },
+      "source": "[E-IDA] ELMP v2 2026-11-04 native GetCurrent 0x7E7E30 instruction displacement; not reconstructed plugin Vector layout"
+    },
+    "SpineAnimationState.tracksBegin": {
+      "value": 136,
+      "size": 8,
+      "check": {
+        "native_offset": {
+          "function": "SpineCurrentLayout",
+          "byte": 44,
+          "width": 4
+        }
+      },
+      "source": "[E-IDA] ELMP v2 2026-11-04 native GetCurrent 0x7E7E30 instruction displacement; not reconstructed plugin Vector layout"
+    },
+    "SpineAnimationState.tracksEnd": {
+      "value": 144,
+      "size": 8,
+      "check": {
+        "native_offset": {
+          "function": "SpineCurrentLayout",
+          "byte": 51,
+          "width": 4
+        }
+      },
+      "source": "[E-IDA] ELMP v2 2026-11-04 native GetCurrent 0x7E7E30 instruction displacement; not reconstructed plugin Vector layout"
     }
   }
 }

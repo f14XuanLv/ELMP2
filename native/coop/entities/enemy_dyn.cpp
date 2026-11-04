@@ -6,6 +6,9 @@
 // the same row presentation as spawn-point enemies. Row gone → adopted object hidden / copy destroyed.
 
 #include "coop/client.h"
+#include "coop/host.h"
+#include "coop/presentation.h"
+#include "coop/visual_state.h"
 #include "coop/entity.h"
 
 #include "core/player.h"
@@ -41,6 +44,7 @@ public:
             if (fresh) it->second = next_id_ = static_cast<std::uint16_t>(next_id_ % 60000 + 1);
             auto* row = c.frame.ed.add(it->second);
             if (!row) break;
+            row->flags = host::enemy_flags(a);
             if (auto at = core::location(a)) row->x = at->x, row->y = at->y, row->z = at->z;
             if (auto* hp = s->zc_hp.object(a)) {
                 const auto cur = s->hp_curr.read<std::int32_t>(hp);
@@ -55,6 +59,8 @@ public:
             auto& path = paths_[e.class_id];
             if (path.empty()) path = log::utf8(a->GetClassPrivate()->GetPathName());
             row->type = c.name(path);
+            presentation::capture(a, c.name, row->pose);
+            visual_state::capture(a, row->visual);
         }
     }
 
@@ -89,7 +95,7 @@ std::uint16_t dyn_id_of(const ObjHandle& h) { return dyn_singleton().id_of(h); }
 namespace elmp::coop {
 
 std::span<IEntityAdapter* const> adapters() {
-    static IEntityAdapter* const list[] = {&entities::lily(), &entities::enemy(), &entities::worldobj(), &entities::story(), &entities::pickup(), &entities::enemy_dyn(), &entities::spirit()};
+    static IEntityAdapter* const list[] = {&entities::lily(), &entities::enemy(), &entities::worldobj(), &entities::story(), &entities::pickup(), &entities::enemy_dyn(), &entities::spirit(), &entities::companion()};
     return list;
 }
 

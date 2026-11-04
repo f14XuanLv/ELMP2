@@ -5,10 +5,12 @@
 // arm and pass-through while disarmed (one flag load). Game thread only.
 //   - DoDamage / skill damage: blocked unless the target is inside a replay window (the client replays
 //     host-confirmed hits through the vanilla pipeline);
+//   - Effect Apply / Finalize event thunks and DeathStart: always refused while armed, including inside
+//     a damage replay window. These are verified standard paths, not proof that every bypass is closed;
 //   - IsPlayer thunk: false for marked actors (presented copies / the hidden input anchor);
 //   - SaveGame / SaveGameAsync: refused (client save is read-only for the whole session);
-//   - AZenithAIController::Activate / AZenithCharacter::Activate: skipped for marked enemies (no AI
-//     decision on the client, engine-facts「敌人激活入口重新定位」);
+//   - AZenithAIController::Activate: refused throughout a client session; Character::Activate is
+//     refused for marked actors (engine-facts「敌人激活入口重新定位」);
 //   - SetActorEnableCollision / SetActorTickEnabled: the enabling direction is skipped for marked actors.
 
 #include "engine/ue.h"
@@ -27,18 +29,13 @@ void unmark(ue::UObject* actor);
 void unmark_all();
 bool marked(ue::UObject* actor);
 void mark_not_player(ue::UObject* actor, bool on); // IsPlayer → false (anchor, copies)
-// P8：客户端敌人跑模拟时，允许对已标记的 actor 打开 actor tick（tick 闸只拦“开启”，结算/碰撞闸不变）
-void allow_tick(ue::UObject* actor, bool on);
-// P8：跑模拟还要补一次原版激活（默认状态集合来自 Activate），只放行激活本身，AI 激活仍拦
-void allow_activate(ue::UObject* actor, bool on);
-
 // Replay window: damage to this actor (its HP component's owner) is allowed until close.
 void open_replay(ue::UObject* target);
 void close_replay(ue::UObject* target);
 
 struct Counters {
     std::uint64_t damage_blocked, damage_replayed, skill_blocked, skill_replayed, isplayer_false, save_blocked, ai_activate_blocked, char_activate_blocked,
-        collision_blocked, tick_blocked;
+        collision_blocked, tick_blocked, effect_apply_blocked, effect_finalize_blocked, death_start_blocked;
 };
 Counters counters();
 std::string describe();

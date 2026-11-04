@@ -65,8 +65,17 @@ cmake --build "%BUILD_DIR%" --target %TARGETS% -j 8
 if errorlevel 1 exit /b 1
 
 if "%DO_TEST%"=="1" (
+    setlocal
+    if not exist "%BUILD_DIR%\test-temp\" mkdir "%BUILD_DIR%\test-temp"
+    if not exist "%BUILD_DIR%\test-temp\" (
+        echo [ERROR] cannot create CTest temporary directory: %BUILD_DIR%\test-temp
+        exit /b 1
+    )
+    set "TMP=%BUILD_DIR%\test-temp"
+    set "TEMP=%BUILD_DIR%\test-temp"
     ctest --test-dir "%BUILD_DIR%" --output-on-failure
     if errorlevel 1 exit /b 1
+    endlocal
 )
 
 if "%DO_PACKAGE%"=="1" (

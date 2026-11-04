@@ -25,11 +25,13 @@ struct Function {
 };
 
 struct OffsetCheck {
-    enum class Kind : std::uint8_t { Equals, Within, StructSize } kind = Kind::Equals;
+    enum class Kind : std::uint8_t { Equals, Within, StructSize, NativeOffset } kind = Kind::Equals;
     std::string cls;       // Equals / Within: owning class; StructSize: struct path
     std::string property;  // Equals
     std::string after;     // Within: the reflected field this offset follows
     std::string before;    // Within: the reflected field it precedes, or "<end>" = class PropertiesSize
+    std::string function; // NativeOffset: verified function whose prefix contains the displacement
+    std::uint32_t byte = 0, width = 0;
 };
 
 struct Offset {

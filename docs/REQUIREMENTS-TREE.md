@@ -99,6 +99,7 @@
 - **F5.3 操控** —— 虚拟手柄驱动任意 slot（含显式允许后的 P1）；输入脚本；写世界的辅助必须登记并在报告列出。← FR-PIL-4/6
 - **F5.4 可复现场景** —— 读档 + 地图 + 位置 + 档案。← FR-PIL-7
 - **F5.5 形态** —— UEBridge MCP + Lua 库（Dev 构建注入）+ PowerShell 脚本；不做独立 MCP 服务。← FR-PIL-1
+- **F5.6 工具链可用性（2026-11-04）** —— 复用已有 CUE4Parse / IDA Pro MCP，提供本仓库命令行客户端与只读冒烟入口，使当前 Agent 即使未加载原生 MCP 工具也能查询资产、蓝图和原生函数；路径由 `devconfig.json` / 本机覆盖配置管理。检查构建依赖、预检、运行实例的 UEBridge 与联机状态；不为检查启动/停止游戏、发送输入或恢复窗口。资产脚本 `--help` / 非法参数不得生成发布数据，最小化截图须明确跳过；CTest 使用构建目录内的临时目录。
 
 ---
 
@@ -446,15 +447,19 @@ unner in <mapId>；客人经 Control code 10 横幅显示。
 4. **SDK 身份**：调用方 = Mod 目录名，须带 elmp.json（elmpApi 1 + slots）；最多 16 个 SDK Mod；Lua 事件用 `ELMP_PollEvents` 轮询（JSON），C++ 用 `subscribe` 回调（帧泵末尾派发）。
 
 ### 7.20 P6 远程表现补全决定（2026-10-27，用户追加）→ **[定，可复议]**
-1. **事件归属 Ref**：动作 / 特效 / 音效 / 技能结束一律带所属对象 `{kind: enemy(出生点名) / dyn(动态 id) / lily(座位) / spirit(座位<<8|序号), id}`；只发给座位与所属对象同图的对端，不回发给产生它的座位（该客人本机的莉莉与精灵自己跑）。协议版本升到 3。
+1. **事件归属 Ref**：动作 / 特效 / 音效 / 技能结束一律带所属对象 `{kind: enemy(出生点名) / dyn(动态 id) / lily(座位) / spirit(座位<<8|序号) / companion(稳定实体id), id}`；只发给座位与所属对象同图的对端，不回发给产生它的座位（该客人本机的莉莉与精灵自己跑）。P6当时协议为3；当前版本以`elmp.json`为准，不兼容字段变更须拒绝旧端。
 2. **精灵呈现**：快照新段 `sp`（只含已召唤 = 未隐藏、Owner 为座位 PC 的精灵）；Client 按行的类生成呈现用精灵（白名单冻结、无碰撞、guard 标记），行消失则隐藏复用；位置每快照直放（同莉莉副本）。
-3. **特效**：Host 钩 `UBaseFXComponent::SpawnFX` 实现捕获所属网络对象的特效（FX 时间线 / Spine 动画通知 / VisualCue / 蓝图都经此）；`DeactivateSystem` 同步为 FxStop；Client 对 guard 标记的呈现对象，非重放的本地 SpawnFX 立即隐藏 + 停用（不回 null，原版调用方会解引用）。
+3. **特效**：Host按已核入口捕获所属网络对象的特效，包括`UBaseFXComponent::SpawnFX`和独立的`SpawnEmitterAttached`；不把它们视作全粒子系统的穷尽汇点。`DeactivateSystem`同步为FxStop，持续效果具有稳定ID和基线恢复。Client对guard标记的呈现对象抑制非重放的本地产生（保留原版返回对象，避免调用方解引用空值）；确切`Companion.FX`由独立状态写者负责，不重复走事件。
 4. **音效**：Host 钩 FMOD `PlayEventAtLocation`（`PlayEvent2D` 转发到它；音效时间线、技能、动画通知、蓝图都经此），上下文为 Actor 或其组件、且不是技能的才发；Client 在呈现对象处以同一入口播放（单位变换 = 2D），距本地莉莉 > 4000 UU 不播；呈现对象的本地音效抑制。`PlayEventAttached` 只计数。
 5. **技能结束**：Host 钩 `AAbility::Stop`，已下发的发射按 (Ref, seq) 发 ActStop；Client 对仍在运行的重放体调同一 `Stop`；重放寿命上限从 2 s 放宽为 10 s 兜底。
-6. **受击表现**：Client 呈现的敌人 / 莉莉副本 HP 下降时，调用其蓝图 `OnReceiveDamage` 处理函数（BP_Character_SpineBase 的 `BndEvt__HPComponent_…_HPDamageEvent`：附加受击动画），只表现不结算。
+6. **受击表现**：按ADR0008采集Host真实动画轨道和视觉输出；删除HP下降时合成蓝图`OnReceiveDamage`的旧决定。该事件带有未闭合的状态/Notify上下文，不能仅凭名称认定为纯表现；客户端不得自行结算。
 7. **乱序**：所属对象尚未呈现的事件（如精灵首个技能先于召唤它的快照到达）按序重试 ≤ 300 ms。
 
 ---
+
+### 7.21 远端同步证据修正（2026-11-04）→ **[定，可复议]**
+
+按 [ADR 0008](adr/0008-authoritative-presentation.md) 修正 §7.20 的覆盖推断：SpawnFX 并非全部粒子的汇点；HP 差值合成受击和直接 OnChangeTarget 不作为独立动画/声音写者。远程对象共用 Host 呈现基线，包含可核实的播放实例/相位与组件坐标；运行中换皮肤和同名动作重启必须恢复。取消未封闭的全局模拟开关；完整状态、装备、召唤、交互、死亡链路仍以图谱逐项证明，不能仅复制输入/命令后声称完整同步。双人会话在没有本地额外座位时，双方各有本人和一个远端；本地座位与网络座位必须分别可审计。
 
 ## 8. 验收口径（继承并细化）
 

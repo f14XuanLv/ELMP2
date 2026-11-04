@@ -39,6 +39,7 @@ constexpr KindDef kDefs[] = {
     {Kind::ActivationVolume, L"PawnActivationVolume", L"/Script/Zenith"},
     {Kind::Menu, L"UserWidgetNavigable", L"/Script/Zenith"},
     {Kind::Spirit, L"ZenithSpirit", L"/Script/Zenith"},
+    {Kind::Companion, L"ZenithCompanionCharacter", L"/Script/Zenith"},
 };
 constexpr std::uint32_t kMenuBit = 1u << static_cast<int>(Kind::Menu);
 
@@ -210,6 +211,7 @@ const char* kind_name(Kind k) noexcept {
     case Kind::ActivationVolume: return "activationVolume";
     case Kind::Menu: return "menu";
     case Kind::Spirit: return "spirit";
+    case Kind::Companion: return "companion";
     case Kind::Count: break;
     }
     return "?";

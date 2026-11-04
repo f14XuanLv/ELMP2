@@ -18,7 +18,7 @@
 - **本地多人**：每个座位一个手柄或键盘；PX 与 P1 共享进度，可各自配装（PX 菜单）、在椅子旁回满；过图跟随、死亡 1.5 s 后在 P1 旁复活。
 - **联机（Host 权威）**：Host `elmp lan host <配对码> [端口] [上限]`，客人 `elmp lan join <地址> <配对码> [端口]`；客人进程不结算任何伤害 / 存档，世界状态来自 Host；客人可进别的图（Host 后台加载该图），Boss 战只能在 Host P1 所在图发起。
 - **猎人模式**：`elmp hunter start [kills N] [time S] [grace S] [respawn S] [target boss|<mapId>] [progress mirror|preset]`。
-- **SDK**：C ABI `ELMP/sdk/elmp_sdk.h`（`ELMP_GetApi`），Lua Mod 带 `elmp.json` 即获得 `ELMP_*` C 函数；示例见 `sdk/examples/`。
+- **SDK**：C ABI `elmp_sdk.h`（`ELMP_GetApi`）：Dev包在`ELMP/sdk/`，Shipping包在外层`sdk/`；Lua Mod 带 `elmp.json` 即获得 `ELMP_*` C 函数，示例见 `sdk/examples/`。
 
 ## 控制台命令（UE4SS 控制台，`elmp help` 列全）
 

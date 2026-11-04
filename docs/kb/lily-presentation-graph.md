@@ -1,3 +1,5 @@
+> 2026-11-04 更正：本文保留历史观察；统一输入充分性、现有 guard 覆盖、renderer 偏移来源等推断已重新核验。当前事实以 [玩家图谱](player-sync-graph-v2.md)、[敌人图谱](enemy-sync-graph-v2.md) 和 [ADR 0008](../adr/0008-authoritative-presentation.md) 为准。
+
 # Host 的莉莉在客户端为什么变黑、还高半身（2026-10-30，P8 莉莉侧）
 
 > 这条是 `enemy-fx-graph.md` 的姐妹篇：那边是敌人（红光 = 材质参数），这边是**玩家的呈现副本**。

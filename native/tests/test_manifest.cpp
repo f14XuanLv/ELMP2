@@ -29,6 +29,7 @@ void shipped_manifest_parses() {
     const auto* heal = m->offset("HealComponent.RemainingHealCount");
     CHECK(heal && heal->value == 296 && heal->check.kind == binary::OffsetCheck::Kind::Within && heal->check.before == "<end>");
     CHECK(m->offset("InputSnapshot.size") && m->offset("InputSnapshot.size")->check.kind == binary::OffsetCheck::Kind::StructSize);
+    CHECK(m->offset("SpineSkeletonAnimation.state") && m->offset("SpineSkeletonAnimation.state")->value == 520);
 }
 
 void prefix_check_on_image() {
@@ -63,6 +64,12 @@ void malformed_entries_refused() {
     CHECK(!binary::parse(R"({"schema":1,"module":"x","offsets":{"O":{"value":4,"source":"t"}}})", &err)); // no check
     CHECK(!binary::parse(R"({"schema":1,"module":"x","offsets":{"O":{"value":4,"source":"t","check":{"within":{"class":"C"}}}}})", &err));
     CHECK(binary::parse(R"({"schema":1,"module":"x","offsets":{"O":{"value":4,"source":"t","check":{"equals":{"class":"C","property":"P"}}}}})", &err));
+    const std::string proof = R"({"schema":1,"module":"x","functions":{"F":{"rva":"0x10","prefix":"488B8608020000","source":"t"}},"offsets":{"O":{"value":520,"source":"t","check":{"native_offset":{"function":"F","byte":3,"width":4}}}}})";
+    CHECK(binary::parse(proof, &err));
+    auto wrong = proof; wrong.replace(wrong.find("520"), 3, "528");
+    CHECK(!binary::parse(wrong, &err));
+    wrong = proof; wrong.replace(wrong.find("\"byte\":3"), 8, "\"byte\":9");
+    CHECK(!binary::parse(wrong, &err));
 }
 
 } // namespace

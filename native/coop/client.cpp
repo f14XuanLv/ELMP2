@@ -7,10 +7,13 @@
 #include "coop/client.h"
 
 #include "coop/ability.h"
-#include "coop/commands.h"
+#include "coop/presentation.h"
+#include "coop/presentation_policy.h"
+#include "coop/visual_state.h"
 #include "coop/fx.h"
 #include "overlay/render.h"
 #include "coop/entities/clearable.h"
+#include "coop/entities/companion.h"
 #include "coop/entities/spawn.h"
 #include "coop/entity.h"
 #include "coop/session.h"
@@ -54,7 +57,7 @@
 namespace elmp::coop::client {
 
 // P6: replicated owner (net::proto::RefKind) → the local presented actor, nullptr when not presented
-ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id);
+ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id, bool allow_dying = false);
 
 namespace {
 
@@ -66,6 +69,7 @@ constexpr float kReconcileUU = 150.0f; // local P1 vs host seat drift before a s
 std::uint64_t g_reconciles = 0;
 
 void note_host_time(std::uint32_t host_ms, std::int64_t now_us);
+void reset_dynamic();
 
 struct Sample {
     std::uint32_t t = 0; // host ms
@@ -74,32 +78,14 @@ struct Sample {
 struct Taken {
     std::array<Sample, 16> s{}; // ≥ 100 ms buffer at 60 Hz host capture (4 was too few: held the oldest sample, stepped on rotation)
     int head = 0, n = 0;
-    ObjHandle enemy, controller, spine;
-    ObjHandle renderer;       // SpineSkeletonRenderer（踩地偏移用；一次解析）
-    std::int16_t zoff = 0x7fff; // 已应用的渲染器相对 Z（0.1 UU）
-    std::uint16_t anim = 0;
+    ObjHandle enemy, controller;
+    bool ready = false;
     bool killed = false, hidden = false;
     bool engaged = false;    // 当前呈现的副本是否已开 BattleColor（红光）
     std::int8_t facing = 0;
     std::uint32_t frame = 0; // last snapshot that carried the row
     std::int32_t hp = -1;    // last presented HP (hit reaction on a drop)
 };
-
-// Hit reaction (P6): the vanilla OnReceiveDamage handler of BP_Character_SpineBase (additive damage
-// animation unless in knockback) run on the presented actor when its host HP drops. The client's HPComponent
-// never settles (guard), so the delegate never fires by itself; HP was already written from the row.
-std::uint64_t g_hit_reacts = 0;
-void hit_react(ue::UObject* actor, std::int32_t damage) {
-    static std::unordered_map<ue::UObject*, reflect::FuncRef> per_class; // class → handler (fn null = none)
-    auto* cls = actor ? actor->GetClassPrivate() : nullptr;
-    if (!cls) return;
-    auto [it, fresh] = per_class.try_emplace(cls);
-    if (fresh) it->second = reflect::Resolver("SpineBase", cls).func(L"BndEvt__HPComponent_K2Node_ComponentBoundEvent_0_HPDamageEvent__DelegateSignature", 2);
-    if (!it->second.ok()) return;
-    reflect::Frame f(it->second);
-    f.arg(0, static_cast<ue::UObject*>(nullptr)).arg(1, damage);
-    if (f.invoke(actor)) ++g_hit_reacts;
-}
 
 std::uint8_t g_seat = 0;
 bool g_seat_placed = false;
@@ -120,9 +106,7 @@ std::unordered_map<std::string, ObjHandle> g_index; // spawn point name → enem
 reflect::PropRef g_spawn_point;
 reflect::FuncRef g_set_tick, g_set_collision, g_set_rotation;
 bool g_resolved = false;
-std::uint64_t g_unknown_names = 0, g_bad_snaps = 0, g_applied = 0, g_anim_sets = 0, g_anim_fail = 0, g_kills = 0, g_act_bad = 0, g_act_absent = 0, g_rechecks = 0, g_leaks = 0, g_pawn_activated = 0;
-bool g_sim_local = false; // P8：客户端敌人跑 Pawn Tick（命令队列推进，FX/技能由本地生成）
-bool g_anim_local = false; // P8：动画也交给状态机（默认关：动画仍走快照）
+std::uint64_t g_unknown_names = 0, g_bad_snaps = 0, g_applied = 0, g_kills = 0, g_act_bad = 0, g_act_absent = 0, g_rechecks = 0, g_leaks = 0, g_pawn_activated = 0;
 std::unordered_map<std::uint32_t, std::uint32_t> g_act_last; // kind << 16 | owner id → last act seq
 metrics::Histogram& h_apply = metrics::histogram("coop.client.apply_us");
 metrics::Histogram& h_motion = metrics::histogram("coop.client.motion_us");
@@ -186,117 +170,50 @@ void send_input() {
     if (const auto n = proto::encode(g_input, g_buf)) coop::send_unreliable(0, proto::kInputStream, std::span(g_buf.data(), n));
 }
 
-// Two very different things shared this helper until 2026-10-30, and that conflation is what made the host's Lily
-// copy float/sink on the client:
-//   Presentation — a mirror of somebody else's actor (another player's Lily, adopted spirits / world objects).
-//     Everything about it is *decided elsewhere*: position, animation, state. Nothing of its own may tick except
-//     the Spine presentation components, otherwise the local movement component keeps simulating gravity behind
-//     the replicated position (during jumps the mirror sank up to a body height) — host authority for transforms.
-//   Simulated — the enemy domain with `simLocal`: the actor runs the vanilla command / state / ability ticks
-//     locally so presentation comes out of the same pipeline. Its transform is still host-authoritative, so the
-//     character movement component stays off and the position keeps coming from the snapshot.
-enum class Mode { Presentation, Simulated };
-
-const wchar_t* kMovement[] = {L"ZenithCharacterMovementComponent", L"CharacterMovementComponent"};
-
-void freeze(ue::UObject* enemy, Mode mode) {
-    static reflect::FuncRef set_comp_tick;
-    static ObjHandle comp_cls;
-    if (!set_comp_tick.ok()) {
-        reflect::Resolver r("ActorComponent", reflect::find_class(L"/Script/Engine.ActorComponent"));
-        set_comp_tick = r.func(L"SetComponentTickEnabled", 1);
-        comp_cls = ObjHandle::of(reflect::find_object(L"/Script/Engine.ActorComponent"));
+// One policy for all remote actors. A failed root-motion boundary stays hidden/frozen and is retried.
+void release_presentation(ue::UObject* actor) {
+    if (!actor) return;
+    presentation::forget(actor);
+    visual_state::forget(actor);
+    presentation_policy::release(actor);
+    if (const auto* s = core::schema::script()) {
+        static auto* pawn_class = reflect::find_class(L"/Script/Engine.Pawn");
+        if (pawn_class && actor->IsA(pawn_class)) guard::unmark(s->pawn_controller.object(actor));
     }
-    const auto* s = core::schema::script();
-    const bool sim = mode == Mode::Simulated && g_sim_local;
-    if (mode == Mode::Simulated) {
-        // 跑模拟：只放行原版激活（默认状态集合来自 Activate），不主动调 —— Activate 内部是
-        // FindFunctionChecked("OnActivate")，没有这个事件的 BP（实测 BP_s5050_Giant_C）会直接崩。
-        // 由游戏自己的激活体积在玩家靠近时触发即可。
-        guard::allow_activate(enemy, sim);
-    } else {
-        guard::allow_activate(enemy, false);
-    }
-    if (s && set_comp_tick.ok()) {
-        reflect::Frame f(s->actor_components_by_class);
-        f.arg(0, comp_cls.get());
-        if (f.invoke(enemy))
-            if (const auto* arr = static_cast<const reflect::RawArray*>(f.raw(s->actor_components_by_class.ret)); arr && arr->num >= 0 && arr->num <= 128) {
-                const auto* items = reinterpret_cast<ue::UObject* const*>(arr->data);
-                for (int i = 0; i < arr->num; ++i) {
-                    if (!ue::alive(items[i])) continue;
-                    const auto cls = ue::class_name_of(items[i]);
-                    bool movement = false;
-                    for (const auto* m : kMovement) movement |= cls == m;
-                    // 呈现集合：Spine 单件 + 粒子 + HUD 组件（原版休眠时它们是关的，这里显式打开）
-                    const bool presentation = cls == L"SpineSkeletonAnimationExComponent" || cls == L"SpineSkeletonRendererComponent" || cls == L"ParticleSystemComponent" ||
-                                              cls == L"WidgetComponent" || cls == L"SpineBoneFollowerComponent" || cls == L"SpineBoneComponent" || cls == L"BattleColorComponent";
-                    // 跑模拟的敌人额外打开命令/状态/技能这些；**位移一律不开**（变换由 Host 决定）
-                    const bool simulated = sim && !movement && cls != L"SpineAnimationComponent";
-                    if (presentation || simulated || (g_anim_local && cls == L"SpineAnimationComponent")) {
-                        // dormant enemies ship with the Spine animation / renderer ticks off → turn the
-                        // presentation set on explicitly (v1 net-facts: else the mesh stays at its first frame)
-                        reflect::Frame on(set_comp_tick);
-                        on.arg_bool(0, true);
-                        on.invoke(items[i]);
-                        continue;
-                    }
-                    reflect::Frame t(set_comp_tick);
-                    t.arg_bool(0, false);
-                    t.invoke(items[i]);
-                }
-            }
-    }
-    if (g_set_tick.ok()) {
-        guard::allow_tick(enemy, sim); // tick 闸只拦“开启”
-        reflect::Frame f(g_set_tick);
-        f.arg_bool(0, sim); // 呈现副本永不自走：Pawn Tick 关掉，位置只由快照写
-        f.invoke(enemy);
-    }
+    guard::unmark(actor);
 }
 
-void take(const std::string& name, ue::UObject* enemy) {
+bool take(const std::string& name, ue::UObject* enemy) {
     auto* controller = core::schema::script() ? core::schema::script()->pawn_controller.object(enemy) : nullptr;
-    guard::mark(enemy);
-    guard::mark(controller);
-    freeze(enemy, Mode::Simulated);
-    if (g_sim_local && !commands::suppress(enemy, true)) log::warn("coop: simLocal: TryAddCommands suppression unavailable");
     Taken t;
     t.enemy = ObjHandle::of(enemy);
     t.controller = ObjHandle::of(controller);
+    t.ready = presentation_policy::apply(enemy);
     g_taken[name] = t;
+    if (!t.ready) entities::hide_actor(enemy);
+    return t.ready;
+}
+
+void actor_hidden(ue::UObject* actor, bool hidden) {
+    static reflect::FuncRef f = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).func(L"SetActorHiddenInGame", 1);
+    if (actor && f.ok()) reflect::Frame(f).arg_bool(0, hidden).invoke(actor);
 }
 
 void present_lilies(const snap::Frame& f, const core::schema::Script& s);
-
-// P8 敌人域：Host 的敌人拿到目标时，原版 BP_Character_Enemy_Base 的 OnChangeTarget 会：设 CurrentTarget →
-// BattleColor->SetBattleColorEnabled(true)（材质参数的红光，常驻）→ BP_FXComponent->TriggerFindEnemyFX()
-// （PS_FindEnemy）→ enemy-find-enemy 音效；目标失效时反过来关掉并 ClearColor。客户端的敌人 AI 被闸住，
-// 永远拿不到目标，于是整只是灰的、也没有红光。目标选择是决策（归 Host），所以“在战斗中”这个状态随快照
-// （EnemyRow.flags bit3）过来，客户端调同一个原版事件在本地重现 —— 不复制粒子，复制因。
-std::uint64_t g_engage_calls = 0;
-void apply_engage(ue::UObject* enemy, bool on) {
-    auto* cls = enemy ? enemy->GetClassPrivate() : nullptr;
-    if (!cls) return;
-    static std::unordered_map<ue::UClass*, reflect::FuncRef> per_class; // class → OnChangeTarget (fn null = none)
-    auto [it, fresh] = per_class.try_emplace(cls);
-    if (fresh) {
-        it->second = reflect::Resolver("EnemyBase", cls).func(L"OnChangeTarget", 1);
-        if (!it->second.ok()) log::warn("coop: {} has no OnChangeTarget — battle colour cannot follow the host", log::utf8(cls->GetName()));
-    }
-    if (!it->second.ok()) return;
-    ue::UObject* target = on ? world::p1_pawn() : nullptr; // 原版只看目标是否有效
-    reflect::Frame f(it->second);
-    f.arg(0, target);
-    if (f.invoke(enemy)) ++g_engage_calls;
-}
 
 // One enemy row (adapter enemy; also used by enemy_dyn for adopted / spawned copies): takeover on first
 // sight, facing, buffered position, HP, Spine pose.
 void present_enemy(const std::string& key, ue::UObject* enemy, const snap::EnemyRow& row, const snap::Frame& f, const core::schema::Script& s_) {
     const auto* s = &s_;
-        if (auto t = g_taken.find(key); t == g_taken.end() || t->second.enemy.get() != enemy) take(key, enemy);
+    if (auto t = g_taken.find(key); t == g_taken.end() || t->second.enemy.get() != enemy) take(key, enemy);
     auto& t = g_taken[key];
+    if (!t.ready) {
+        t.ready = presentation_policy::apply(enemy);
+        if (!t.ready) return;
+        actor_hidden(enemy, (row.flags & 2) != 0);
+    }
+    if (t.hidden != ((row.flags & 2) != 0)) actor_hidden(enemy, (row.flags & 2) != 0);
+    t.hidden = (row.flags & 2) != 0;
     if (row.facing && row.facing != t.facing) // vanilla facing entry (v1 net-facts: LocomotionComponent:SetFacing)
         if (auto* loco = s->zc_locomotion.object(enemy)) {
             static reflect::FuncRef set_facing =
@@ -320,53 +237,16 @@ void present_enemy(const std::string& key, ue::UObject* enemy, const snap::Enemy
         // vanilla death pipeline is never run here (it would clear the client's spawn point — v1 net-facts
         // 「重构后联机验收」defect 1).
         *s->hp_curr.at<std::int32_t>(hp) = row.hp;
-        if (t.hp >= 0 && row.hp < t.hp && !t.killed) hit_react(enemy, t.hp - row.hp);
         t.hp = row.hp;
-        if ((row.flags & 4) && !t.killed) t.killed = true, ++g_kills;
+        const bool killed = (row.flags & 4) != 0;
+        if (killed && !t.killed) ++g_kills;
+        t.killed = killed;
     }
     t.frame = g_latest;
-    // 踩地偏移：原版 USpineAnimationComponent 在骨骼更新后把渲染器下移（e2021 是 -50）。客户端冻结了那条
-    // tick，所以拿 Host 的实测值直接对齐，否则整只敌人高一个身位。
-    if (row.zoff != t.zoff) {
-        if (!t.renderer.get()) {
-            static ObjHandle rcls = ObjHandle::of(reflect::find_object(L"/Script/SpinePlugin.SpineSkeletonRendererComponent"));
-            reflect::Frame fr(s->actor_component_by_class);
-            fr.arg(0, rcls.get());
-            if (fr.invoke(enemy)) t.renderer = ObjHandle::of(fr.ret<ue::UObject*>());
-        }
-        if (t.renderer.get() && core::skin::set_renderer_z_comp(t.renderer.get(), row.zoff * 0.1f)) t.zoff = row.zoff;
-    }
-    if (const bool engaged = (row.flags & 8) != 0; engaged != t.engaged) { // 红光 + FindEnemy FX + 音效，本地重现
-        apply_engage(enemy, engaged);
-        t.engaged = engaged;
-    }
-    if (row.anim && row.anim != t.anim && !g_anim_local) { // pose: switch track 0 only on an animation change (§16)
-        const auto* anim = g_names.text(row.anim);
-        if (!t.spine.get()) {
-            static ObjHandle cls = ObjHandle::of(reflect::find_object(L"/Script/SpineExtensionPlugin.SpineSkeletonAnimationExComponent"));
-            reflect::Frame f(s->actor_component_by_class);
-            f.arg(0, cls.get());
-            if (f.invoke(enemy)) t.spine = ObjHandle::of(f.ret<ue::UObject*>());
-        }
-        if (auto* spine = t.spine.get(); spine && anim) {
-            reflect::Frame f(s->sp_set_animation);
-            f.arg(0, 0).arg_string(1, log::wide(*anim)).arg_bool(2, row.loop != 0);
-            if (f.invoke(spine)) {
-                ++g_anim_sets;
-                // align the new track to the host's playback time (no restart-from-zero phase lag)
-                static reflect::FuncRef set_time =
-                    reflect::Resolver("TrackEntry", reflect::find_class(L"/Script/SpinePlugin.TrackEntry")).func(L"SetTrackTime", 1);
-                if (auto* entry = f.ret<ue::UObject*>(); set_time.ok() && ue::alive(entry) && row.t > 0) {
-                    reflect::Frame st(set_time);
-                    st.arg(0, row.t);
-                    st.invoke(entry);
-                }
-            } else {
-                ++g_anim_fail;
-            }
-            t.anim = row.anim;
-        }
-    }
+    if (const bool engaged = (row.flags & 8) != 0; engaged != t.engaged)
+        if (presentation_policy::engage(enemy, engaged)) t.engaged = engaged;
+    visual_state::apply(enemy, row.visual);
+    presentation::apply(enemy, row.pose, [](std::uint16_t id) { return g_names.text(id); });
 }
 
 void present_enemies_impl(const snap::Frame& f, const core::schema::Script& s_) {
@@ -406,6 +286,8 @@ void apply(const snap::Frame& f) {
     const auto* s = core::schema::script();
     resolve();
     if (!s || !g_resolved) return;
+    const auto* map = g_names.text(f.map);
+    if (f.map != g_host_map || !map || *map != ue::utf8(world::current_map_id())) return;
     reindex();
     ClientCtx ctx{f, [](std::uint16_t id) { return g_names.text(id); }};
     for (auto* a : adapters()) a->apply_client(ctx);
@@ -417,19 +299,16 @@ void apply(const snap::Frame& f) {
 // marked (no AI / no collision / IsPlayer false), positioned / turned / animated from the l rows.
 struct Copy {
     std::int64_t slot = 0;
-    std::uint16_t anim = 0;
+    std::uint16_t skin = 0;
     std::int8_t facing = 0;
-    bool seen = false;
-    std::int32_t hp = -1;
-    std::uint16_t settle = 0; // 过图/读档时 Pawn 是"半初始化"建出来的：蓝图模板值可能接下来才被清掉，重抄几秒
-    std::int16_t zoff = 0x7fff; // 已应用的渲染器相对 Z（0.1 UU）；不变就不写
+    bool seen = false, ready = false;
 };
 std::map<std::uint16_t, Copy> g_copies;
 
 void drop_copy(std::uint16_t key) {
     auto it = g_copies.find(key);
     if (it == g_copies.end()) return;
-    if (auto* p = core::pawn(it->second.slot)) guard::unmark(p), guard::mark_not_player(p, false);
+    if (auto* p = core::pawn(it->second.slot)) release_presentation(p), guard::mark_not_player(p, false);
     core::spawn::despawn(it->second.slot, false);
     core::leases().release({"ELMP", slots::OwnerKind::Elmp}, it->second.slot);
     g_copies.erase(it);
@@ -446,7 +325,6 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
         g_set_rotation = a.func(L"K2_SetActorRotation", 2);
     }
     for (auto& [k, c] : g_copies) c.seen = false;
-    const auto* bp = core::schema::blueprint();
     for (const auto& row : f.l.view()) {
         if (row.key == g_seat) { // own seat: the local P1 predicts; snap on first placement or when it drifts from the host seat
             auto* p1 = world::p1_pawn();
@@ -483,17 +361,31 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
                 fc.invoke(p);
             }
             resolve();
-            freeze(p, Mode::Presentation);
-            guard::mark(p);
+            c.ready = presentation_policy::apply(p);
             guard::mark_not_player(p, true);
-            core::skin::normalize(p); // 复制出来的 Pawn 会丢蓝图模板（渲染组件 -65 偏移 / 颜色变黑），抄回 CDO 值
-            c.anim = 0, c.facing = 0;
+            c.skin = o.skin;
+            c.facing = 0;
+            if (!c.ready) entities::hide_actor(p);
             log::info("coop: presenting host P{} as local slot {}", row.key, slot);
         }
         auto* p = core::pawn(c.slot);
         if (!p) continue;
-        if (c.settle < 240 && (c.settle++ % 20) == 0) core::skin::normalize(p); // 新客/过图：把模板值抄回来
-        if (row.zoff != c.zoff && core::skin::set_renderer_z(p, row.zoff * 0.1f)) c.zoff = row.zoff; // Host 实测的"踩地"偏移（-65 之类）
+        if (!c.ready) {
+            c.ready = presentation_policy::apply(p);
+            if (!c.ready) continue;
+            actor_hidden(p, false);
+        }
+        if (core::skin::valid(row.skin) && row.skin != c.skin) {
+            if (const auto error = core::skin::apply(p, row.skin); !error.empty()) {
+                log::warn("coop: remote skin {} failed: {}", row.skin, error);
+                continue;
+            }
+            c.skin = row.skin;
+            presentation::forget(p);
+            visual_state::forget(p);
+            c.ready = presentation_policy::apply(p);
+            if (!c.ready) { entities::hide_actor(p); continue; }
+        }
         if (auto at = core::location(p); at && (std::fabs(at->x - row.x) + std::fabs(at->y - row.y) + std::fabs(at->z - row.z)) > 0.5f) {
             reflect::Frame tp(s.actor_teleport);
             tp.arg(0, core::Vec3{row.x, row.y, row.z}).arg_bool(1, false).arg_bool(3, true);
@@ -502,8 +394,6 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
         if (auto* hp = s.zc_hp.object(p)) { // presented vitals (host values; the copy never settles)
             *s.hp_max.at<std::int32_t>(hp) = row.mhp;
             *s.hp_curr.at<std::int32_t>(hp) = row.hp;
-            if (c.hp >= 0 && row.hp < c.hp && row.alive) hit_react(p, c.hp - row.hp);
-            c.hp = row.hp;
         }
         if (auto* mp = s.zc_mp.object(p)) {
             *s.mp_max.at<std::int32_t>(mp) = row.mmp;
@@ -514,13 +404,8 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
             fr.arg(0, core::Vec3{0, row.facing > 0 ? 90.0f : -90.0f, 0}).arg_bool(1, false);
             if (fr.invoke(p)) c.facing = row.facing;
         }
-        if (row.anim && row.anim != c.anim && bp)
-            if (const auto* anim = g_names.text(row.anim))
-                if (auto* spine = bp->lily_spine.object(p)) {
-                    reflect::Frame fa(s.sp_set_animation);
-                    fa.arg(0, 0).arg_string(1, log::wide(*anim)).arg_bool(2, row.loop != 0);
-                    if (fa.invoke(spine)) c.anim = row.anim;
-                }
+        visual_state::apply(p, row.visual);
+        presentation::apply(p, row.pose, [](std::uint16_t id) { return g_names.text(id); });
     }
     std::vector<std::uint16_t> gone;
     for (auto& [k, c] : g_copies)
@@ -540,14 +425,47 @@ struct RetryEv {
 };
 std::deque<RetryEv> g_ev_retry;
 std::unordered_map<std::uint64_t, ObjHandle> g_ab_live;  // kind << 48 | id << 32 | act seq → replayed ability
-std::unordered_map<std::uint32_t, ObjHandle> g_fx_live;  // host FX seq → replayed PSC
+struct PresentedFx {
+    ObjHandle psc, owner;
+};
+// A wire activation may survive a local owner rebuild. Weak serials plus the actual owner binding
+// prevent its periodic baseline from being mistaken for a still-present component on the old actor.
+std::unordered_map<std::uint32_t, PresentedFx> g_fx_live;
 std::uint64_t g_ev_absent = 0, g_ev_retried = 0, g_snd_far = 0, g_fx_bad = 0, g_snd_bad = 0, g_stop_missed = 0;
-std::uint64_t g_cmd_bad = 0, g_cmd_seen = 0;
-std::unordered_map<std::uint32_t, std::uint32_t> g_cmd_last; // (kind << 16 | id) → last seq
+std::uint64_t g_fx_kept = 0, g_fx_replaced = 0;
+
+void clear_events() {
+    g_ev_retry.clear();
+    for (auto& [id, e] : g_fx_live) fx::retire(e.psc.get());
+    for (auto& [id, h] : g_ab_live) fx::stop_ability(h.get(), 0);
+    g_fx_live.clear();
+    g_ab_live.clear();
+    g_act_last.clear();
+}
+
+void reset_remote_world() {
+    // End replayed results while their owners are still marked and settlement/FX gates are armed.
+    // This is a map/session boundary, not a MapReady acknowledgement or a follow retry.
+    clear_events();
+    drop_copies();
+    reset_spirits();
+    reset_dynamic();
+    for (auto& [name, t] : g_taken) release_presentation(t.enemy.get());
+    g_taken.clear();
+    for (auto* a : adapters()) a->reset();
+    presentation_policy::reset();
+    presentation::reset();
+    visual_state::reset();
+    g_index.clear();
+    g_index_version = ~0ull;
+    g_seat_placed = false;
+}
 
 bool world_ready() {
     bool loading = true, ready = false;
-    return lifecycle::state() == lifecycle::State::Settled && world::loader_flags(loading, ready) && !loading && ready;
+    const auto* map = g_names.text(g_host_map);
+    return map && *map == ue::utf8(world::current_map_id()) && lifecycle::state() == lifecycle::State::Settled &&
+           world::loader_flags(loading, ready) && !loading && ready;
 }
 
 std::uint64_t ab_key(std::uint8_t kind, std::uint16_t id, std::uint32_t seq) { return static_cast<std::uint64_t>(kind) << 48 | static_cast<std::uint64_t>(id) << 32 | seq; }
@@ -557,9 +475,6 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
     case proto::Msg::Act: {
         proto::Act a;
         if (!proto::decode(msg, a)) return ++g_act_bad, EvResult::Done;
-        // 敌人跑本地模拟时，技能由命令的 AbilityTimeline 在本地产生；Host 的 Act 不再重放（否则双份）
-        if (g_sim_local && (a.kind == static_cast<std::uint8_t>(proto::RefKind::Enemy) || a.kind == static_cast<std::uint8_t>(proto::RefKind::Dyn)))
-            return EvResult::Done;
         auto& last = g_act_last[static_cast<std::uint32_t>(a.kind) << 16 | a.net_id];
         if (a.seq <= last) return EvResult::Done; // idempotent per owner
         const auto* cls = g_names.text(a.ability);
@@ -582,27 +497,52 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
     case proto::Msg::Fx: {
         proto::Fx m;
         if (!proto::decode(msg, m)) return ++g_fx_bad, EvResult::Done;
-        if (fx::local_mode() && !(m.flags & 16)) return EvResult::Done; // fxLocal=1：不重放；但持续特效的初始状态（bit4）仍要补
+        auto* owner = actor_of(m.kind, m.net_id, true);
+        const auto owner_handle = ObjHandle::of(owner);
+        if (auto it = g_fx_live.find(m.seq); it != g_fx_live.end()) {
+            auto* psc = it->second.psc.get();
+            // Completed one-shots stay idempotent while their PSC lives. Persistent baselines instead
+            // restore a missing/inactive PSC or one attached to an older incarnation of the owner.
+            if (owner && it->second.owner == owner_handle && psc && (!(m.flags & 4) || fx::active(psc)))
+                return ++g_fx_kept, EvResult::Done;
+            fx::retire(psc);
+            g_fx_live.erase(it);
+            ++g_fx_replaced;
+        }
+        if (!owner) return EvResult::Retry;
         const auto* ps = g_names.text(m.ps);
         const auto* bone = m.custom_bone ? g_names.text(m.custom_bone) : nullptr;
+        const auto* attach = m.attach_component ? g_names.text(m.attach_component) : nullptr;
+        const auto* socket = m.attach_socket ? g_names.text(m.attach_socket) : nullptr;
+        if ((m.custom_bone && !bone) || (m.attach_component && !attach) || (m.attach_socket && !socket)) return EvResult::Retry;
         if (!ps) return ++g_fx_bad, EvResult::Done;
-        auto* owner = actor_of(m.kind, m.net_id);
-        if (!owner) return EvResult::Retry;
         std::string why;
-        if (auto* psc = (m.flags & 8) ? fx::replay_emitter(owner, m, *ps, bone ? *bone : "", &why)
-                                      : fx::replay_spawn(owner, m, *ps, bone ? *bone : "", &why))
-            g_fx_live[m.seq] = ObjHandle::of(psc);
-        else if (++g_fx_bad <= 5) log::warn("coop: fx {} rejected: {}", *ps, why);
-        if (g_fx_live.size() > 512) std::erase_if(g_fx_live, [](const auto& kv) { return !kv.second.get(); });
+        if (auto* psc = (m.flags & 8) ? fx::replay_emitter(owner, m, *ps, attach ? *attach : "", socket ? *socket : "", &why)
+                                      : fx::replay_spawn(owner, m, *ps, bone ? *bone : "", &why); ue::alive(psc)) {
+            const auto handle = ObjHandle::of(psc);
+            // PSC pooling preserves the UObject serial across activations. The newest wire ID owns
+            // this activation; a delayed stop for its predecessor must no longer find this component.
+            std::erase_if(g_fx_live, [&](const auto& e) { return e.second.psc == handle; });
+            g_fx_live[m.seq] = {handle, owner_handle};
+        } else if (++g_fx_bad <= 5) log::warn("coop: fx {} rejected: {}", *ps, why);
+        if (g_fx_live.size() > 512) std::erase_if(g_fx_live, [](const auto& kv) {
+            if (kv.second.owner.get() && kv.second.psc.get()) return false;
+            fx::retire(kv.second.psc.get());
+            return true;
+        });
         return EvResult::Done;
     }
     case proto::Msg::FxStop: {
         proto::FxStop m;
         if (!proto::decode(msg, m)) return EvResult::Done;
-        if (fx::local_mode()) return EvResult::Done;
+        // Stop also cancels a spawn still waiting for its owner snapshot.
+        std::erase_if(g_ev_retry, [&](const RetryEv& e) {
+            proto::Fx pending;
+            return proto::type_of(e.msg) == proto::Msg::Fx && proto::decode(e.msg, pending) && pending.seq == m.seq;
+        });
         auto it = g_fx_live.find(m.seq);
         if (it == g_fx_live.end()) return EvResult::Done; // never replayed here (other map / own seat / dropped)
-        fx::deactivate(it->second.get());
+        fx::retire(it->second.psc.get());
         g_fx_live.erase(it);
         return EvResult::Done;
     }
@@ -610,7 +550,7 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
         proto::Snd m;
         if (!proto::decode(msg, m)) return ++g_snd_bad, EvResult::Done;
         const auto* ev = g_names.text(m.event);
-        auto* owner = actor_of(m.kind, m.net_id);
+        auto* owner = actor_of(m.kind, m.net_id, true);
         if (!ev) return ++g_snd_bad, EvResult::Done;
         if (!owner) return EvResult::Retry;
         const auto me = core::location(world::p1_pawn());
@@ -632,32 +572,6 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
         }
         fx::stop_ability(it->second.get(), m.reason);
         g_ab_live.erase(it);
-        return EvResult::Done;
-    }
-    case proto::Msg::Cmd: {
-        proto::Cmd m;
-        if (!proto::decode(msg, m)) {
-            ++g_cmd_bad;
-            if (g_cmd_bad <= 5) log::warn("coop: cmd decode failed");
-            return EvResult::Done;
-        }
-        ++g_cmd_seen;
-        auto& last = g_cmd_last[static_cast<std::uint32_t>(m.kind) << 16 | m.net_id];
-        if (m.seq <= last) return EvResult::Done;
-        const auto* cls = g_names.text(m.cls);
-        if (!cls) {
-            ++g_cmd_bad;
-            if (g_cmd_bad <= 5) log::warn("coop: cmd class {} unknown", m.cls);
-            return EvResult::Done;
-        }
-        auto* owner = actor_of(m.kind, m.net_id);
-        if (!owner) {
-            if (g_cmd_seen <= 8) log::warn("coop: cmd owner absent kind={} id={}", m.kind, m.net_id);
-            return EvResult::Retry;
-        }
-        last = m.seq;
-        std::string why;
-        if (!commands::replay(owner, *cls, m.dir, m.cmd, &why) && ++g_cmd_bad <= 5) log::warn("coop: cmd {} on kind {} id {} rejected: {}", *cls, m.kind, m.net_id, why);
         return EvResult::Done;
     }
     default: return EvResult::Done;
@@ -701,7 +615,7 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         if (!proto::decode(msg, w)) return;
         g_seat = w.seat, g_epoch = w.epoch, g_host_map = w.map;
         g_seat_placed = false;
-        if (!guard::arm()) coop::leave("guard unavailable (fail closed)");
+        if (!guard::arm()) return void(coop::leave("guard unavailable (fail closed)"));
         core::permission::p1_presentation(true);
         if (!fx::client_enable()) log::warn("coop: local FX suppression unavailable (SpawnFX hook)");
         log::info("coop: seated as P{} on the host (epoch {})", g_seat, g_epoch);
@@ -714,7 +628,8 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
     }
     case proto::Msg::Map: {
         proto::MapMsg m;
-        if (!proto::decode(msg, m)) return;
+        if (!proto::decode(msg, m) || !g_seat) return;
+        if (m.map != g_host_map) reset_remote_world();
         g_host_map = m.map;
         g_follow_tag = m.tag;
         g_follow_pending = true;
@@ -725,11 +640,13 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
     case proto::Msg::Fx:
     case proto::Msg::FxStop:
     case proto::Msg::Snd:
-    case proto::Msg::Cmd:
     case proto::Msg::ActStop: {
         // after leave (stop() ran in this same session tick, enemies released, OpenLevel queued) the inbox
         // can still hold events: never replay outside a seated session (AV 0x130 in LaunchAbilityFromDescription)
         if (!g_seat) return;
+        // A stop never launches gameplay. Cancel a pending spawn even during loading, so a queued
+        // owner retry cannot resurrect a lifecycle that ended in the same network/game frame.
+        if (proto::type_of(msg) == proto::Msg::FxStop) return void(handle_event(msg));
         // the local world is loading / tearing down (an act replayed while the client went back to the title
         // crashed inside LaunchAbilityFromDescription: AV 0x130)
         if (!world_ready()) return void(++g_act_absent);
@@ -784,12 +701,9 @@ void follow(std::int64_t now_us) {
         coop::send_reliable(0, std::span(g_buf.data(), proto::encode(proto::MapReady{g_host_map}, g_buf)));
         g_follow_pending = false;
         g_seat_placed = false;
-        g_taken.clear(); // the previous map's enemies are gone (unload ≠ death)
-        for (auto* a : adapters()) a->reset();
         return;
     }
     g_follow_next_us = now_us + 2'000'000; // ≥ 2 s between attempts
-    drop_copies();
     auto* wl = world::world_loader();
     static reflect::FuncRef sw;
     if (!sw.ok()) {
@@ -826,7 +740,8 @@ void recheck(std::int64_t now_us) {
         const bool pawn = e && *(reinterpret_cast<const std::uint8_t*>(e) + *pawn_off) & 1;
         if (ai) {
             ++g_leaks;
-            freeze(e, Mode::Simulated);
+            t.ready = presentation_policy::apply(e);
+            if (!t.ready) entities::hide_actor(e);
         }
         g_pawn_activated += pawn; // informative: vanilla sets bActivated on spawn (presentation only)
     }
@@ -884,7 +799,7 @@ void present_motion(std::int64_t now_us) {
     int idx = 0;
     for (auto& [n, t] : g_taken) {
         ++idx;
-        if (!t.n || t.hidden) continue;
+        if (!t.ready || !t.n || t.hidden) continue;
         auto* e = t.enemy.get();
         if (!e) continue;
         if (me) {
@@ -937,29 +852,22 @@ void tick(std::int64_t now_us) {
 
 void stop() {
     const bool was_seated = g_seat != 0;
-    drop_copies();
-    for (auto& [name, t] : g_taken)
-        if (auto* e = t.enemy.get(); e && g_set_tick.ok()) {
-            guard::unmark(e);
-            reflect::Frame f(g_set_tick);
-            f.arg_bool(0, true);
-            f.invoke(e);
-        }
-    g_taken.clear();
+    reset_remote_world();
+    entities::companion_end_session();
+    // Teardown can invoke vanilla callbacks; only disarm after every remote object/result is retired.
     guard::disarm();
+    fx::client_disable();
     core::permission::p1_presentation(false);
     overlay::set_banner({});
-    g_seat = 0, g_seat_placed = false, g_epoch = 0, g_latest = 0;
+    g_seat = 0, g_seat_placed = false, g_epoch = 0, g_latest = 0, g_host_map = 0;
+    g_follow_pending = false;
+    g_follow_next_us = 0;
+    g_follow_tag.clear();
     g_ring.reset();
     g_names.clear();
-    g_act_last.clear();
-    g_ev_retry.clear(), g_ab_live.clear(), g_fx_live.clear();
-    fx::client_disable();
-    reset_spirits();
-    for (auto* a : adapters()) a->reset();
     g_equip_sent.clear();
-    g_index.clear();
-    g_index_version = ~0ull;
+    g_offset_known = false;
+    g_offset_ms = 0;
     g_input = {};
     // The local world was a presentation of the host's (enemies frozen with AI gated, objects hidden):
     // fail closed by returning to the title instead of continuing single-player on it (P2 decision).
@@ -988,6 +896,21 @@ struct Dyn {
 std::map<std::uint16_t, Dyn> g_dyn;
 std::uint64_t g_dyn_adopted = 0, g_dyn_spawned = 0, g_dyn_removed = 0;
 
+namespace {
+void reset_dynamic() {
+    for (auto& [id, d] : g_dyn) {
+        if (auto* actor = d.actor.get()) {
+            release_presentation(actor);
+            if (d.spawned) entities::destroy_copy(actor);
+            else entities::hide_actor(actor);
+        }
+        g_taken.erase(std::format("dyn:{}", id));
+        ++g_dyn_removed;
+    }
+    g_dyn.clear();
+}
+} // namespace
+
 void present_dynamic(const ClientCtx& c) {
     const auto* s = core::schema::script();
     if (!s || !g_resolved) return;
@@ -997,6 +920,7 @@ void present_dynamic(const ClientCtx& c) {
         d.seen = true;
         auto* e = d.actor.get();
         if (!e) {
+            d.spawned = false; // a replacement may adopt a local actor even if its predecessor was ours
             const auto* path = c.text(row.type);
             if (!path) continue;
             auto* cls = entities::class_by_path(*path);
@@ -1025,7 +949,7 @@ void present_dynamic(const ClientCtx& c) {
             continue;
         }
         if (auto* e = it->second.actor.get()) {
-            guard::unmark(e);
+            release_presentation(e);
             if (it->second.spawned) entities::destroy_copy(e);
             else entities::hide_actor(e);
         }
@@ -1043,10 +967,10 @@ void present_enemies(const ClientCtx& c) {
 // the row's class, frozen (presentation component whitelist), marked, no collision; shown / hidden with the
 // row (kept for reuse), positioned / turned / posed from the row like the lily copies.
 struct SpiritCopy {
-    ObjHandle actor, spine;
-    std::uint16_t cls = 0, anim = 0;
+    ObjHandle actor;
+    std::uint16_t cls = 0;
     std::int8_t facing = 0;
-    bool seen = false, visible = false;
+    bool seen = false, visible = false, ready = false;
 };
 std::map<std::uint16_t, SpiritCopy> g_spirits;
 std::uint64_t g_spirit_spawned = 0, g_spirit_failed = 0;
@@ -1072,8 +996,6 @@ void present_spirits(const ClientCtx& c) {
     static reflect::PropRef loco_prop =
         reflect::Resolver("ZenithSpirit", reflect::find_class(L"/Script/Zenith.ZenithSpirit")).prop(L"LocomotionComponent", reflect::Kind::Object);
     static reflect::FuncRef set_facing = reflect::Resolver("LocomotionComponent", reflect::find_class(L"/Script/Zenith.LocomotionComponent")).func(L"SetFacing", 1);
-    static reflect::FuncRef set_time = reflect::Resolver("TrackEntry", reflect::find_class(L"/Script/SpinePlugin.TrackEntry")).func(L"SetTrackTime", 1);
-    static ObjHandle spine_cls = ObjHandle::of(reflect::find_object(L"/Script/SpineExtensionPlugin.SpineSkeletonAnimationExComponent"));
     for (auto& [k, sc] : g_spirits) sc.seen = false;
     for (const auto& row : c.frame.sp.view()) {
         if ((row.key >> 8) == g_seat) continue; // own spirits: the local P1 summons them itself
@@ -1081,7 +1003,7 @@ void present_spirits(const ClientCtx& c) {
         sc.seen = true;
         auto* a = sc.actor.get();
         if (!a || sc.cls != row.cls) {
-            if (a) guard::unmark(a), entities::destroy_copy(a);
+            if (a) release_presentation(a), entities::destroy_copy(a);
             sc = SpiritCopy{};
             sc.seen = true;
             const auto* path = c.text(row.cls);
@@ -1100,11 +1022,12 @@ void present_spirits(const ClientCtx& c) {
                 fc.arg_bool(0, false);
                 fc.invoke(a);
             }
-            freeze(a, Mode::Presentation);
-            guard::mark(a);
-            reflect::Frame sf(s->actor_component_by_class);
-            sf.arg(0, spine_cls.get());
-            if (sf.invoke(a)) sc.spine = ObjHandle::of(sf.ret<ue::UObject*>());
+            sc.ready = presentation_policy::apply(a);
+            if (!sc.ready) entities::hide_actor(a);
+        }
+        if (!sc.ready) {
+            sc.ready = presentation_policy::apply(a);
+            if (!sc.ready) continue;
         }
         if (!sc.visible) set_hidden(a, false), sc.visible = true;
         if (auto at = core::location(a); at && (std::fabs(at->x - row.x) + std::fabs(at->y - row.y) + std::fabs(at->z - row.z)) > 0.5f) {
@@ -1118,60 +1041,52 @@ void present_spirits(const ClientCtx& c) {
                 ff.arg_bool(0, row.facing > 0);
                 if (ff.invoke(loco)) sc.facing = row.facing;
             }
-        if (row.anim && row.anim != sc.anim)
-            if (const auto* anim = g_names.text(row.anim); anim && sc.spine.get()) {
-                reflect::Frame f(s->sp_set_animation);
-                f.arg(0, 0).arg_string(1, log::wide(*anim)).arg_bool(2, row.loop != 0);
-                if (f.invoke(sc.spine.get())) {
-                    if (auto* entry = f.ret<ue::UObject*>(); set_time.ok() && ue::alive(entry) && row.t > 0) {
-                        reflect::Frame st(set_time);
-                        st.arg(0, row.t);
-                        st.invoke(entry);
-                    }
-                    sc.anim = row.anim;
-                }
-            }
+        visual_state::apply(a, row.visual);
+        presentation::apply(a, row.pose, [](std::uint16_t id) { return g_names.text(id); });
     }
     for (auto& [k, sc] : g_spirits)
-        if (!sc.seen && sc.visible) set_hidden(sc.actor.get(), true), sc.visible = false, sc.anim = 0;
+        if (!sc.seen && sc.visible) set_hidden(sc.actor.get(), true), sc.visible = false;
 }
 
 void reset_spirits() {
     for (auto& [k, sc] : g_spirits)
-        if (auto* a = sc.actor.get()) guard::unmark(a), entities::destroy_copy(a);
+        if (auto* a = sc.actor.get()) release_presentation(a), entities::destroy_copy(a);
     g_spirits.clear();
 }
 
-ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id) {
+ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id, bool allow_dying) {
     ue::UObject* a = nullptr;
     switch (static_cast<proto::RefKind>(kind)) {
     case proto::RefKind::Enemy: {
-        // only enemies we have taken over and still present (a hidden / host-dead copy, or one not taken
-        // yet, has no valid presentation state for an ability)
+        // Abilities require a live owner. Host FX/sounds may still belong to the visible death phase;
+        // HP reaching zero must not discard those outputs before the Host removes/hides the actor.
         const auto* name = g_names.text(id);
         auto t = name ? g_taken.find(*name) : g_taken.end();
-        if (t != g_taken.end() && !t->second.hidden && !t->second.killed) a = t->second.enemy.get();
+        if (t != g_taken.end() && t->second.ready && !t->second.hidden && (allow_dying || !t->second.killed)) a = t->second.enemy.get();
         break;
     }
     case proto::RefKind::Dyn: {
         auto t = g_taken.find(std::format("dyn:{}", id));
-        if (t != g_taken.end() && !t->second.hidden && !t->second.killed) a = t->second.enemy.get();
+        if (t != g_taken.end() && t->second.ready && !t->second.hidden && (allow_dying || !t->second.killed)) a = t->second.enemy.get();
         break;
     }
     case proto::RefKind::Lily:
-        if (auto it = g_copies.find(id); it != g_copies.end()) a = core::pawn(it->second.slot);
+        if (auto it = g_copies.find(id); it != g_copies.end() && it->second.ready) a = core::pawn(it->second.slot);
         break;
     case proto::RefKind::Spirit:
         if (auto it = g_spirits.find(id); it != g_spirits.end() && it->second.visible) a = it->second.actor.get();
+        break;
+    case proto::RefKind::Companion:
+        a = entities::companion_actor_of(id);
         break;
     }
     return a && !a->HasAnyFlags(RC::Unreal::RF_BeginDestroyed) ? a : nullptr;
 }
 
 std::string describe_events() {
-    return std::format("events(client): hitReacts={} spirits={} spawned={} failed={} retryQueue={} retried={} absent={} fxBad={} soundBad={} soundFar={} stopMissed={} live abilities={} fx={} engaged={}\n",
-                       g_hit_reacts, g_spirits.size(), g_spirit_spawned, g_spirit_failed, g_ev_retry.size(), g_ev_retried, g_ev_absent, g_fx_bad, g_snd_bad, g_snd_far, g_stop_missed, g_ab_live.size(),
-                       g_fx_live.size(), g_engage_calls);
+    return std::format("events(client): spirits={} spawned={} failed={} retryQueue={} retried={} absent={} fxBad={} soundBad={} soundFar={} stopMissed={} live abilities={} fx={} fxKept={} fxReplaced={}\n",
+                       g_spirits.size(), g_spirit_spawned, g_spirit_failed, g_ev_retry.size(), g_ev_retried, g_ev_absent, g_fx_bad, g_snd_bad, g_snd_far, g_stop_missed, g_ab_live.size(),
+                       g_fx_live.size(), g_fx_kept, g_fx_replaced);
 }
 
 void present_lily_rows(const ClientCtx& c) {
@@ -1197,51 +1112,12 @@ std::string adapters_text() {
 }
 
 std::string describe() {
-    return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} animSets={} animFail={} copies={} reconciles={} kills={} actBad={} actAbsent={} rechecks={} aiLeaks={} world={} equipRequests={} motionWrites={} presses(attack)={}\n{}{}", g_seat,
-                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_anim_sets, g_anim_fail, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, std::uint64_t{0}, g_equip_requests, g_motion_writes, g_input.presses[3], ability::describe() + commands::describe() + fx::describe() + describe_events() + adapters_text(),
+    return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} copies={} reconciles={} kills={} actBad={} actAbsent={} rechecks={} aiLeaks={} world={} equipRequests={} motionWrites={} presses(attack)={}\n{}{}", g_seat,
+                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, std::uint64_t{0}, g_equip_requests, g_motion_writes, g_input.presses[3], presentation_policy::describe() + presentation::describe() + visual_state::describe() + ability::describe() + fx::describe() + describe_events() + adapters_text(),
                        guard::describe());
 }
 
-ue::UObject* spine_state_comp(ue::UObject* actor) {
-    static reflect::FuncRef by_class = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).func(L"GetComponentByClass", 1);
-    static ue::UClass* cls = reflect::find_class(L"/Script/Zenith.SpineAnimationComponent");
-    if (!by_class.ok() || !cls || !ue::alive(actor)) return nullptr;
-    reflect::Frame f(by_class);
-    f.arg(0, static_cast<ue::UObject*>(cls));
-    return f.invoke(actor) ? f.ret<ue::UObject*>() : nullptr;
-}
-
-void apply_sim_local(bool on) {
-    g_sim_local = on;
-    for (auto& [k, t] : g_taken) {
-        auto* e = t.enemy.get();
-        if (!ue::alive(e)) continue;
-        freeze(e, Mode::Simulated); // 按新开关重新决定 actor tick / 组件 tick
-        commands::suppress(e, on);
-    }
-    if (!on) commands::clear_suppressed();
-}
-
-void apply_anim_local(bool on) {
-    g_anim_local = on;
-    static reflect::FuncRef set_tick = reflect::Resolver("ActorComponent", reflect::find_class(L"/Script/Engine.ActorComponent")).func(L"SetComponentTickEnabled", 1);
-    if (!set_tick.ok()) return;
-    for (auto& [k, t] : g_taken)
-        if (auto* e = t.enemy.get())
-            if (auto* comp = spine_state_comp(e)) {
-                reflect::Frame f(set_tick);
-                f.arg_bool(0, on);
-                f.invoke(comp);
-            }
-}
-
 void install() {
-    settings::define({.key = "simLocal", .def = false, .persist = false, .help = "P8: client enemies run the pawn tick (actor tick + component ticks, local command generation suppressed)"});
-    settings::define({.key = "animLocal", .def = false, .persist = false, .help = "P8: enemy animation from the state machine instead of snapshot track names (needs simLocal)"});
-    settings::on_change([](const std::string& key) {
-        if (key == "simLocal") apply_sim_local(settings::get_bool("simLocal"));
-        if (key == "animLocal") apply_anim_local(settings::get_bool("animLocal"));
-    });
     coop::set_handlers(Role::Client, {on_connected, on_closed, on_reliable, on_unreliable, tick, stop});
 }
 

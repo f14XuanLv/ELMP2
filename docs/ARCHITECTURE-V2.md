@@ -206,15 +206,7 @@ template<class R, class... A> R call(UObject* o, FuncRef f, A... a);  // 栈上�
 
 ### 7.2 `engine`
 - `frame`：§3。`lifecycle`：状态机 `Title → Loading → Settling(存档身份判定, P1 就位, IsGameMapReady) → Settled → TearingDown`；`onTeardown/onSettled` 订阅；`SwitchGameMap` 不经 LoadMap，仍用 `transitioning` 标志（来自 transit 钩子）。
-- `facades/*`：每个原版组件一个薄类，只暴露本项目用到的读 / 写；全部通过 `Schema`。例：
-
-```cpp
-struct HpFacade { static float curr(UObject* hp); static float max(UObject* hp); static bool alive(UObject* hp);
-                  static void doDamage(UObject* hp, UObject* from, float dmg); /* 仅 Client 回放窗 */ };
-struct SpineFacade { struct Pose { uint16 anim; float t; bool loop; uint8 ntracks; Track tr[3]; };
-                     static bool readPose(UObject* spineEx, AnimTable&, Pose&); static void writePose(UObject*, const Pose&, const AnimTable&); };
-struct WorldLoaderFacade { static FName currentMapId(); static bool isLoading(); static bool isGameMapReady(); static void switchGameMap(...); };
-```
+- 原版访问经缓存化`reflect`/`Schema`，只暴露项目用到的读写；参数以实际FProperty布局为准。HP是原版int32，权威伤害走Host入口；Client远程HP是结果字段，不通过伤害入口合成表现。姿态接口实际位于`coop/presentation`，共享`net::snap::Pose`（最多8条实际轨道，包含实例代次/相位/暂停），不再保留早期3轨`SpineFacade`示意契约。WorldLoader的地图与加载状态由`engine/world`提供。
 
 ### 7.3 `core`（LilyCore）
 - `slots`（租约，不变）、`spawn`（M3，C++ 化：PC 池、临时替换 CameraManager 类、Spine 补数据、Possess）、`profile`（M4：`read/applyIncremental/applyExact/reset/report`）、`vitals`（M4/E3）、`skin`、`identity`（Tags `ELMP` / `ELMP.Slot.N` + 句柄）、`permission`（C5：按座位开关 + 类策略表 `data/gates.json` → `IgnoreActorWhenMoving` 批量施加 / 撤销；新对象入桶时补设）、`hitrules`（C4，对接 `pvp/hitgate`）、`progress_source`、`catalog`（从 `data/catalog/*.json` 读物品文本 / 输入知识 / 技能表）、`player`（slot → PC/Pawn 解析，带句柄缓存）。
@@ -327,6 +319,16 @@ FrameSnapshot {
 
 ---
 
+### 11.1 Agent 工具链（2026-11-04）
+
+- `tools/mcp_client.py` 是现有 MCP 的客户端，不新增游戏服务。提供工具清单、schema、调用与同会话批处理；CUE4Parse 进程内的 provider 必须先挂载，IDA 必须验证已打开的数据库身份后再查询。调用有超时，错误返回非零，完整 JSON 可保存到仓库外或被忽略的 `build/toolchain-smoke/`。
+- `tools/toolchain.py` 汇总本地依赖与只读 smoke，按配置连接 CUE4Parse / IDA 与运行实例的 UEBridge；工具连接路径、端点与数据库路径归 `devconfig.json` / `devconfig.local.json`。不把本机路径写进运行时 DLL，不从旧仓库复制工具代码。
+- `tools/ida_service.py start` 幂等启动已有 idalib supervisor（仅 loopback、无 GUI），复用经身份核对的工作库会话；工作库不存在才复制原 `.i64`，关闭自动分析，不覆写原库。`status` 只读；服务只在显式 `start` 时启动，doctor/smoke 不隐式启动服务或游戏。
+- Codex 的 MCP 配置连接已验证的现有服务；本机配置与服务启动不等同于当前会话已加载原生工具。命令行 MCP 客户端作为立即可用的入口；工具清单是否加载以会话实际可用工具为证。
+- 检查不向游戏发输入、不切图、不重启实例、不操作前台窗口。截图在 `IsIconic` 或客户区无效时停止；资产提取参数先校验再启动 .NET；测试临时目录仅作用于构建命令进程，不改系统环境。
+
+---
+
 ## 12. SDK（C20）
 
 - `sdk/elmp_sdk.h`：C ABI 版本化函数表 `ElmpApi_v1{ acquire, release, spawn, despawn, respawn, profileApply, profileRead, setInput, state, setSettings, setPermission, setTeam, hitRule, subscribe, unsubscribe, storagePath, log }`；C++ Mod 通过导出 `ELMP_GetApi(version)` 获取；身份 = 调用方 Mod 名（由 `elmp.json` 声明 + 加载顺序登记）。
@@ -354,7 +356,7 @@ v1 积累了 270 个离线 Lua 测试 + 84 个原生测试，其中相当一部�
 
 - CMake 目标：`elmp_base`（不依赖 UE4SS 的平台 / 传输 / 编解码）、`ELMP`（Shipping dll）、`ELMP_Dev`（`ELMP_DEV=1`）、`elmp_tests`（§13 的少量 CTest）。
 - 新仓库独立于 `D:\CodeT\ELMP`：自己的 `RE-UE4SS` submodule（同一提交 `32d8a381`）、`devconfig.json`（指向同一组游戏实例 Dev2 / Host2 / Client2）、`tools/deploy.py`。
-- `build.bat package`：Shipping zip 不打包 `Scripts/`、`pilot/`、pdb；校验 zip 内不含 `.lua`（打包脚本断言）。
+- `build.bat package`：Shipping的`ELMP/`只含`dlls/main.dll`、`data/`、`elmp.json`，SDK头随zip放在外层`sdk/`，不进入运行时Mod目录。Shipping不打包`Scripts/`、`pilot/`、pdb；打包脚本断言zip零`.lua`及Mod目录白名单。
 - `elmp.json` 新增 `"shipping": {"lua": false}` 供安装说明生成。
 
 ---
@@ -380,9 +382,9 @@ v1 积累了 270 个离线 Lua 测试 + 84 个原生测试，其中相当一部�
 
 | 热路径 | v2 做法 | 预期 |
 |---|---|---|
-| Host 敌人采集 | 注册表桶遍历（无扫描）；位置 / HP / 标志直读偏移；姿态经 `SpineFacade.readPose`（阶段 1：≤4 次 ProcessEvent / 敌人 + 名字表查表；阶段 2：直读）；写入预分配 `EnemyRow` | 128 敌人 ≈ 0.1–0.3 ms |
+| Host 敌人采集 | 注册表桶遍历；位置 / HP / 标志直读；`coop/presentation`按预检过的原生tracks范围找实际活跃轨道，再经原版反射getter采样，最多8轨；名字按TrackEntry代次缓存。当前不是“每敌人≤4次反射”的旧假设 | 128敌人预算仍须压力实测；已测窗口见同步修正kb |
 | 快照编码 | typed 位掩码增量，零字符串、零堆分配 | 每对端 < 0.1 ms；带宽 ↓ 3–5× |
-| Client 呈现 | 行驻留表直索引；位置写 `K2_SetActorLocation`（1 次）或直写 RootComponent 变换 + `UpdateComponentToWorld`（二期）；姿态只在 `anim/loop` 变化或时间偏差 > 阈值时 `SetAnimation/SetTrackTime` | 139 敌人 < 0.5 ms |
+| Client 呈现 | 行驻留表直索引；位置经原版setter插值；姿态按实际轨道索引和实例代次创建/移除，loop及属性变化单独应用，每快照核对实际相位并应用暂停；组件空间变换、颜色和Dissolve各有有效位 | 139敌人<0.5ms是预算，不能由24敌人场景推定通过 |
 | HUD 技能格 | 变化沿重建句柄；每帧 3 × 读值 | 每座位 < 20 µs |
 | 菜单打开判定 | 注册表 `Menu` 桶 250 ms 低频 | 可忽略 |
 | 名单扫描 | 取消（BeginPlay/EndPlay 驱动）；1 Hz 审计只读 `IsValid` | 可忽略 |
@@ -399,8 +401,8 @@ v1 积累了 270 个离线 Lua 测试 + 84 个原生测试，其中相当一部�
 | `SkillCache` | 每座位 3 个装配位的 `CommandAction` 句柄 + 限制类型 + 图标 id + 键名 | `OnEquipSpiritDelegate/OnUnequipSpiritDelegate`、`SwitchSummonSet`、精灵等级变化、Pawn 重建 | 剩余次数、冷却 / Recast（3 × 读值） |
 | `MenuOpenCache` | 原版可导航菜单是否在视口 | `UserWidgetNavigable` 创建 / 删除监听 + 250 ms 复核 | 无 |
 | `ProgressSnap` | 每座位进度签名与基线 | 1 s 节拍重算（只读行计数与等级，不遍历物品文本） | 无 |
-| `EnemyTrack`（Host） | 每敌人上一帧行 + 增量位掩码；`AnimTable` 动画名 ↔ u16 | 行值变化；名字首次出现 | 位置 / HP / 标志 / Spine 轨道（≤4 字段） |
-| `EnemyTrack`（Client） | 驻留行、插值样本、接管记录（原值） | 快照到达；行超期 | 无（渲染只写） |
+| `EnemyTrack`（Host） | 每敌人上一帧行 + 增量位掩码；名字表 | 行值变化；名字首次出现；图/会话重置 | 位置 / HP / 标志 / 实际Spine姿态与视觉输出 |
+| `EnemyTrack`（Client） | 驻留行、插值样本、接管记录 | 快照到达；地图/会话重置；ObjHandle失效 | 应用时核对实际轨道相位；1Hz核对AI激活位 |
 | `GateCache` | 每座位已施加 `IgnoreActorWhenMoving` 的目标集合（按句柄） | 目标对象入桶 / 出桶；权限开关变化 | 无 |
 | `MapCache` | `CurrentGameMapID`、`IsLoading`、`IsGameMapReady`、后台图槽位与偏移 | 过图钩子（`OnSwitchGameMapStart` / `PostFade`）、后台图加载 / 卸载 | 每帧 1 次读三个字段（直读偏移，便宜） |
 | `NameTable`（联机） | 类名 / 出生点名 / 地图名 / 动画名的会话内 u16 id 双向表 | 首次出现时可靠发送 `NameDef` | 无 |
@@ -409,6 +411,22 @@ v1 积累了 270 个离线 Lua 测试 + 84 个原生测试，其中相当一部�
 规则：缓存项必须带**失效源**与**审计方式**（低频对账或计数），没有失效源的缓存不允许存在（否则就是“做一次就记住”，违反 FR-CORE-6）。
 
 ---
+
+### 16.2 远端呈现职责（2026-11-04，ADR 0008）
+
+按 [ADR 0008](adr/0008-authoritative-presentation.md) 执行：Host 权威结果 → 统一 `coop/presentation` 适配器 → 单一 Spine/组件输出写者；`presentation_policy` 负责关闭决策 tick 与根运动，guard 独立负责权限。删除全局 simLocal/animLocal/fxLocal 与 Cmd 试验，不全面解冻原版逻辑。普通/动态敌人与远程 Lily/Spirit/Companion 共用采样和应用接口。
+
+Companion `cp` 基线包含 Actor 世界位置及 pitch/yaw/roll；世界旋转通过原版 Actor getter/setter 复制，与 facing、VisualPivot/renderer 相对变换分开。协议6增加三float，48行容量保持，必须以最大全量及全部换key的delta验证128KiB上限，不能因模型资源相同而假设 spawn 默认朝向正确。
+
+呈现缓存按 Actor/组件/TrackEntry 的 `ObjHandle` 识别，销毁/对象替换、地图代次和会话结束失效；采样时复核句柄，低频清掉失效项并暴露计数。动画实例身份独立于名字；有效位独立于数值。持续 FX 的 ID 绑定 Host 实例，晚加入不换 ID，停止/换图/会话结束清理。guard 新增已核的 Effect Apply/Finalize/DeathStart 原生拦截，Client armed 时始终拒绝、分别计数，不能借 damage replay 开窗；身份缓存也使用 ObjHandle。实际覆盖和未闭合链路以新玩家/敌人图谱与本轮 kb 为准，不把 ADR 0007 的预期当事实。
+
+| 新呈现缓存 | 身份与失效源 | 审计 |
+|---|---|---|
+| Pose采样/应用 | Actor、骨骼、TrackEntry句柄及原生state身份；track实例变化、skin更换、60秒未使用、图/会话重置 | samples/applied/failed/overflow/restarted/cleared/paused/phaseCorrected |
+| Visual组件/材料schema | Actor与组件/类句柄；组件死亡、skin更换、图/会话重置；每次读取活MID数组，未缓存裸MID | writes/failures，dissolve missing/disagree/invalid/schemaFailed |
+| presentation_policy | Actor/Controller/RootMotion组件句柄；release/reset/死亡；根运动原值只在其对应对象存活时恢复 | ready/failed/rootDrift/restored/expired |
+| Companion身份/副本 | AIC→LeaderPawn→玩家PC对应seat；玩家归属变化、实体死亡、图重置；ID不在同会话复用 | hostIds/copies/ownerConflict/leaderMissing/capacityOverflow/policyFail/fxMissing |
+| 持续FX | Host激活ID+PSC句柄，逐peer的Ref/地图投递绑定；停止、对象失效、离图、会话结束 | live/baselines/bindingsClosed；Client kept/replaced/stopMissed |
 
 ## 17. 风险与对策
 

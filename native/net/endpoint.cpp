@@ -119,6 +119,7 @@ Endpoint::~Endpoint() {
 
 void Endpoint::send_unreliable(std::uint32_t peer, std::uint8_t stream, std::span<const std::uint8_t> msg) {
     std::lock_guard lk(mu_);
+    if (!fatal_.empty()) return;
     // latest-only: replace a queued message of the same peer/stream
     for (auto& c : cmds_)
         if (c.kind == Cmd::Kind::Unrel && c.peer == peer && c.stream == stream) {
@@ -131,17 +132,32 @@ void Endpoint::send_unreliable(std::uint32_t peer, std::uint8_t stream, std::spa
 
 void Endpoint::send_reliable(std::uint32_t peer, std::span<const std::uint8_t> msg) {
     std::lock_guard lk(mu_);
-    if (cmds_.size() >= kMaxCommands) return void(++status_.send_drops);
+    if (!fatal_.empty()) return;
+    if (cmds_.size() >= kMaxCommands) {
+        ++status_.send_drops;
+        return overload_locked("reliable command queue overloaded");
+    }
     cmds_.push_back({Cmd::Kind::Rel, peer, 0, Bytes(msg.begin(), msg.end())});
 }
 
 void Endpoint::kick(std::uint32_t peer, std::string_view reason) {
     std::lock_guard lk(mu_);
+    if (!fatal_.empty()) return;
+    if (cmds_.size() >= kMaxCommands) {
+        ++status_.send_drops;
+        return overload_locked("control command queue overloaded");
+    }
     cmds_.push_back({Cmd::Kind::Kick, peer, 0, Bytes(reason.begin(), reason.end())});
 }
 
 bool Endpoint::poll(Inbound& out) {
     std::lock_guard lk(mu_);
+    if (!fatal_.empty()) {
+        if (fatal_reported_) return false;
+        fatal_reported_ = true;
+        out = {LinkEvent::Kind::Closed, 0, 0, Reject::None, {}, fatal_};
+        return true;
+    }
     if (inbox_.empty()) return false;
     out = std::move(inbox_.front());
     inbox_.erase(inbox_.begin());
@@ -153,18 +169,30 @@ EndpointStatus Endpoint::status() const {
     return status_;
 }
 
+void Endpoint::overload_locked(std::string_view reason) {
+    if (!fatal_.empty()) return;
+    fatal_ = std::string("endpoint closed: ") + std::string(reason);
+    cmds_.clear();
+    inbox_.clear();
+}
+
 void Endpoint::push_in(Inbound in) {
     std::lock_guard lk(mu_);
+    if (!fatal_.empty()) return;
+    const bool terminal = in.kind == LinkEvent::Kind::Closed || in.kind == LinkEvent::Kind::Rejected;
+    // A terminal event invalidates queued gameplay/Connected for this peer, including during join.
+    if (terminal) std::erase_if(inbox_, [&](const Inbound& x) { return x.peer == in.peer; });
     if (inbox_.size() >= kMaxInbox) {
         auto it = std::find_if(inbox_.begin(), inbox_.end(), [](const Inbound& x) { return x.kind == LinkEvent::Kind::Unreliable; });
         ++status_.in_drops;
         if (it == inbox_.end()) {
             if (in.kind == LinkEvent::Kind::Unreliable) return;
-            it = inbox_.begin();
+            return overload_locked("reliable/control inbound queue overloaded");
         }
         inbox_.erase(it);
     }
-    inbox_.push_back(std::move(in));
+    if (terminal) inbox_.insert(inbox_.begin(), std::move(in));
+    else inbox_.push_back(std::move(in));
 }
 
 void Endpoint::flush(Peer& p) {
@@ -180,13 +208,16 @@ void Endpoint::run() {
     const SOCKET s = static_cast<SOCKET>(sock_);
     std::array<std::uint8_t, 2048> buf;
     double next_status = 0;
-    bool stopping = false;
     while (true) {
         const double now = clock::now_s();
-        if (stop_ && !stopping) {
-            stopping = true;
+        std::string fatal;
+        {
+            std::lock_guard lk(mu_);
+            fatal = fatal_;
+        }
+        if (stop_ || !fatal.empty()) {
             for (auto& p : peers_) {
-                p->link->close("left the session");
+                p->link->close(fatal.empty() ? "left the session" : fatal);
                 flush(*p);
             }
             break;
@@ -227,9 +258,16 @@ void Endpoint::run() {
         std::vector<Cmd> cmds;
         {
             std::lock_guard lk(mu_);
+            if (!fatal_.empty()) continue;
             cmds.swap(cmds_);
         }
-        for (auto& c : cmds)
+        bool overloaded = false;
+        for (auto& c : cmds) {
+            {
+                std::lock_guard lk(mu_);
+                overloaded = !fatal_.empty();
+            }
+            if (overloaded) break;
             for (auto& p : peers_) {
                 if (c.peer && c.peer != p->id) continue;
                 if (!p->link->established() && c.kind != Cmd::Kind::Kick) continue;
@@ -238,9 +276,15 @@ void Endpoint::run() {
                     if (!p->link->send_reliable(c.data)) {
                         std::lock_guard lk(mu_);
                         ++status_.send_drops;
+                        overload_locked("link refused reliable message");
+                        overloaded = true;
+                        break;
                     }
                 } else p->link->close(std::string_view(reinterpret_cast<const char*>(c.data.data()), c.data.size()));
             }
+            if (overloaded) break;
+        }
+        if (overloaded) continue; // close every Link before polling/sending any more gameplay
         for (auto& p : peers_) {
             p->link->poll(now);
             flush(*p);

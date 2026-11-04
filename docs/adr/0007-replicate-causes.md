@@ -1,6 +1,6 @@
 # ADR 0007：复制因，不复制果（表现归零、结算收窄、删除测试验收）
 
-- 状态：已采纳（2026-10-29）
+- 状态：历史决定（2026-10-29）；无条件模拟与表现通道归零要求已由 [ADR 0008](0008-authoritative-presentation.md) 取代（2026-11-04）。
 - 取代：ADR 0006（逐点位机制清单，见 `explore/p7-failed-snapshot-coverage`）在“表现域”上的选择准则
 - 相关：`docs/kb/pipeline-facts.md`（管线事实与两次判决实验）、`docs/kb/sync-coverage.md`（P6 覆盖矩阵，仅作回归检查表）
 

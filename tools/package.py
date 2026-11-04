@@ -35,12 +35,18 @@ def build_zip(flavor: str, config: str, version: str) -> Path:
         for f in sorted((REPO / "pilot").rglob("*")):
             if f.is_file():
                 files.append((f, "ELMP/pilot/" + f.relative_to(REPO / "pilot").as_posix()))
-    files.append((REPO / "native" / "sdk" / "elmp_sdk.h", "ELMP/sdk/elmp_sdk.h"))  # C ABI header (both flavors)
+    # Developer material stays outside the Shipping runtime Mod directory.
+    files.append((REPO / "native" / "sdk" / "elmp_sdk.h", "sdk/elmp_sdk.h" if flavor == "shipping" else "ELMP/sdk/elmp_sdk.h"))
     if flavor == "dev":  # third-party example mods (Lua) only in the Dev archive
         for f in sorted((REPO / "sdk" / "examples").rglob("*")):
             if f.is_file():
                 files.append((f, "ELMP/sdk/examples/" + f.relative_to(REPO / "sdk" / "examples").as_posix()))
     if flavor == "shipping":
+        unexpected = [arc for _, arc in files if arc.startswith("ELMP/")
+                      and arc not in ("ELMP/dlls/main.dll", "ELMP/elmp.json")
+                      and not arc.startswith("ELMP/data/")]
+        if unexpected:
+            sys.exit(f"shipping Mod directory contains unexpected files: {unexpected}")
         bad = [arc for _, arc in files if arc.lower().endswith((".pdb",)) or "/pilot/" in arc]
         if bad:
             sys.exit(f"shipping package must not contain pdb / pilot files: {bad}")

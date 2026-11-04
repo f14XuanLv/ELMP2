@@ -1,3 +1,5 @@
+> 2026-11-04 更正：本文保留历史观察；统一输入充分性、现有 guard 覆盖、renderer 偏移来源等推断已重新核验。当前事实以 [玩家图谱](player-sync-graph-v2.md)、[敌人图谱](enemy-sync-graph-v2.md) 和 [ADR 0008](../adr/0008-authoritative-presentation.md) 为准。
+
 # 呈现管线事实：为什么“减法”是对的（v2 2026-10-29，P8 调研）
 
 证据来源：`[E-IDA]` IDB `EnderLiliesSteam-Win64-Shipping.exe.i64`（基址 `0x140000000`，无游戏符号，函数地址经反编译形态与 P7 分支 kb / EL.json 交叉确认）；`[E-SDK]` `D:\CodeT\EnderLilies\Source\Zenith\Public` 重建头（只证声明与字段）；`[E-CUE]` CUE4Parse 0.2.0（`EnderLilies` 17,384 包，usmap 已挂）。本文件只写事实与推论，不写实施方案。

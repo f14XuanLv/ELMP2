@@ -7,6 +7,7 @@
 // A section absent from a packet means "no change" (row residency, v1 net-facts「呈现化架构语义」).
 
 #include "net/codec.h"
+#include "net/visual.h"
 
 #include <array>
 #include <cstdint>
@@ -16,6 +17,24 @@
 
 namespace elmp::net::snap {
 
+inline constexpr std::size_t kPoseTracks = 8;
+struct PoseTrack {
+    std::uint8_t index = 0; // actual Spine track index, e.g. additive damage is 80 (not logical layer 80)
+    std::uint8_t flags = 0; // bit0 loop, bit1 Spine <empty> mixing entry
+    std::uint16_t anim = 0;
+    std::uint32_t generation = 0; // changes for each Host UTrackEntry instance, including same-name restarts
+    float t = 0, alpha = 1, time_scale = 1, mix_time = 0, mix_duration = 0;
+    float animation_start = 0, animation_end = 0, track_end = 0;
+    bool operator==(const PoseTrack&) const = default;
+};
+struct Pose {
+    std::uint8_t flags = 0; // bit0 valid full active set; bit1 overflow (first 8 indices); bit2 paused state clock
+    std::uint8_t count = 0;
+    std::array<PoseTrack, kPoseTracks> tracks{};
+    bool operator==(const Pose&) const = default;
+};
+bool valid_pose(const Pose& pose) noexcept;
+
 struct LilyRow { // key = seat slot (1 = host P1)
     std::uint16_t key = 0;
     float x = 0, y = 0, z = 0;
@@ -23,18 +42,13 @@ struct LilyRow { // key = seat slot (1 = host P1)
     std::uint8_t alive = 0;
     std::uint16_t hp = 0, mhp = 0, mp = 0, mmp = 0;
     std::uint8_t heals = 0, mheals = 0;
-    std::uint16_t anim = 0; // name id
-    float t = 0;
-    std::uint8_t loop = 0;
     std::uint16_t skin = 0;
     std::uint16_t map = 0; // name id of the map the seat is in
-    // 呈现用的骨骼下移量（0.1 UU）：原版 USpineAnimationComponent 在 AfterBoneTransformUpdate 里按骨架把
-    // SpineSkeletonRenderer 往下挪（莉莉 -65、e2021 -50），这样精灵的脚才落在地面上。客户端不跑那条 tick，
-    // 于是自建 Pawn 的渲染器停在 0 → 整个人"高一个身位"。把 Host 的实测值随行发过来即可，不写死数值。
-    std::int16_t zoff = 0;
+    Pose pose;
+    Visual visual;
     static constexpr auto fields() {
         return std::make_tuple(&LilyRow::x, &LilyRow::y, &LilyRow::z, &LilyRow::facing, &LilyRow::alive, &LilyRow::hp, &LilyRow::mhp, &LilyRow::mp, &LilyRow::mmp,
-                               &LilyRow::heals, &LilyRow::mheals, &LilyRow::anim, &LilyRow::t, &LilyRow::loop, &LilyRow::skin, &LilyRow::map, &LilyRow::zoff);
+                               &LilyRow::heals, &LilyRow::mheals, &LilyRow::skin, &LilyRow::map, &LilyRow::pose, &LilyRow::visual);
     }
 };
 
@@ -42,17 +56,15 @@ struct EnemyRow { // key = net id (spawn point name id) or dyn id (section ed)
     std::uint16_t key = 0;
     float x = 0, y = 0, z = 0, vz = 0;
     std::int8_t facing = 0;
-    std::uint8_t flags = 0; // bit0 active (not paused), bit1 hidden, bit2 dead (last sample hp <= 0),
+    std::uint8_t flags = 0; // bit0 Actor Tick enabled, bit1 hidden, bit2 dead (last sample hp <= 0),
                             // bit3 engaged (host pawn got a target: BattleColor red tint + TriggerFindEnemyFX)
     std::uint16_t hp = 0, mhp = 0;
     std::uint16_t type = 0; // class name id
-    std::uint16_t anim = 0;
-    float t = 0;
-    std::uint8_t loop = 0;
-    std::int16_t zoff = 0; // 渲染组件的相对 Z（0.1 UU）：见 LilyRow 上的说明，敌人是 -50 这类"踩地"偏移
+    Pose pose;
+    Visual visual;
     static constexpr auto fields() {
         return std::make_tuple(&EnemyRow::x, &EnemyRow::y, &EnemyRow::z, &EnemyRow::vz, &EnemyRow::facing, &EnemyRow::flags, &EnemyRow::hp, &EnemyRow::mhp,
-                               &EnemyRow::type, &EnemyRow::anim, &EnemyRow::t, &EnemyRow::loop, &EnemyRow::zoff);
+                               &EnemyRow::type, &EnemyRow::pose, &EnemyRow::visual);
     }
 };
 
@@ -75,11 +87,28 @@ struct SpiritRow { // key = seat << 8 | per-seat index; only visible (summoned) 
     std::uint16_t cls = 0; // class path name id
     float x = 0, y = 0, z = 0;
     std::int8_t facing = 0;
-    std::uint16_t anim = 0;
-    float t = 0;
-    std::uint8_t loop = 0;
+    Pose pose;
+    Visual visual;
     static constexpr auto fields() {
-        return std::make_tuple(&SpiritRow::cls, &SpiritRow::x, &SpiritRow::y, &SpiritRow::z, &SpiritRow::facing, &SpiritRow::anim, &SpiritRow::t, &SpiritRow::loop);
+        return std::make_tuple(&SpiritRow::cls, &SpiritRow::x, &SpiritRow::y, &SpiritRow::z, &SpiritRow::facing, &SpiritRow::pose, &SpiritRow::visual);
+    }
+};
+
+struct CompanionRow { // key = stable Host object id; follows the owner's player seat independently of spirits
+    std::uint16_t key = 0;
+    std::uint8_t seat = 0;
+    std::uint16_t cls = 0; // class path name id
+    float x = 0, y = 0, z = 0;
+    float pitch = 0, yaw = 0, roll = 0; // Actor world rotation, distinct from skeleton facing / renderer relative rotation
+    std::int8_t facing = 0;
+    std::uint8_t flags = 0; // bit0 Actor hidden, bit1 native IsActive, bit2 renderer hidden, bit3 renderer visible,
+                            // bit4 FX exists, bit5 FX active, bit6 FX visible, bit7 FX hidden (only the exact BP.FX PSC)
+    Pose pose;
+    Visual visual;
+    static constexpr auto fields() {
+        return std::make_tuple(&CompanionRow::seat, &CompanionRow::cls, &CompanionRow::x, &CompanionRow::y, &CompanionRow::z,
+                               &CompanionRow::pitch, &CompanionRow::yaw, &CompanionRow::roll,
+                               &CompanionRow::facing, &CompanionRow::flags, &CompanionRow::pose, &CompanionRow::visual);
     }
 };
 
@@ -91,6 +120,7 @@ static_assert(std::tuple_size_v<decltype(EnemyRow::fields())> <= 32, "EnemyRow e
 static_assert(std::tuple_size_v<decltype(WorldRow::fields())> <= 32, "WorldRow exceeds the 32-field mask");
 static_assert(std::tuple_size_v<decltype(PickRow::fields())> <= 32, "PickRow exceeds the 32-field mask");
 static_assert(std::tuple_size_v<decltype(SpiritRow::fields())> <= 32, "SpiritRow exceeds the 32-field mask");
+static_assert(std::tuple_size_v<decltype(CompanionRow::fields())> <= 32, "CompanionRow exceeds the 32-field mask");
 
 template <class Row, std::size_t Cap>
 struct Section {    std::array<Row, Cap> rows;
@@ -123,8 +153,9 @@ struct Frame {
     Section<WorldRow, 512> w;
     Section<PickRow, 64> pk;
     Section<SpiritRow, 32> sp;
+    Section<CompanionRow, 48> cp;
     void clear() {
-        l.clear(), e.clear(), ed.clear(), w.clear(), pk.clear(), sp.clear();
+        l.clear(), e.clear(), ed.clear(), w.clear(), pk.clear(), sp.clear(), cp.clear();
     }
 };
 

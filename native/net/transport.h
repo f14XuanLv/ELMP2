@@ -12,7 +12,8 @@
 //     while data is outstanding = disconnect. Duplicate segments force an ACK (the ACK may be lost).
 //   - unreliable latest-only per stream, fragmented at 1100 B, incomplete groups dropped.
 //   - every queue bounded: reliable messages ≤ 256 pending, outbox ≤ 512 datagrams, reassembly groups
-//     ≤ 32, events ≤ 512 (unreliable dropped first), PONG ≤ 4; saturating size arithmetic; F_CLOSE.
+//     ≤ 32, events ≤ 512 (unreliable dropped first), PONG ≤ 4; reliable overload closes the link.
+//     Terminal events supersede queued gameplay; F_CLOSE supersedes unsent datagrams.
 //   - malformed input never throws (bad packets are counted); the link never allocates unboundedly.
 
 #include "net/crypto.h"
@@ -59,7 +60,7 @@ class Link {
 public:
     static constexpr std::size_t kMaxDatagram = 1200;
     static constexpr std::size_t kSegment = 1100;
-    static constexpr std::size_t kMaxMessage = 64 * 1024;
+    static constexpr std::size_t kMaxMessage = 128 * 1024; // protocol 4: 232 rows, 8 Spine tracks + Visual each
     static constexpr std::size_t kMaxPendingMsgs = 256;
     static constexpr std::size_t kMaxOutbox = 512;
     static constexpr std::size_t kMaxGroups = 32;
@@ -82,7 +83,7 @@ public:
     void on_datagram(std::span<const std::uint8_t> pkt, double now);
     void poll(double now);
     void send_unreliable(std::uint8_t stream, std::span<const std::uint8_t> msg);
-    bool send_reliable(std::span<const std::uint8_t> msg); // false: queue full / too large / not usable
+    bool send_reliable(std::span<const std::uint8_t> msg); // false: too large / not usable; queue full also closes
     void close(std::string_view reason);
 
     std::vector<Bytes> take_outbox();
