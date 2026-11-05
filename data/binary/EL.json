@@ -6,6 +6,57 @@
   "image_base_note": "0x140000000",
   "_comment": "运行时加载（Mods/ELMP/data/binary/EL.json）。只放没有反射入口的原生函数与无反射的原始结构偏移；适用的 EXE 由 elmp.json game.sha256 唯一给出（C1.5，本文件不重复哈希）。每个函数：预检通过（EXE SHA-256）且 rva 处字节与 prefix 逐字节一致才可武装（fail closed）。每个偏移：check 描述它与反射字段的关系（equals = 与该反射属性偏移相等；within = 落在 after 属性末尾与 before 属性起点之间，before 为 <end> 表示原生类 PropertiesSize；struct_size = 等于该结构体尺寸），世界就位后逐项校验，失败的项其依赖能力 fail closed。source 标注证据等级与出处。",
   "functions": {
+    "ReactionLaunchKnockback": {
+      "rva": "0x00CADB80",
+      "prefix": "405553574156488DAC2468FFFFFF4881EC98010000",
+      "signature": "int32 UKnockbackComponent::LaunchKnockback(this, const FKnockbackData* /*88B*/, FVector* by-value-temp)",
+      "reflect": "/Script/Zenith.KnockbackComponent:LaunchKnockback",
+      "owner": "coop/reaction",
+      "source": "[E-IDA][E-SDK] ELMP v2 2026-11-04 lily-hit-pipeline-2026-11-04.md",
+      "note": "反射exec的+0x139处E8目标交叉验证；只捕获Host成功结果，Client经原版UFunction重放，绝不调用DoDamage"
+    },
+    "ReactionLaunchKnockbackExec": {
+      "rva": "0x00D72E90",
+      "prefix": "48895C2408488974241048897C24185541564157488D6C24",
+      "signature": "void UKnockbackComponent::execLaunchKnockback(this, FFrame&, int32* result)",
+      "owner": "coop/reaction",
+      "source": "[E-IDA] ELMP v2 2026-11-04: call at +0x139 = E8 B2 AB F3 FF -> CADB80",
+      "note": "反射地址优先，必须等于校验过的exec，再从已证direct-call定位真实原生实现"
+    },
+    "ReactionLaunchHitStop": {
+      "rva": "0x00CADAA0",
+      "prefix": "40534883EC400F297424300F28C1F30F5981B0000000",
+      "signature": "void UHitStopComponent::LaunchHitStop(this, float duration /* XMM1 */)",
+      "reflect": "/Script/Zenith.HitStopComponent:LaunchHitStop",
+      "owner": "coop/reaction",
+      "source": "[E-IDA][E-SDK] ELMP v2 2026-11-05 lily-hit-pipeline-2026-11-04.md section 8",
+      "note": "原生准入duration*HitStopFactor>0，保存原始duration；exec+0x70的E8目标交叉验证，不用返回寄存器判断void调用成功"
+    },
+    "ReactionLaunchHitStopExec": {
+      "rva": "0x00D69610",
+      "prefix": "48895C2408574883EC200F57C0488BDA",
+      "signature": "void UHitStopComponent::execLaunchHitStop(this, FFrame&, void*)",
+      "owner": "coop/reaction",
+      "source": "[E-IDA] ELMP v2 2026-11-05: call D69680 (+0x70) -> CADAA0",
+      "note": "反射地址优先，+0x71 rel32以exec+0x75为基准定位原版入口"
+    },
+    "ColorDamagePlayFromStart": {
+      "rva": "0x028E60E0",
+      "prefix": "40534883EC20488B0133D2488BD9FF907002000041B101",
+      "signature": "void UTimelineComponent::PlayFromStart(this)",
+      "reflect": "/Script/Engine.TimelineComponent:PlayFromStart",
+      "owner": "coop/reaction_color",
+      "source": "[E-IDA][E-CUE] ELMP v2 2026-11-05 research-lily-color; exact Player DamageColorCurve only",
+      "note": "只捕获/重放已验证的DamageColorCurve实例，不广播包含无敌状态的HP.OnReceiveDamage"
+    },
+    "ColorDamagePlayFromStartExec": {
+      "rva": "0x02AE7C40",
+      "prefix": "488B42204533C04885C0410F95C04C03C04C894220E986E4DFFF",
+      "signature": "void UTimelineComponent::execPlayFromStart(this, FFrame&, void*)",
+      "owner": "coop/reaction_color",
+      "source": "[E-IDA] ELMP v2 2026-11-05: E9 at exec+0x15, target=exec+0x1A+rel32(+0x16)",
+      "note": "必须同时匹配反射exec与原生PlayFromStart的manifest地址"
+    },
     "InputConsume": {
       "rva": "0x00CEF310",
       "prefix": "48895C2410574883EC50",
@@ -146,6 +197,22 @@
       "owner": "guard",
       "source": "[E-IDA] v1 data/RVA.json（IDA 2026-10-14）",
       "note": "actor tick 写入原语汇点"
+    },
+    "AbilityLaunchNative": {
+      "rva": "0x00CAC480",
+      "prefix": "48895C24204154415641574883EC404533E44C8BFA80B928",
+      "signature": "void AAbility::Launch(this, AActor* Invoker)",
+      "owner": "coop/ability",
+      "source": "[E-IDA] ELMP v2 2026-11-04: CAC740 invokes before returning; OnLaunch runs synchronously. Prefix cross-checked against installed Shipping PE.",
+      "note": "Assign pooled activation identity before OnLaunch/Stop reentrancy; root/native descendant single writer. See lily-skill-pipeline-2026-11-04.md."
+    },
+    "AbilityTickNative": {
+      "rva": "0x00CBEE00",
+      "prefix": "40534883EC4048896C2450488BD90F297424200F28F1E8C5",
+      "signature": "void AAbility::Tick(this, float DeltaTime)",
+      "owner": "coop/ability",
+      "source": "[E-IDA] ELMP v2 2026-11-04: Actor Tick calls OnTick and execution-time Stop; container CB2AE0 advances its original timeline. Prefix cross-checked against installed Shipping PE.",
+      "note": "RAII activation context for asynchronous native descendants; does not alter original tick or settlement gates."
     },
     "AbilityLaunchFromDesc": {
       "rva": "0x00CAD0C0",

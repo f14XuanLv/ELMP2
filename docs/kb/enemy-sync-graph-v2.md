@@ -2,6 +2,8 @@
 
 本次为静态核验：重新读取 Shipping IDB、CUE4Parse 包与当前 v2 源码，没有向游戏发输入，没有重启实例，没有进行新的画面对比。下文“当前缺口”指代码结构已证实的缺口；不能把它写成新的游戏实测结果。
 
+2026-11-05续证：Ability私有FX与子生命周期已按[技能图谱](lily-skill-pipeline-2026-11-04.md)恢复原版执行；敌人候选碰撞、Invoker阵营和目标速度对追踪弹的影响见[Homing图谱](lily-homing-context-2026-11-04.md)。敌人全部决策/命中反馈仍未完成验收，本文不作为全面冻结或全面开放的授权结论。
+
 证据目录：`build/toolchain-smoke/research-enemy/`。IDA 使用已有 headless HTTP 服务的 `database=elmp` 工作副本，未改原数据库。基址 `0x140000000`，下文地址均为 RVA。原始 MCP 返回保存为 JSON，反编译另存同名 `.c`。包路径均来自当前 devconfig 的 paks/usmap。
 
 证据等级沿用 AGENTS：`[E-IDA]`、`[E-CUE]`、`[E-SDK]`、`[E-源码]`。本文的 `[E-源码]` 特指**当前 v2 实现的行为**时会明确写“v2 源码”；它不能证明原版逻辑。SDK 头在 `D:/CodeT/EnderLilies/Source/Zenith/Public/`，只证明声明。旧 kb 为研究线索，不因已有结论而自动升级证据。

@@ -24,6 +24,11 @@ bool arm(); // installs on first use; false (and logs) if a detour could not be 
 void disarm();
 bool armed();
 
+// Observe only original Effect Apply/Finalize execution. Host registration installs just these two
+// existing manifest hooks; it never arms settlement gates. Armed Client calls are blocked first.
+using EffectObserver = void (*)(bool entering, ue::UObject* self, ue::UObject* from, ue::UObject* to, bool finalize);
+bool observe_effects(EffectObserver observer); // nullptr removes; entry snapshots its matching exit callback
+
 void mark(ue::UObject* actor);   // presented enemy / controller / volume / copy
 void unmark(ue::UObject* actor);
 void unmark_all();

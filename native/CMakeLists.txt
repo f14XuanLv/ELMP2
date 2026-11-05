@@ -84,6 +84,9 @@ set(ELMP_MOD_SOURCES
     sdk/sdk.cpp
     coop/client.cpp
     coop/ability.cpp
+    coop/reaction.cpp
+    coop/reaction_color.cpp
+    coop/feedback_context.cpp
     coop/fx.cpp
     coop/presentation.cpp
     coop/presentation_policy.cpp

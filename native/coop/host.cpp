@@ -7,6 +7,7 @@
 #include "coop/host.h"
 #include "coop/presentation.h"
 #include "coop/visual_state.h"
+#include "coop/reaction.h"
 
 #include "coop/ability.h"
 #include "coop/fx.h"
@@ -38,6 +39,7 @@
 #include "base/log.h"
 #include "base/metrics.h"
 
+#include <algorithm>
 #include <array>
 #include <format>
 #include <map>
@@ -361,40 +363,249 @@ void send_to(const Ref& r, const Msg& m, std::uint64_t& counter) {
 }
 
 struct Pending {
+    enum class Kind { Launch, Stop, ChildStop } kind = Kind::Launch;
+    std::uint64_t order = 0, activation = 0, root = 0;
     ObjHandle owner, spawned;
     ability::Launch l;
+    proto::AbilityPath path;
+    std::string child_class;
+    bool supported = true;
+    std::uint8_t reason = 0;
 };
 std::vector<Pending> g_pending;
 std::unordered_map<std::uint32_t, std::uint32_t> g_act_seq; // ref key → last act seq
+struct AbilityDelivery {
+    std::uint32_t peer = 0;
+    std::uint16_t epoch = 0, map = 0;
+};
 struct AbilityLive {
     ObjHandle h;
     Ref r;
     std::uint32_t seq = 0;
+    std::vector<AbilityDelivery> delivered;
+    bool root_stop_sent = false;
 };
-std::unordered_map<ue::UObject*, AbilityLive> g_ab_live; // launched ability → (owner, act seq) for ActStop
+// A family ledger, not an Actor-lifetime binding: FFA children can outlive or survive pool reuse of
+// their root. Each child keeps this immutable root token until its own native activation ends.
+std::unordered_map<std::uint64_t, AbilityLive> g_ab_live;
+constexpr std::size_t kAbilityPending = 512, kAbilityLive = 1024;
+std::string g_lifecycle_fault;
+std::uint64_t g_ab_reused = 0, g_ab_expired = 0, g_ab_unmatched_stops = 0;
+std::uint64_t g_ab_child_stops = 0, g_ab_child_unmatched = 0, g_ab_families_released = 0;
+
+void lifecycle_fault(const char* reason) {
+    if (g_lifecycle_fault.empty()) g_lifecycle_fault = reason;
+}
 
 void on_launch(const ability::Launch& l) {
     if (g_peers.empty()) return;
-    if (g_pending.size() >= 64) return void(++g_acts_dropped);
-    g_pending.push_back({ObjHandle::of(l.owner), ObjHandle::of(l.spawned), l});
+    if (!l.activation || g_pending.size() >= kAbilityPending) {
+        ++g_acts_dropped;
+        return lifecycle_fault("ability activation capture unavailable or overloaded");
+    }
+    Pending p;
+    p.order = p.activation = l.activation; // assigned at native Launch entry, NOT Description return
+    p.owner = ObjHandle::of(l.owner);
+    p.spawned = ObjHandle::of(l.spawned);
+    p.l = l;
+    g_pending.push_back(std::move(p));
+}
+
+bool ability_delivery_current(const AbilityDelivery& delivery) {
+    const auto it = g_peers.find(delivery.peer);
+    return it != g_peers.end() && it->second.slot && it->second.epoch == delivery.epoch &&
+           it->second.map_sent == delivery.map && it->second.map_ready == delivery.map;
+}
+
+void send_ability_stop(AbilityLive& live, std::uint8_t reason) {
+    const auto n = proto::encode(proto::ActStop{static_cast<std::uint8_t>(live.r.kind), live.r.id, live.seq, reason}, g_buf);
+    if (!n) return lifecycle_fault("ability stop encoding failed");
+    // Map/session reset already stopped the old family. Never send its stop into the next map.
+    for (const auto& delivery : live.delivered)
+        if (ability_delivery_current(delivery)) send_rel(delivery.peer, n), ++g_ab_stops_sent;
+    live.root_stop_sent = true;
+}
+
+void send_child_stop(const AbilityLive& live, const Pending& p) {
+    if (!p.supported) return lifecycle_fault("ability child stop has no proven native Entries path");
+    proto::ChildStop m;
+    m.kind = static_cast<std::uint8_t>(live.r.kind);
+    m.net_id = live.r.id;
+    m.seq = live.seq;
+    m.ability = p.child_class.empty() ? 0 : name(p.child_class);
+    m.path = p.path;
+    m.reason = p.reason;
+    const auto n = proto::encode(m, g_buf);
+    if (!n) return lifecycle_fault("ability child stop identity/encoding failed");
+    for (const auto& delivery : live.delivered)
+        if (ability_delivery_current(delivery)) send_rel(delivery.peer, n), ++g_ab_child_stops;
 }
 
 void send_acts() {
-    for (auto& p : g_pending) {
+    // Invalidate deliveries permanently when their map/session leaves. Merely testing at send time
+    // would revive an old binding if the same peer later returned to the same map name.
+    for (auto it = g_ab_live.begin(); it != g_ab_live.end();) {
+        std::erase_if(it->second.delivered, [](const AbilityDelivery& d) { return !ability_delivery_current(d); });
+        if (!it->second.delivered.empty()) { ++it; continue; }
+        ++g_ab_families_released;
+        it = g_ab_live.erase(it);
+    }
+    auto pending = std::move(g_pending);
+    g_pending.clear();
+    std::sort(pending.begin(), pending.end(), [](const Pending& a, const Pending& b) { return a.order < b.order; });
+    for (auto& p : pending) {
+        if (p.kind == Pending::Kind::ChildStop) {
+            const auto it = g_ab_live.find(p.root);
+            if (it == g_ab_live.end()) { ++g_ab_child_unmatched; continue; } // root had no recipients
+            send_child_stop(it->second, p);
+            if (!g_lifecycle_fault.empty()) return;
+            continue;
+        }
+        if (p.kind == Pending::Kind::Stop) {
+            auto it = g_ab_live.find(p.activation);
+            if (it == g_ab_live.end() || it->second.h != p.spawned) { ++g_ab_unmatched_stops; continue; }
+            send_ability_stop(it->second, p.reason);
+            if (!g_lifecycle_fault.empty()) return;
+            continue;
+        }
         const auto r = ref_of(p.owner.get());
         if (!r) continue;
+        if (g_ab_live.contains(p.activation)) continue;
+        // Only the old root Actor ends on pool reuse. Its FFA children still address the old family;
+        // neither their ledger nor a late old Stop may become the new root's wire identity.
+        for (auto& [token, live] : g_ab_live) {
+            if (live.h != p.spawned || live.root_stop_sent) continue;
+            send_ability_stop(live, 2); // EAbilityStopReason::CANCEL
+            if (!g_lifecycle_fault.empty()) return;
+            ++g_ab_reused;
+        }
+        if (g_ab_live.size() >= kAbilityLive) return lifecycle_fault("ability activation table overloaded");
         auto act = p.l.act;
         act.kind = static_cast<std::uint8_t>(r->kind);
         act.net_id = r->id;
         act.ability = name(p.l.cls);
         act.custom_spawn = p.l.custom_spawn == "None" ? 0 : name(p.l.custom_spawn);
         act.custom_attach = p.l.custom_attach == "None" ? 0 : name(p.l.custom_attach);
-        act.seq = ++g_act_seq[ref_key(*r)];
-        if (!act.ability) continue;
-        if (auto* ab = p.spawned.get()) g_ab_live[ab] = {p.spawned, *r, act.seq};
-        send_to(*r, act, g_acts_sent);
+        const auto event_map = name(r->slot == 0 ? ue::utf8(world::current_map_id()) : maps::map_id(r->slot));
+        auto& seq = g_act_seq[ref_key(*r)];
+        if (seq == ~std::uint32_t{0}) return lifecycle_fault("ability wire sequence exhausted");
+        act.seq = ++seq;
+        if (!act.ability || !event_map) return lifecycle_fault("ability launch asset/map identity unavailable");
+        const auto n = proto::encode(act, g_buf);
+        if (!n) { ++g_acts_dropped; continue; }
+        AbilityLive live{p.spawned, *r, act.seq, {}};
+        for (auto& [id, peer] : g_peers)
+            if (wants(peer, *r) && peer.map_sent == event_map && peer.map_ready == event_map) {
+                send_rel(id, n);
+                live.delivered.push_back({id, peer.epoch, event_map});
+                ++g_acts_sent;
+            }
+        if (!live.delivered.empty()) g_ab_live.emplace(p.activation, std::move(live));
     }
-    g_pending.clear();
+    for (auto it = g_ab_live.begin(); it != g_ab_live.end();) {
+        auto& live = it->second;
+        auto* root = live.h.get();
+        const bool same_root = root && ability::activation(root) == it->first;
+        const bool family_active = ability::has_active_family(it->first);
+        if (!live.root_stop_sent && (!same_root || !family_active)) {
+            send_ability_stop(live, 3); // END_PLAY only addresses the old root, never its children/new use
+            if (!g_lifecycle_fault.empty()) return;
+            ++g_ab_expired;
+        }
+        if (family_active) { ++it; continue; }
+        ++g_ab_families_released;
+        it = g_ab_live.erase(it);
+    }
+}
+
+// The local predicted Lily has no remote presentation Ref on its own Client. Host-accepted reactions
+// therefore route directly to the network seat, never through wants() (which excludes that seat).
+struct ReactionPending {
+    std::uint32_t peer = 0;
+    ObjHandle owner;
+    reaction::Capture capture;
+};
+constexpr std::size_t kReactionPending = 128;
+std::vector<ReactionPending> g_reactions;
+std::uint32_t g_reaction_seq = 0; // process lifetime; do not reuse a sequence after role stop
+std::uint64_t g_reaction_order = 0; // last flushed native entry ordinal, shared across reaction kinds
+std::uint64_t g_reaction_sent = 0, g_reaction_stale = 0, g_reaction_failed = 0;
+
+Peer* reaction_peer(ue::UObject* owner) {
+    if (!ue::alive(owner)) return nullptr;
+    for (auto& [id, p] : g_peers)
+        if (p.slot > 0 && p.slot <= 8 && p.map_sent && p.map_ready == p.map_sent && core::pawn(p.slot) == owner) {
+            const int slot = maps::slot_of_seat(p.slot);
+            const auto* map = g_names.text(p.map_sent);
+            const auto actual = slot == 0 ? ue::utf8(world::current_map_id()) : maps::map_id(slot);
+            if (slot >= 0 && map && *map == actual) return &p;
+        }
+    return nullptr;
+}
+
+bool wants_reaction(ue::UObject* owner) { return reaction_peer(owner) != nullptr; }
+
+void on_reaction(const reaction::Capture& capture) {
+    auto* peer = reaction_peer(capture.owner);
+    if (!peer) return void(++g_reaction_stale);
+    if (!capture.entry_order || g_reactions.size() >= kReactionPending) {
+        ++g_reaction_failed;
+        return lifecycle_fault("reaction capture order unavailable or queue overloaded");
+    }
+    ReactionPending p;
+    p.peer = peer->id;
+    p.owner = ObjHandle::of(capture.owner);
+    p.capture = capture;
+    p.capture.owner = nullptr; // only the serial-checked identity above survives the native callback
+    auto& event = p.capture.event;
+    event.seat = static_cast<std::uint8_t>(peer->slot);
+    event.epoch = peer->epoch;
+    event.map = peer->map_sent;
+    if (event.kind == 0) event.position[1] -= maps::offset(maps::slot_of_seat(peer->slot));
+    // event.t_ms is the native call time; queue/flush latency must not change its timeline.
+    g_reactions.push_back(std::move(p));
+}
+
+void send_reactions() {
+    auto pending = std::move(g_reactions);
+    g_reactions.clear();
+    // A native reaction can call another one before its post-call capture reaches us. Sequence
+    // numbers follow the shared entry ordinal, never the reversed callback return order.
+    std::sort(pending.begin(), pending.end(), [](const auto& a, const auto& b) { return a.capture.entry_order < b.capture.entry_order; });
+    for (auto& p : pending) {
+        if (p.capture.entry_order <= g_reaction_order) {
+            ++g_reaction_failed;
+            return lifecycle_fault("reaction native entry order repeated or reversed");
+        }
+        g_reaction_order = p.capture.entry_order;
+        auto& event = p.capture.event;
+        auto peer = g_peers.find(p.peer);
+        if (peer == g_peers.end() || peer->second.slot != event.seat || peer->second.epoch != event.epoch ||
+            peer->second.map_sent != event.map || peer->second.map_ready != event.map ||
+            p.owner.get() != core::pawn(event.seat) || reaction_peer(p.owner.get()) != &peer->second) {
+            ++g_reaction_stale;
+            continue;
+        }
+        if (g_reaction_seq == ~std::uint32_t{0} || p.capture.states.size() != event.state_count) {
+            ++g_reaction_failed;
+            return lifecycle_fault("reaction sequence exhausted or invalid state capture");
+        }
+        event.seq = ++g_reaction_seq;
+        event.curve = event.kind == 0 && !p.capture.curve.empty() ? name(p.capture.curve) : 0;
+        bool valid = event.kind != 0 || p.capture.curve.empty() || event.curve != 0;
+        if (event.state_count > proto::kReactionStates) valid = false;
+        else for (std::size_t i = 0; i < event.state_count; ++i) {
+            event.states[i] = name(p.capture.states[i]);
+            valid = event.states[i] != 0 && valid;
+        }
+        const auto n = valid ? proto::encode(event, g_buf) : 0;
+        if (!n) {
+            ++g_reaction_failed;
+            return lifecycle_fault("reaction asset identity or encoding failed");
+        }
+        send_rel(p.peer, n);
+        ++g_reaction_sent;
+    }
 }
 
 // One activation of one host PSC owns one wire ID. Pending delivery, owner-resolution retry,
@@ -423,16 +634,25 @@ std::unordered_map<std::uint32_t, FxLive> g_fx_live; // wire ID -> activation; s
 std::unordered_map<ObjHandle, std::uint32_t> g_fx_by_psc; // weak component -> current activation only
 std::uint32_t g_fx_seq = 0; // not reset on role stop; IDs are never reused by this process
 std::uint64_t g_fx_canceled = 0, g_fx_retired = 0, g_fx_initial = 0, g_fx_retry_ready = 0;
-std::uint64_t g_fx_baselines = 0, g_fx_bindings_closed = 0, g_fx_companion_owned = 0;
+std::uint64_t g_fx_baselines = 0, g_fx_bindings_closed = 0, g_fx_companion_owned = 0, g_fx_native_owned = 0;
 struct SndEv {
     ObjHandle owner, event;
-    bool is2d = false;
+    proto::Snd msg;
+    int slot = -1;
+    std::string map;
 };
 std::vector<SndEv> g_snd_pending;
-std::vector<std::pair<ObjHandle, std::uint8_t>> g_stop_pending;
+std::uint64_t g_snd_map_retired = 0;
+std::uint64_t g_feedback_fx_sent = 0, g_feedback_sound_sent = 0, g_feedback_own_sent = 0;
+
+bool wants_feedback(const Peer& peer, const Ref& r, bool feedback) {
+    return wants(peer, r) || (feedback && r.kind == proto::RefKind::Lily && peer.slot == r.id &&
+                             peer.slot && std::max(0, maps::slot_of_seat(peer.slot)) == r.slot);
+}
 
 void on_fx(const fx::Spawn& s) {
     if (entities::companion_owns_fx(s.owner, s.psc)) return void(++g_fx_companion_owned);
+    if (!(s.msg.flags & 32) && fx::native_ability_owned(s.psc)) return void(++g_fx_native_owned); // Host-only effects have a different writer
     if (g_peers.empty() && !(s.msg.flags & 4)) return;
     if (!ue::alive(s.owner) || !ue::alive(s.ps) || !fx::active(s.psc)) return void(++g_ev_dropped);
     const auto psc = ObjHandle::of(s.psc);
@@ -441,7 +661,11 @@ void on_fx(const fx::Spawn& s) {
         g_fx_by_psc.erase(old);
     }
     // Never evict an already-delivered record to admit a spawn: its Stop still needs to be sent.
-    if (g_fx_live.size() >= kFxCapacity || g_fx_seq == ~std::uint32_t{0}) return void(++g_ev_dropped);
+    if (g_fx_live.size() >= kFxCapacity || g_fx_seq == ~std::uint32_t{0}) {
+        ++g_ev_dropped;
+        if (s.msg.flags & 32) lifecycle_fault("authoritative feedback FX capacity exhausted");
+        return;
+    }
     FxLive record;
     record.owner = ObjHandle::of(s.owner);
     record.ps = ObjHandle::of(s.ps);
@@ -463,13 +687,48 @@ void on_deactivate(ue::UObject* psc) {
 }
 void on_sound(const fx::Sound& s) {
     if (g_peers.empty()) return;
-    if (g_snd_pending.size() >= 128) return void(++g_ev_dropped);
-    g_snd_pending.push_back({ObjHandle::of(s.owner), ObjHandle::of(s.event), s.is2d});
+    if (g_snd_pending.size() >= 128) {
+        ++g_ev_dropped;
+        if (s.flags & 1) lifecycle_fault("authoritative feedback sound queue exhausted");
+        return;
+    }
+    proto::Snd msg;
+    msg.is2d = static_cast<std::uint8_t>(s.is2d);
+    msg.flags = s.flags;
+    msg.xf = s.xf;
+    const auto at = core::location(s.owner);
+    const int slot = at ? maps::slot_of_y(at->y) : -1;
+    const auto map = slot == 0 ? ue::utf8(world::current_map_id()) : maps::map_id(slot);
+    if (slot < 0 || map.empty()) {
+        ++g_ev_dropped;
+        if (s.flags & 1) lifecycle_fault("authoritative feedback sound capture map unavailable");
+        return;
+    }
+    // Capture map identity before maps::tick can move this Actor. Queue no transport/name-table
+    // work from the native hook; map departure retires the old event instead of rebasing its point.
+    if ((msg.flags & 2) && !msg.is2d) msg.xf[5] -= maps::offset(slot);
+    g_snd_pending.push_back({ObjHandle::of(s.owner), ObjHandle::of(s.event), msg, slot, map});
 }
-void on_ability_stop(ue::UObject* ability, std::uint8_t reason) {
-    if (g_peers.empty() || (!g_ab_live.contains(ability) && g_pending.empty())) return; // only launches we replicate
-    if (g_stop_pending.size() >= 256) return void(++g_ev_dropped);
-    g_stop_pending.emplace_back(ObjHandle::of(ability), reason);
+void on_ability_stop(ue::UObject* object, std::uint8_t reason) {
+    if (g_peers.empty()) return;
+    ability::Identity identity;
+    if (!ability::identity(object, identity)) return; // snapshot BEFORE native Stop / any nested reuse
+    const auto order = ability::next_capture_order();
+    if (!order || g_pending.size() >= kAbilityPending) {
+        ++g_ev_dropped;
+        return lifecycle_fault("ability stop capture overloaded");
+    }
+    Pending p;
+    p.kind = identity.token == identity.root ? Pending::Kind::Stop : Pending::Kind::ChildStop;
+    p.order = order;
+    p.activation = identity.token;
+    p.root = identity.root;
+    p.spawned = ObjHandle::of(object);
+    p.path = identity.path;
+    p.child_class = std::move(identity.cls);
+    p.supported = identity.supported;
+    p.reason = reason;
+    g_pending.push_back(std::move(p));
 }
 
 void send_fx_stop(std::uint32_t peer, std::uint32_t seq) {
@@ -484,10 +743,12 @@ void flush_fx(std::int64_t now_us) {
         auto& e = it->second;
         auto* owner = e.owner.get();
         auto* ps = e.ps.get();
+        const bool feedback = (e.msg.flags & 32) != 0;
         if (!owner || !ps || !fx::active(e.psc.get())) e.stopped = true;
         // SpawnEmitterAttached returns before BP assigns its FX field. Check again after that assignment
         // so the exact companion baseline PSC is never also kept in the generic event stream.
         if (!e.stopped && entities::companion_owns_fx(owner, e.psc.get())) e.stopped = true, ++g_fx_companion_owned;
+        if (!e.stopped && !feedback && fx::native_ability_owned(e.psc.get())) e.stopped = true, ++g_fx_native_owned;
         const bool persistent = (e.msg.flags & 4) != 0;
         const auto r = !e.stopped ? ref_of_owner(owner) : std::nullopt;
         if (!e.stopped && !r) {
@@ -495,6 +756,7 @@ void flush_fx(std::int64_t now_us) {
             if (e.waiting <= 120) ++e.waiting;
             for (const auto& delivery : e.delivered) send_fx_stop(delivery.peer, seq), ++g_fx_bindings_closed;
             e.delivered.clear();
+            if (e.waiting > 120 && feedback) return lifecycle_fault("authoritative feedback FX owner unavailable");
             if (!persistent && e.waiting > 120) e.stopped = true, ++g_ev_dropped;
         }
         if (e.stopped) {
@@ -514,7 +776,7 @@ void flush_fx(std::int64_t now_us) {
             auto peer = g_peers.find(d.peer);
             if (peer == g_peers.end()) return true;
             if (d.map == map && d.kind == r->kind && d.net_id == r->id && peer->second.map_sent == map &&
-                peer->second.map_ready == map && wants(peer->second, *r)) return false;
+                peer->second.map_ready == map && wants_feedback(peer->second, *r, feedback)) return false;
             send_fx_stop(d.peer, seq);
             ++g_fx_bindings_closed;
             return true;
@@ -525,7 +787,7 @@ void flush_fx(std::int64_t now_us) {
             m.net_id = r->id;
             bool named = false;
             for (auto& [id, peer] : g_peers) {
-                if (!wants(peer, *r) || peer.map_sent != map || peer.map_ready != map) continue;
+                if (!wants_feedback(peer, *r, feedback) || peer.map_sent != map || peer.map_ready != map) continue;
                 FxDelivery* delivery = nullptr;
                 for (auto& d : e.delivered) if (d.peer == id) { delivery = &d; break; }
                 if (delivery && (!persistent || now_us < delivery->next_baseline_us)) continue;
@@ -534,8 +796,11 @@ void flush_fx(std::int64_t now_us) {
                     m.custom_bone = e.custom_bone.empty() || e.custom_bone == "None" ? 0 : name(e.custom_bone);
                     m.attach_component = e.attach_component.empty() ? 0 : name(e.attach_component);
                     m.attach_socket = e.attach_socket.empty() || e.attach_socket == "None" ? 0 : name(e.attach_socket);
-                    if ((!e.attach_component.empty() && !m.attach_component) || (!e.attach_socket.empty() && e.attach_socket != "None" && !m.attach_socket)) break;
-                    if (!m.ps) break;
+                    if ((!e.attach_component.empty() && !m.attach_component) || (!e.attach_socket.empty() && e.attach_socket != "None" && !m.attach_socket) ||
+                        (!e.custom_bone.empty() && e.custom_bone != "None" && !m.custom_bone) || !m.ps) {
+                        if (feedback) return lifecycle_fault("authoritative feedback FX asset identity unavailable");
+                        break;
+                    }
                     named = true;
                 }
                 if (!e.first_flush) m.flags |= 16; // late join / recovery / periodic baseline always reuse seq
@@ -548,7 +813,11 @@ void flush_fx(std::int64_t now_us) {
                     }
                     e.ever_delivered = true;
                     ++g_fx_sent;
-                }
+                    if (feedback) {
+                        ++g_feedback_fx_sent;
+                        if (r->kind == proto::RefKind::Lily && r->id == peer.slot) ++g_feedback_own_sent;
+                    }
+                } else if (feedback) return lifecycle_fault("authoritative feedback FX encoding failed");
             }
             e.first_flush = false;
         }
@@ -559,24 +828,42 @@ void flush_fx(std::int64_t now_us) {
 void send_events(std::int64_t now_us) {
     flush_fx(now_us);
     for (auto& e : g_snd_pending) {
+        auto* owner = e.owner.get();
         auto* ev = e.event.get();
-        const auto r = ev ? ref_of_owner(e.owner.get()) : std::nullopt;
+        // maps::tick runs before this flush and may unload the captured source's map/Actor.
+        // Retire that lifecycle first; an expired owner is not an unsupported live feedback source.
+        if (!owner || !ev || maps::map_id(e.slot) != e.map) { ++g_snd_map_retired; continue; }
+        const auto at = core::location(owner);
+        if (at && maps::slot_of_y(at->y) != e.slot) { ++g_snd_map_retired; continue; }
+        const auto r = ref_of_owner(owner);
         if (!r) {
             ++g_ev_noref;
+            if (e.msg.flags & 1) return lifecycle_fault("authoritative feedback sound owner unavailable");
             continue;
         }
-        if (const auto id = name(fx::path_of(ev))) send_to(*r, proto::Snd{static_cast<std::uint8_t>(r->kind), r->id, id, static_cast<std::uint8_t>(e.is2d)}, g_snd_sent);
+        auto msg = e.msg;
+        const auto current_map = r->slot == 0 ? ue::utf8(world::current_map_id()) : maps::map_id(r->slot);
+        if (r->slot != e.slot || current_map != e.map) { ++g_snd_map_retired; continue; }
+        msg.kind = static_cast<std::uint8_t>(r->kind);
+        msg.net_id = r->id;
+        msg.event = name(fx::path_of(ev));
+        const auto map = name(e.map);
+        const auto n = proto::encode(msg, g_buf);
+        if (!n || !map) {
+            ++g_ev_dropped;
+            if (msg.flags & 1) return lifecycle_fault("authoritative feedback sound encoding/map failed");
+            continue;
+        }
+        for (auto& [id, peer] : g_peers)
+            if (wants_feedback(peer, *r, msg.flags & 1) && peer.map_sent == map && peer.map_ready == map) {
+                send_rel(id, n), ++g_snd_sent;
+                if (msg.flags & 1) {
+                    ++g_feedback_sound_sent;
+                    if (r->kind == proto::RefKind::Lily && r->id == peer.slot) ++g_feedback_own_sent;
+                }
+            }
     }
     g_snd_pending.clear();
-    for (auto& [h, reason] : g_stop_pending) {
-        auto* ab = h.get();
-        auto it = ab ? g_ab_live.find(ab) : g_ab_live.end();
-        if (it == g_ab_live.end() || it->second.h != h) continue;
-        send_to(it->second.r, proto::ActStop{static_cast<std::uint8_t>(it->second.r.kind), it->second.r.id, it->second.seq, reason}, g_ab_stops_sent);
-        g_ab_live.erase(it);
-    }
-    g_stop_pending.clear();
-    if (g_ab_live.size() > 1024) std::erase_if(g_ab_live, [](const auto& kv) { return !kv.second.h.get(); });
 }
 
 // Per-peer view (P3, coop/maps): a peer receives the rows of the map its seat stands in, in that map's local
@@ -741,6 +1028,10 @@ void on_unreliable(std::uint32_t peer, std::uint8_t stream, std::span<const std:
 }
 
 void tick(std::int64_t now_us) {
+    if (const auto fault = fx::fault(); !fault.empty()) lifecycle_fault(fault.c_str());
+    if (const auto fault = ability::fault(); !fault.empty()) lifecycle_fault(fault.c_str());
+    if (const auto fault = reaction::host_fault(); !fault.empty()) lifecycle_fault(fault.c_str());
+    if (!g_lifecycle_fault.empty()) return coop::leave(g_lifecycle_fault);
     if (lifecycle::state() != lifecycle::State::Settled) return;
     for (auto& [id, p] : g_peers)
         if (p.slot && !p.stalled && now_us - p.last_input_us > kStallUs) { // 500 ms without input: release keys
@@ -748,8 +1039,9 @@ void tick(std::int64_t now_us) {
             p.stalled = true;
         }
     capture(now_us);
-    ability::host_enable(on_launch);
-    fx::host_enable({on_fx, on_deactivate, on_sound, on_ability_stop});
+    if (!ability::host_enable(on_launch)) return coop::leave("host ability capture unavailable");
+    if (!fx::host_enable({on_fx, on_deactivate, on_sound, on_ability_stop})) return coop::leave("host feedback capture unavailable");
+    if (!reaction::host_enable(on_reaction, wants_reaction)) return coop::leave("host reaction capture unavailable");
     // 会话开始前（读图 / 敌人激活）就 spawn 的持续特效：补进在场集合，新对端 Welcome 时补发
     if (std::vector<fx::Spawn> early; fx::take_early(early) > 0)
         for (auto& s : early) on_fx(s);
@@ -757,6 +1049,8 @@ void tick(std::int64_t now_us) {
     party::transit::set_stay([](std::int64_t seat) { return maps::slot_of_seat(seat) > 0; });
     maps::tick(now_us);
     send_acts();
+    send_reactions();
+    if (!g_lifecycle_fault.empty()) return coop::leave(g_lifecycle_fault);
     send_events(now_us);
     send_snapshots();
 }
@@ -765,6 +1059,7 @@ void stop() {
     // Detach sinks before releasing seats: cleanup must not refill event queues for a dead session.
     ability::host_disable();
     fx::host_disable();
+    reaction::host_disable();
     for (auto& [id, p] : g_peers)
         if (p.slot) party::leave(p.slot);
     for (auto& [k, slot] : g_parked) party::leave(slot);
@@ -772,7 +1067,9 @@ void stop() {
     entities::companion_end_session();
     presentation::reset();
     visual_state::reset();
-    g_snd_pending.clear(), g_stop_pending.clear(), g_fx_live.clear(), g_fx_by_psc.clear(), g_ab_live.clear();
+    g_snd_pending.clear(), g_fx_live.clear(), g_fx_by_psc.clear(), g_ab_live.clear();
+    g_reactions.clear();
+    g_lifecycle_fault.clear();
     party::transit::set_stay(nullptr);
     maps::reset();
     g_pending.clear();
@@ -802,8 +1099,12 @@ std::string describe() {
     std::string out = std::format("host: peers={} parked={} names={} epoch={} actsSent={} actsDropped={}\n", g_peers.size(), g_parked.size(), g_names.size(), g_epoch,
                                   g_acts_sent, g_acts_dropped) +
                       std::format("events: fx={} fxStops={} sounds={} abilityStops={} dropped={} noOwner={} live fx={} abilities={} engaged={}\n", g_fx_sent, g_fx_stops_sent, g_snd_sent, g_ab_stops_sent, g_ev_dropped, g_ev_noref, g_fx_live.size(), g_ab_live.size(), g_engaged_rows) +
-                      std::format("fx lifecycle: ids={} active={} canceledBeforeDelivery={} retired={} initialReplays={} retryReady={} baselines={} bindingsClosed={} companionOwned={}\n", g_fx_seq,
-                                  g_fx_by_psc.size(), g_fx_canceled, g_fx_retired, g_fx_initial, g_fx_retry_ready, g_fx_baselines, g_fx_bindings_closed, g_fx_companion_owned) + ability::describe() + fx::describe();
+                      std::format("feedback delivery: fx={} sounds={} ownSeat={} soundMapRetired={}\n", g_feedback_fx_sent, g_feedback_sound_sent, g_feedback_own_sent, g_snd_map_retired) +
+                      std::format("fx lifecycle: ids={} active={} canceledBeforeDelivery={} retired={} initialReplays={} retryReady={} baselines={} bindingsClosed={} companionOwned={} nativeAbilityOwned={}\n", g_fx_seq,
+                                  g_fx_by_psc.size(), g_fx_canceled, g_fx_retired, g_fx_initial, g_fx_retry_ready, g_fx_baselines, g_fx_bindings_closed, g_fx_companion_owned, g_fx_native_owned) +
+                      std::format("ability lifecycle: pending={} reused={} expired={} unmatchedStops={} childStops={} childUnmatched={} familiesReleased={} fault={}\n", g_pending.size(), g_ab_reused, g_ab_expired, g_ab_unmatched_stops, g_ab_child_stops, g_ab_child_unmatched, g_ab_families_released, g_lifecycle_fault) +
+                      std::format("reactions: pending={} seq={} sent={} stale={} failed={}\n", g_reactions.size(), g_reaction_seq, g_reaction_sent, g_reaction_stale, g_reaction_failed) +
+                      ability::describe() + fx::describe() + reaction::describe();
     for (auto* a : adapters()) out += a->describe();
     out += maps::describe() + presentation::describe() + visual_state::describe();
     for (const auto& [id, p] : g_peers)

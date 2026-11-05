@@ -50,6 +50,8 @@ v1 把“机制”（Hook / 手柄 / 传输 / 覆盖层）放在 C++，把“逻
 
 ## 1. 架构原则
 
+2026-11-04 莉莉管线修订见 [ADR 0009](adr/0009-restore-native-lily-pipelines.md)：ADR 0002 的减法方法论继续约束远程实现。已核原版受击与技能执行链应恢复上下文并移除重复输出写者，不能以 ADR 0008 的冻结/结果复制作为无需证明的最终方案。
+
 1. **继承 ADR 0002**：补齐原版上下文、不模拟；三方证据；Hook 纪律；fail closed。
 2. **逻辑与机制同层同语言**：不再有“跨语言的每帧数据搬运”；只有一个对象模型。
 3. **反射只做一次**：所有属性 / 函数在类加载时按名解析为偏移 / 指针并校验（类型、尺寸、`CppType`），运行期直读；**解析失败即该能力 fail closed**（不猜偏移）。热字段的硬编码偏移（如 `+1465`）仍需反射或 IDA 双重校验，沿用 ADR 0002。
@@ -180,6 +182,8 @@ template<class R, class... A> R call(UObject* o, FuncRef f, A... a);  // 栈上�
 | detour | `DoDamage 0xCA0380`、`SkillDamage 0xCB07E0`、`IsPlayerThunk 0xCE3C90`、`SaveGame 0xD25410`、`SaveGameAsync 0xD25550` | PolyHook2 | guard |
 | detour | `SetActorEnableCollision 0x22C78D0`、`SetActorTickEnabled 0x22C8540`、`AZenithAIController::Activate 0xCCD8F0`、`AZenithCharacter::Activate 0xCCDAA0`（2026-10-26 定位，见 `docs/kb/engine-facts.md`；`0xCEFAE0` 是 `AZenithSpirit::SetActive`，不用于敌人） | PolyHook2 | guard |
 | detour | `AbilityLaunchFromDesc 0xCAD0C0` | PolyHook2 | coop/host/events |
+| detour | `AbilityLaunchNative 0xCAC480` / `AbilityTickNative 0xCBEE00` | PolyHook2 + manifest前缀 | coop/ability 原版activation/派生作用域 |
+| detour | `LaunchKnockback 0xCADB80` | 反射exec定位 + manifest前缀 + PolyHook2 | coop/reaction Host接受事实与本机原版执行 |
 | detour | `ClearedQueryCurrentMapId 0xCAAFF0`、`ClearableBeginPlay 0xC997B0` | PolyHook2 | world/map_context |
 | UFunction post | `PC_Base_C:OnSwitchGameMapStart / OnGameMapSwitch / OnGameMapReadyPostFade`、`WBP_FaderLoading_C:LaunchFadeIn` | UE4SS | party/transit |
 | UFunction post | `SaveSubsystem:SaveGame`(同步成功)、`EVT_ACT_SaveAsync_C:OnSaveFinished`、删除 / 复制存档 post | UE4SS | party/save_scope |
@@ -414,7 +418,7 @@ v1 积累了 270 个离线 Lua 测试 + 84 个原生测试，其中相当一部�
 
 ### 16.2 远端呈现职责（2026-11-04，ADR 0008）
 
-按 [ADR 0008](adr/0008-authoritative-presentation.md) 执行：Host 权威结果 → 统一 `coop/presentation` 适配器 → 单一 Spine/组件输出写者；`presentation_policy` 负责关闭决策 tick 与根运动，guard 独立负责权限。删除全局 simLocal/animLocal/fxLocal 与 Cmd 试验，不全面解冻原版逻辑。普通/动态敌人与远程 Lily/Spirit/Companion 共用采样和应用接口。
+尚未迁移的远端域保留 [ADR 0008](adr/0008-authoritative-presentation.md) 的临时实现：Host 权威结果 → `coop/presentation` → Spine/组件输出写者；`presentation_policy` 关闭决策 tick 与根运动，guard 独立负责权限。普通/动态敌人与远程 Lily/Spirit/Companion 当前共用采样和应用接口。这不是完整同步的验收结论。已核实的原版链按ADR0009迁移，不能继续一面运行原版、一面复制或抑制同一输出。
 
 Companion `cp` 基线包含 Actor 世界位置及 pitch/yaw/roll；世界旋转通过原版 Actor getter/setter 复制，与 facing、VisualPivot/renderer 相对变换分开。协议6增加三float，48行容量保持，必须以最大全量及全部换key的delta验证128KiB上限，不能因模型资源相同而假设 spawn 默认朝向正确。
 
@@ -427,6 +431,20 @@ Companion `cp` 基线包含 Actor 世界位置及 pitch/yaw/roll；世界旋转�
 | presentation_policy | Actor/Controller/RootMotion组件句柄；release/reset/死亡；根运动原值只在其对应对象存活时恢复 | ready/failed/rootDrift/restored/expired |
 | Companion身份/副本 | AIC→LeaderPawn→玩家PC对应seat；玩家归属变化、实体死亡、图重置；ID不在同会话复用 | hostIds/copies/ownerConflict/leaderMissing/capacityOverflow/policyFail/fxMissing |
 | 持续FX | Host激活ID+PSC句柄，逐peer的Ref/地图投递绑定；停止、对象失效、离图、会话结束 | live/baselines/bindingsClosed；Client kept/replaced/stopMissed |
+
+### 16.3 已恢复的原版执行链（2026-11-05，ADR 0009）
+
+本机Client保留原版输入/移动/动画。Host接受的LaunchKnockback事实含原参数、模式/速度/位置及资产身份，Client调用同一原版入口，核对实际Type/LaunchVector；不从HP差猜动画。重复自主Launch仅在该受控座位收窄拦截，原版Tick/恢复继续运行。协议8把原版LaunchHitStop和exact DamageColorCurve.PlayFromStart加入同一Reaction流，按native entry_order排序，不让嵌套回调的返回顺序颠倒因果。HitStop校验factor/AdditionalStates后复用原版暂停/恢复，色闪严格核原曲线/同Actor回调后复用原版Timeline；不广播带无敌状态的HP委托。实际范围与未闭合音效/AdditiveDamage等边见验收记录。
+
+远端根Ability由原版Launch生成，容器子Ability与私有PSC由原版时间线生成；删除子Act和这些PSC的generic复制/本地抑制。Host子Stop以根wire身份及原版Entries路径/occurrence送达原版Stop。原版Stop可延迟至效果队列耗尽，完成判定同时要求IsActive与IsLaunched为false。未知身份、容量故障明确结束会话。Own-seat预测Ability关联、Homing上下文、完整Summoner/Spirit入口及晚加入活动基线仍未完成；见[验收记录](kb/lily-regression-2026-11-04.md)。
+
+| 原版链缓存 | 身份、失效源与上限 | 审计 |
+|---|---|---|
+| Ability activation/family | 单调token+ObjHandle+Invoker；native Launch替换、实际Stop完成、weak失效、会话清理；4096 activation、1024 family、8192成员/源路径 | paths/unsupported/ended/retiredFamilies/deferredStops/completionFailed/fault |
+| 根wire与投递绑定 | root token对应kind/id/seq，冻结peer/epoch/map；离图永久撤销投递；FFA子可越过根对象复用，整族结束再回收 | live abilities/childStops/childUnmatched/familiesReleased |
+| 原版Ability PSC | exact PSC及原版owner activation句柄；池复用、weak失效、会话清理 | native ability FX kept/exactPSC/capacityRejected |
+| Reaction schema/序列 | 类、函数、状态结构弱句柄；模式启停/世界失效重建；序号按seat/epoch/map检查，等待队列有界 | captured/replayed/rejected/anchorNoMoveAccepted/anchorFailed |
+| DamageColor Timeline schema | 类型/函数/Curve弱句柄；失效/reset时重建；每次启动核exact实例、纯色轨、同Actor属性及委托，不缓存Actor裸指针 | captured/captureFailed/replayed/rejected/fault |
 
 ## 17. 风险与对策
 

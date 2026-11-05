@@ -45,6 +45,8 @@ enum class Msg : std::uint8_t {
     Snd = 12,       // host → client: sound timeline event on a replicated actor
     ActStop = 13,   // host → client: AAbility::Stop of a replicated launch
     // 14 was the removed experimental Cmd channel; never reuse its wire id.
+    Reaction = 15, // ordered Host-accepted Knockback / HitStop / DamageColor for the client's own Lily
+    ChildStop = 16, // stop an exact native descendant of a replicated root Act; never a second launch
 };
 
 // Owner of a replicated event (P6): which presented actor on the client it belongs to.
@@ -71,6 +73,7 @@ struct Act {
     std::uint8_t spawn_bone = 0, attach_bone = 0;             // ESpineBone values
     std::uint16_t custom_spawn = 0, custom_attach = 0;        // name ids (0 = None)
     std::uint8_t flags = 0;     // bit0 follow spawn rot, bit1 follow attach rot, bit2 fire-and-forget
+    float max_execution_time = 0.0f, damage_rate = 1.0f; // original FAbilityParameters, finite signed values
 };
 enum class FxAttach : std::uint8_t { None = 0, Root = 1, Component = 2, CompanionFx = 3, SpineBone = 4 };
 inline constexpr bool valid_attach_bone(std::uint8_t bone) {
@@ -88,7 +91,7 @@ struct Fx {
     std::uint8_t bone = 0;  // ESpineBone
     std::uint16_t custom_bone = 0; // name id (0 = None)
     std::array<float, 10> xf{0, 0, 0, 1, 0, 0, 0, 1, 1, 1}; // Offset
-    std::uint8_t flags = 0; // bit0 attach, bit1 follow bone rotation, bit2 running baseline (BaseFX register / active emitter), bit3 emitter (xf = relative rotator/loc/scale), bit4 initial state
+    std::uint8_t flags = 0; // bit0 attach, bit1 follow bone rotation, bit2 running baseline (BaseFX register / active emitter), bit3 emitter (xf = relative rotator/loc/scale), bit4 initial state, bit5 proven Host feedback
     std::int32_t sort = 0;  // BaseFX TranslucencySortPriority; emitter original EAttachLocation (audit)
     std::uint8_t pool = 0;  // Host EPSCPoolMethod (audit); remote replay always uses None
     std::uint8_t attach_kind = 0; // FxAttach; emitter only, no implicit root fallback
@@ -96,11 +99,14 @@ struct Fx {
     std::uint16_t attach_socket = 0; // exact AttachPointName; 0 = None
     std::uint8_t emitter_flags = 0; // bit0 original AutoDestroy, bit1 original AutoActivate
 };
-struct FxStop { std::uint32_t seq = 0; };struct Snd {
+struct FxStop { std::uint32_t seq = 0; };
+struct Snd {
     std::uint8_t kind = 1;
     std::uint16_t net_id = 0;
     std::uint16_t event = 0; // UFMODEvent path name id
     std::uint8_t is2d = 0;
+    std::uint8_t flags = 0; // bit0 proven Host feedback, bit1 exact Host transform; feedback requires bit1 even for is2d
+    std::array<float, 10> xf{0, 0, 0, 1, 0, 0, 0, 1, 1, 1}; // quat, translation (map-normalized), scale; serialized only with bit1
 };
 struct ActStop {
     std::uint8_t kind = 1;
@@ -108,6 +114,45 @@ struct ActStop {
     std::uint32_t seq = 0; // the Act.seq of that owner
     std::uint8_t reason = 0; // EAbilityStopReason
 };
+inline constexpr std::size_t kAbilityPathDepth = 8;
+struct AbilityPath {
+    std::uint8_t depth = 0; // root = 0; each child edge is a proven container Entries index
+    std::array<std::uint16_t, kAbilityPathDepth> entries{};
+    std::array<std::uint32_t, kAbilityPathDepth> occurrences{}; // per-entry activation occurrence, starts at 1
+    bool operator==(const AbilityPath&) const = default;
+};
+struct ChildStop {
+    std::uint8_t kind = 1;
+    std::uint16_t net_id = 0;
+    std::uint32_t seq = 0; // original root Act.seq, retained after its Actor stops or is pooled
+    std::uint16_t ability = 0; // exact child class path name id
+    AbilityPath path;
+    std::uint8_t reason = 0; // EAbilityStopReason: 0..3
+    bool operator==(const ChildStop&) const = default;
+};
+bool valid_child_stop(const ChildStop& m) noexcept;
+inline constexpr std::size_t kReactionStates = 16;
+struct Reaction {
+    std::uint8_t kind = 0; // 0 Knockback, 1 HitStop, 2 DamageColor (state_count must be zero)
+    std::uint8_t seat = 0;
+    std::uint16_t epoch = 0, map = 0;
+    std::uint32_t seq = 0, t_ms = 0;
+    std::uint8_t state_count = 0;
+    std::array<std::uint16_t, kReactionStates> states{};
+    float duration = 0, factor = 1; // HitStop: original duration plus verified HitStopFactor context
+    // FKnockbackData fields only; never its vptr, UObject pointers or TArray storage.
+    std::uint8_t flags = 0; // force restart, reset velocity, absolute vector, until grounded
+    std::array<float, 3> ground{}, air{}, swim{};
+    float stun = 0, move = 0, strength = 0;
+    std::uint16_t curve = 0;
+    std::array<float, 3> direction{}, position{}, velocity{}, launch_factor{}, effective_launch{};
+    float movement_factor = 1;
+    std::uint8_t movement_mode = 0, custom_mode = 0;
+    std::uint8_t context = 0; // bit0 previous reaction running, bit1 previous type Launch
+    std::uint8_t knockback_type = 0; // original result: Normal=0, Launch=1
+    bool operator==(const Reaction&) const = default;
+};
+bool valid_reaction(const Reaction& m) noexcept;
 struct Json { std::string text; };
 struct Control { std::uint8_t code = 0; std::string text; };
 inline constexpr std::uint8_t kControlBanner = 10; // host → client: mode status line (empty = clear)
@@ -123,10 +168,14 @@ std::size_t encode(const Fx& m, std::span<std::uint8_t> out);
 std::size_t encode(const FxStop& m, std::span<std::uint8_t> out);
 std::size_t encode(const Snd& m, std::span<std::uint8_t> out);
 std::size_t encode(const ActStop& m, std::span<std::uint8_t> out);
+std::size_t encode(const ChildStop& m, std::span<std::uint8_t> out);
+std::size_t encode(const Reaction& m, std::span<std::uint8_t> out);
 bool decode(std::span<const std::uint8_t> in, Fx& m);
 bool decode(std::span<const std::uint8_t> in, FxStop& m);
 bool decode(std::span<const std::uint8_t> in, Snd& m);
 bool decode(std::span<const std::uint8_t> in, ActStop& m);
+bool decode(std::span<const std::uint8_t> in, ChildStop& m);
+bool decode(std::span<const std::uint8_t> in, Reaction& m);
 
 Msg type_of(std::span<const std::uint8_t> in); // 0 cast when empty
 bool decode(std::span<const std::uint8_t> in, Welcome& m);

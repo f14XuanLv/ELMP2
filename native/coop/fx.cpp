@@ -1,5 +1,7 @@
 #include "coop/fx.h"
+#include "coop/ability.h"
 #include "coop/entities/companion.h"
+#include "coop/feedback_context.h"
 
 #include "guard/guard.h"
 
@@ -61,6 +63,15 @@ std::uint64_t g_cap_emitter = 0, g_local_emitter = 0;
 std::uint64_t g_attach_failed = 0;
 std::uint64_t g_early_overflow = 0, g_emitter_inactive = 0;
 std::string g_attach_failure;
+std::string g_feedback_failure;
+std::uint64_t g_feedback_fx = 0, g_feedback_snd = 0, g_feedback_blocked = 0;
+std::uint64_t g_feedback_sound_instance = 0, g_feedback_sound_empty = 0;
+void feedback_fault(const char* why) { if (g_feedback_failure.empty()) g_feedback_failure = why; }
+// Identity of the last captured spawn, not a whitelist of particle assets or all Ability actors.
+// Keep the PSC's provenance through native Stop tails; overwrite it on every captured pool reuse.
+std::unordered_map<UObject*, ObjHandle> g_native_ability_psc;
+std::uint64_t g_native_ability_fx = 0, g_native_psc_overflow = 0;
+constexpr std::size_t kNativePscCapacity = 4096;
 // Only Pool=None replay results enter this set. Weak serial invalidation and explicit retire remove
 // entries; native suppressed PSCs (including Companion.FX) never become owned here.
 std::unordered_set<ObjHandle> g_remote_psc;
@@ -112,6 +123,28 @@ void hide_now(UObject* psc) {
 }
 
 UObject* fx_owner(UObject* o); // 定义在 emitter 钩子旁
+UObject* source_actor(UObject* o) {
+    static auto* actor = reflect::find_class(L"/Script/Engine.Actor");
+    for (int i = 0; ue::alive(o) && actor && i < 8; ++i, o = o->GetOuterPrivate())
+        if (o->GetClassPrivate()->IsChildOf(actor)) return o;
+    return nullptr;
+}
+bool native_fx_spawn(UObject* source, UObject* psc) {
+    // A pooled PSC's UObject serial survives its next activation. Revoke before classifying this one.
+    g_native_ability_psc.erase(psc);
+    // Effect Apply/Finalize is never executed on Client. Its output cannot be delegated to the
+    // replicated Ability's private writer, even when that Ability is the outer Actor.
+    if (feedback_context::owns(source) || feedback_context::effect_scope()) return false;
+    if (!ability::native_writer(source_actor(source))) return false;
+    ++g_native_ability_fx;
+    if (ue::alive(psc)) {
+        if (g_native_ability_psc.size() >= kNativePscCapacity)
+            std::erase_if(g_native_ability_psc, [](const auto& p) { return !p.second.valid(); });
+        if (g_native_ability_psc.size() < kNativePscCapacity) g_native_ability_psc.emplace(psc, ObjHandle::of(psc));
+        else ++g_native_psc_overflow;
+    }
+    return true;
+}
 
 // Cold emitter paths only. Native schema expires with its class/function handles; Blueprint FX
 // properties are keyed by class serial and evicted when that class expires. No component pointer
@@ -304,12 +337,27 @@ std::size_t take_early_impl(std::vector<Spawn>& out) {
 
 UObject* __fastcall d_spawn(UObject* comp, UObject* ps, std::uint8_t bone, std::uint64_t custom, const std::uint8_t* xf, bool attach, bool follow, std::int32_t sort,
                             std::uint8_t pool, bool reg) {
-    g_in_spawn = true; // SpawnFX 内部会转调 SpawnEmitterAttached，别在 emitter 钩子上重复捕获
+    struct SpawnScope { bool previous = g_in_spawn; SpawnScope() { g_in_spawn = true; } ~SpawnScope() { g_in_spawn = previous; } } spawn_scope;
     auto* psc = o_spawn(comp, ps, bone, custom, xf, attach, follow, sort, pool, reg);
-    g_in_spawn = false;
     if (!ue::on_game_thread() || !comp) return psc;
+    if (native_fx_spawn(comp, psc)) return psc;
+    const bool feedback = feedback_context::owns(comp);
+    if (feedback_context::effect_scope() && !feedback) {
+        feedback_fault("feedback SpawnFX source has no proven owner/attachment");
+        if (g_client && !g_replaying && ue::alive(psc)) hide_now(psc);
+        return psc;
+    }
     auto* owner = comp->GetOuterPrivate();
-    if (auto* resolved = fx_owner(owner)) owner = resolved; // 技能（AAbility）产生的特效归到它的 Owner 角色
+    if (auto* resolved = fx_owner(owner)) {
+        // BaseFX replay resolves the target Actor's component. A private Ability component is not
+        // equivalent, even if its Owner happens to be that Actor; no proven wire identity exists yet.
+        if (feedback && resolved != source_actor(comp)) {
+            feedback_fault("feedback SpawnFX requires an unsupported private Ability component");
+            if (g_client && !g_replaying && ue::alive(psc)) hide_now(psc);
+            return psc;
+        }
+        owner = resolved;
+    }
     const bool have = ps && xf && (g_host || g_client || reg); // 没有会话时只关心持续特效（reg），别为别的付代价
     Spawn s;
     if (have) {
@@ -318,7 +366,7 @@ UObject* __fastcall d_spawn(UObject* comp, UObject* ps, std::uint8_t bone, std::
         s.psc = psc;
         s.msg.bone = bone;
         read_xf(xf, s.msg.xf);
-        s.msg.flags = (attach ? 1 : 0) | (follow ? 2 : 0) | (reg ? 4 : 0);
+        s.msg.flags = (attach ? 1 : 0) | (follow ? 2 : 0) | (reg ? 4 : 0) | (feedback ? 32 : 0);
         s.msg.sort = sort;
         s.msg.pool = pool;
         ue::FName n;
@@ -327,12 +375,14 @@ UObject* __fastcall d_spawn(UObject* comp, UObject* ps, std::uint8_t bone, std::
     }
     if (g_host && g_sinks.spawn && have) {
         ++g_cap_spawn;
+        if (feedback) ++g_feedback_fx;
         g_sinks.spawn(s);
     } else if (!g_client && have && (s.msg.flags & 4)) {
         record_early(owner, ps, psc, s.msg, s.custom_bone); // 会话前的持续特效：留给 Host 补发
-    } else if (g_client && owner && guard::marked(owner) && ue::alive(psc)) {
+    } else if (g_client && owner && (feedback || guard::marked(owner)) && ue::alive(psc)) {
         if (!g_replaying) {
             ++g_local_blocked;
+            if (feedback) ++g_feedback_blocked;
             if (ps && g_blocked_ps.size() < 32) ++g_blocked_ps[path_of(ps)];
             hide_now(psc);
         }
@@ -340,8 +390,8 @@ UObject* __fastcall d_spawn(UObject* comp, UObject* ps, std::uint8_t bone, std::
     return psc;
 }
 
-// Emitter 路径的 owner：AttachToComponent 的 outer 链上的 Actor；技能（AAbility）取其 Owner（角色），
-// 这样技能自己产生的粒子也能映射到可复制的 Ref，而不是像 P7-2 那样把 ability-owned 直接丢掉。
+// Generic FX attribution only. Registered native Ability writers have already returned above:
+// folding their private component to the Invoker loses the very attachment the original BP owns.
 UObject* fx_owner(UObject* o) {
     static ue::UClass* actor = reflect::find_class(L"/Script/Engine.Actor");
     static ue::UClass* ability = reflect::find_class(L"/Script/Zenith.Ability");
@@ -366,13 +416,20 @@ UObject* __fastcall d_em_attach(UObject* ps, UObject* attach_to, std::uint64_t p
                                 bool autodestroy, std::uint8_t pool, bool activate) {
     auto* psc = o_em_attach(ps, attach_to, point, loc, rot, scale, loc_type, autodestroy, pool, activate);
     if (!ue::on_game_thread() || g_in_spawn || !ps || !attach_to) return psc;
+    if (native_fx_spawn(attach_to, psc)) return psc;
+    const bool feedback = feedback_context::owns(attach_to);
+    if (feedback_context::effect_scope() && !feedback) {
+        feedback_fault("feedback emitter source has no proven owner/attachment");
+        if (g_client && !g_replaying && ue::alive(psc)) hide_now(psc);
+        return psc;
+    }
     auto* owner = fx_owner(attach_to);
     if (!owner) return psc;
     // The exact Companion.FX PSC has a snapshot state writer. The Blueprint assigns FX after this
     // native call returns, so host delivery also repeats this test once that assignment is visible.
     if (entities::companion_owns_fx(owner, psc)) return psc;
     if ((g_host && g_sinks.spawn) || !g_client) {
-        auto rejected = [&](const char* why) { ++g_attach_failed; g_attach_failure = why; };
+        auto rejected = [&](const char* why) { ++g_attach_failed; g_attach_failure = why; if (feedback) feedback_fault(why); };
         if (!active(psc)) { ++g_emitter_inactive; return psc; }
         const auto* schema = attachment_schema();
         if (!schema || !ue::alive(psc)) { rejected("PSC relative transform schema/result"); return psc; }
@@ -380,7 +437,7 @@ UObject* __fastcall d_em_attach(UObject* ps, UObject* attach_to, std::uint64_t p
         s.owner = owner;
         s.ps = ps;
         s.psc = psc;
-        s.msg.flags = 8 | 4 | 1; // active emitter baseline until stopped/invalid; not a claim that the asset loops
+        s.msg.flags = 8 | 4 | 1 | (feedback ? 32 : 0); // active emitter baseline until stopped/invalid
         s.msg.sort = loc_type;
         s.msg.pool = pool;
         s.msg.emitter_flags = (autodestroy ? 1 : 0) | (activate ? 2 : 0);
@@ -395,12 +452,13 @@ UObject* __fastcall d_em_attach(UObject* ps, UObject* attach_to, std::uint64_t p
         s.attach_socket = ue::utf8(socket);
         if (s.attach_socket.size() > net::proto::kMaxName || loc_type > 3) { rejected("socket length/location rule"); return psc; }
         if (!capture_attachment(*schema, owner, attach_to, s)) { rejected("unresolved exact attachment identity"); return psc; }
-        if (g_host && g_sinks.spawn) { ++g_cap_emitter; g_sinks.spawn(s); }
+        if (g_host && g_sinks.spawn) { ++g_cap_emitter; if (feedback) ++g_feedback_fx; g_sinks.spawn(s); }
         else record_early(owner, ps, psc, s.msg, {}, s.attach_component, s.attach_socket);
-    } else if (g_client && ue::alive(psc) && guard::marked(owner)) {
+    } else if (g_client && ue::alive(psc) && (feedback || guard::marked(owner))) {
         // Host results are the only writer for particles on presented owners.
         if (!g_replaying) {
             ++g_local_emitter;
+            if (feedback) ++g_feedback_blocked;
             hide_now(psc);
         }
     }
@@ -428,15 +486,32 @@ UObject* sound_owner(UObject* ctx) {
 
 std::uint64_t __fastcall d_sound(UObject* ctx, UObject* ev, const std::uint8_t* xf, bool autoplay) {
     if (ev && ue::on_game_thread()) {
+        auto* target = feedback_context::sound_target(ctx);
+        const bool feedback = target != nullptr;
+        // Contact -> Knockback can synchronously cancel a native Ability. Its private OnStop
+        // sounds retain their existing writer; an enclosing Contact alone proves no sound source.
+        if ((!target && feedback_context::effect_scope()) || (feedback && (!xf || !autoplay))) {
+            feedback_fault("feedback sound has unsupported context/transform/autoplay");
+            if (g_client && !g_replaying) return ++g_feedback_blocked, 0;
+            return o_sound(ctx, ev, xf, autoplay);
+        }
+        auto* owner = target ? target : sound_owner(ctx);
         if (g_host && g_sinks.sound) {
-            if (auto* owner = sound_owner(ctx)) {
-                float t[3]{};
-                if (xf) std::memcpy(t, xf + 16, 12);
+            if (owner && xf && autoplay) {
+                Sound s;
+                s.owner = owner; s.event = ev;
+                read_xf(xf, s.xf);
+                s.is2d = s.xf[4] == 0 && s.xf[5] == 0 && s.xf[6] == 0; // existing PlayEvent2D identity convention
+                s.flags = 2 | (feedback ? 1 : 0);
                 ++g_cap_sound;
-                g_sinks.sound({owner, ev, t[0] == 0 && t[1] == 0 && t[2] == 0}); // PlayEvent2D passes the identity transform
+                if (feedback) ++g_feedback_snd;
+                g_sinks.sound(s);
             }
         } else if (g_client && !g_replaying) {
-            if (auto* owner = sound_owner(ctx); owner && guard::marked(owner)) return ++g_local_sound_blocked, 0; // the host's sound arrives instead
+            if (owner && (feedback || guard::marked(owner))) {
+                if (feedback) ++g_feedback_blocked;
+                return ++g_local_sound_blocked, 0; // only proven feedback also suppresses the local P1
+            }
         }
     }
     return o_sound(ctx, ev, xf, autoplay);
@@ -448,8 +523,13 @@ UObject* __fastcall d_attached(UObject* ev, UObject* parent, std::uint64_t socke
 }
 
 void __fastcall d_stop(UObject* ability, std::uint8_t reason) {
+    elmp::coop::ability::Identity before;
+    if (ue::on_game_thread()) elmp::coop::ability::identity(ability, before);
     if (g_host && g_sinks.ability_stop && ability && ue::on_game_thread()) ++g_cap_stop, g_sinks.ability_stop(ability, reason);
+    if (!ue::on_game_thread()) { o_stop(ability, reason); return; }
+    elmp::coop::ability::NativeScope scope(ability);
     o_stop(ability, reason);
+    elmp::coop::ability::stopped(ability, before);
 }
 
 void install_hooks() {
@@ -484,6 +564,7 @@ ue::UObject* asset(const std::string& path) {
 } // namespace
 
 void install() {
+    feedback_context::install(); // on_unreal_init; phase registration must precede frame iteration
     install_hooks();
     static bool retirement_installed = false;
     if (!retirement_installed) {
@@ -502,23 +583,42 @@ bool active(ue::UObject* psc) {
     return ue::alive(psc) && enabled.ok() && enabled.read_bool(psc);
 }
 
+bool native_ability_owned(ue::UObject* psc) {
+    const auto it = g_native_ability_psc.find(psc);
+    if (it == g_native_ability_psc.end()) return false;
+    if (it->second.get() == psc) return true;
+    g_native_ability_psc.erase(it);
+    return false;
+}
+
 bool host_enable(const Sinks& s) {
     install();
+    if (!feedback_context::enable()) return false;
     g_sinks = s;
-    g_host = g_spawn_ok || g_sound_ok || g_stop_ok || g_em_ok;
+    g_host = g_spawn_ok && g_sound_ok && g_deact_ok && g_stop_ok && g_em_ok;
     return g_host;
 }
 
-void host_disable() { g_host = false, g_sinks = {}; g_early.clear(); g_early_ps.clear(); }
+void host_disable() {
+    g_host = false; g_sinks = {}; g_early.clear(); g_early_ps.clear(); g_native_ability_psc.clear();
+    if (!g_client) feedback_context::disable();
+    g_feedback_failure.clear();
+}
 
 bool client_enable() {
     install();
+    if (!feedback_context::enable()) return false;
     g_early.clear(); // client-side effects cannot seed a later hosting session
-    g_client = g_spawn_ok || g_em_ok;
+    g_client = g_spawn_ok && g_em_ok && g_sound_ok;
     return g_client;
 }
 
-void client_disable() { g_client = false; g_early.clear(); }
+void client_disable() {
+    g_client = false; g_early.clear(); g_native_ability_psc.clear();
+    if (!g_host) feedback_context::disable();
+    g_feedback_failure.clear();
+}
+std::string fault() { return g_feedback_failure.empty() ? feedback_context::fault() : g_feedback_failure; }
 
 std::string path_of(ue::UObject* a) {
     static std::unordered_map<ue::UObject*, std::pair<ObjHandle, std::string>> paths;
@@ -635,7 +735,7 @@ void reap_retired(std::int64_t now_us) {
 }
 } // namespace
 
-bool play_sound(ue::UObject* actor, const std::string& event_path, bool is2d, std::string* why) {
+bool play_sound(ue::UObject* actor, const std::string& event_path, const net::proto::Snd& msg, std::string* why) {
     auto fail = [&](const char* w) {
         if (why) *why = w;
         return false;
@@ -648,9 +748,18 @@ bool play_sound(ue::UObject* actor, const std::string& event_path, bool is2d, st
     static reflect::FuncRef xf = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).func(L"GetTransform", 0);
     auto* cdo = reflect::find_object(L"/Script/FMODStudio.Default__FMODBlueprintStatics");
     if (!cdo || !at.ok() || !flat.ok() || !xf.ok()) return fail("FMOD statics");
+    if ((msg.flags & 1) && (at.ret < 0 || at.parms[at.ret].size != sizeof(std::uint64_t))) return fail("FMOD instance return schema");
     bool ok = false;
+    std::uint64_t instance = 0;
     g_replaying = true;
-    if (is2d) {
+    if (msg.flags & 2) {
+        // Preserve the Host's original FTransform, including identity from PlayEvent2D. Do not
+        // substitute the current/interpolated owner position for the point at which the hit occurred.
+        reflect::Frame f(at);
+        f.arg(0, actor).arg(1, ev).arg_bool(3, true);
+        auto* dst = static_cast<std::uint8_t*>(f.raw(2));
+        if (dst) { write_xf(dst, msg.xf); ok = f.invoke(cdo); if (ok) instance = f.ret<std::uint64_t>(); }
+    } else if (msg.is2d) {
         reflect::Frame f(flat);
         f.arg(0, actor).arg(1, ev).arg_bool(2, true);
         ok = f.invoke(cdo);
@@ -663,6 +772,12 @@ bool play_sound(ue::UObject* actor, const std::string& event_path, bool is2d, st
     }
     g_replaying = false;
     if (!ok) return fail("invoke");
+    if (msg.flags & 1) {
+        // FMOD can legitimately return null for an inaudible World or unavailable bank. This
+        // diagnoses actual native instance creation, not physical speaker output or a session fault.
+        if (instance) ++g_feedback_sound_instance;
+        else ++g_feedback_sound_empty;
+    }
     ++g_rep_sound;
     return true;
 }
@@ -670,11 +785,11 @@ bool play_sound(ue::UObject* actor, const std::string& event_path, bool is2d, st
 bool stop_ability(ue::UObject* ability, std::uint8_t reason) {
     static reflect::FuncRef stop = reflect::Resolver("Ability", reflect::find_class(L"/Script/Zenith.Ability")).func(L"Stop", 1);
     if (!ue::alive(ability) || !stop.ok()) return false;
-    static reflect::FuncRef launched = reflect::Resolver("Ability", reflect::find_class(L"/Script/Zenith.Ability")).func(L"IsLaunched", 0);
-    if (launched.ok()) {
-        reflect::Frame l(launched);
-        if (!l.invoke(ability) || !l.ret_bool()) return false; // already ended locally (fire-and-forget hit a wall)
-    }
+    // IsLaunched only recognizes native states 2/3; state 4 is still active while effects drain.
+    // Host END_PLAY / a later Stop must be allowed to reach vanilla in that state too.
+    static reflect::FuncRef active = reflect::Resolver("ReusableActor", reflect::find_class(L"/Script/Zenith.ReusableActor")).func(L"IsActive", 0);
+    reflect::Frame l(active);
+    if (!active.ok() || !l.invoke(ability) || !l.ret_bool()) return false;
     reflect::Frame f(stop);
     f.arg(0, reason);
     if (!f.invoke(ability)) return false;
@@ -688,6 +803,10 @@ std::string describe() {
                                   g_cap_emitter, g_rep_spawn, g_rep_fail, g_rep_deact, g_rep_sound, g_rep_stop, g_rep_emitter, g_local_blocked, g_local_sound_blocked, g_local_emitter, g_attached);
     out += std::format("  early persistent fx: {} overflow={}\n", g_early.size(), g_early_overflow);
     out += std::format("  emitter attachmentRejected={} inactiveAtSpawn={} last={}\n", g_attach_failed, g_emitter_inactive, g_attach_failure);
+    out += std::format("  feedback fx={} sounds={} localSuppressed={} fault={}\n", g_feedback_fx, g_feedback_snd, g_feedback_blocked, fault());
+    out += std::format("  feedback FMOD replay instanceCreated={} nativeEmpty={}\n", g_feedback_sound_instance, g_feedback_sound_empty);
+    out += feedback_context::describe();
+    out += std::format("  native ability FX kept={} exactPSC={} capacityRejected={}\n", g_native_ability_fx, g_native_ability_psc.size(), g_native_psc_overflow);
     out += std::format("  remote ownedPSC={} retiring={} retired={} expired={} retireFailed={} capacityRejected={}\n", g_remote_psc.size(), g_retiring.size(), g_retired, g_retire_expired, g_retire_failed, g_remote_overflow);
     for (const auto& [p, n] : g_early_ps) out += std::format("  early {} x{}\n", p.substr(p.rfind('/') + 1), n);
     for (const auto& [p, n] : g_blocked_ps) out += std::format("  local {} x{}\n", p.substr(p.rfind('/') + 1), n);

@@ -253,12 +253,25 @@ TEST_MAIN({
         act.kind = static_cast<std::uint8_t>(RefKind::Companion); act.net_id = 60000;
         n = encode(act, mb);
         CHECK(n && decode(std::span(mb.data(), n), act2) && act2.kind == 5 && act2.net_id == 60000);
+        act.max_execution_time = -2.0f; act.damage_rate = -0.25f;
+        n = encode(act, mb);
+        CHECK(n && decode(std::span(mb.data(), n), act2) && act2.max_execution_time == -2.0f && act2.damage_rate == -0.25f);
+        act.damage_rate = std::numeric_limits<float>::infinity();
+        n = encode(act, mb); CHECK(n && !decode(std::span(mb.data(), n), act2));
+        act.damage_rate = 1; act.max_execution_time = std::numeric_limits<float>::quiet_NaN();
+        n = encode(act, mb); CHECK(n && !decode(std::span(mb.data(), n), act2));
         Fx fx;
         fx.kind = 5, fx.net_id = 60000, fx.seq = 77, fx.ps = 9, fx.custom_bone = 3, fx.flags = 3, fx.sort = -2, fx.pool = 1;
         n = encode(fx, mb);
         Fx fx2;
         CHECK(n && decode(std::span(mb.data(), n), fx2) && fx2.kind == 5 && fx2.net_id == 60000 && fx2.seq == 77 && fx2.sort == -2 && fx2.pool == 1);
         for (std::size_t k = 0; k < n; ++k) CHECK(!decode(std::span(mb.data(), k), fx2));
+        fx.flags |= 16 | 32; // initial state and proven feedback are independent wire bits
+        n = encode(fx, mb);
+        CHECK(n && decode(std::span(mb.data(), n), fx2) && fx2.flags == 51);
+        fx.flags |= 64;
+        n = encode(fx, mb); CHECK(n && !decode(std::span(mb.data(), n), fx2));
+        fx.flags = 3;
         fx.ps = 0; // no particle system
         n = encode(fx, mb);
         CHECK(!decode(std::span(mb.data(), n), fx2));
@@ -294,6 +307,8 @@ TEST_MAIN({
         emitter.attach_kind = static_cast<std::uint8_t>(FxAttach::SpineBone);
         emitter.bone = 60; emitter.flags |= 2;
         n = encode(emitter, mb); CHECK(n && decode(std::span(mb.data(), n), fx2) && fx2.bone == 60);
+        emitter.flags = 63; // feedback + initial state preserve the existing emitter/bone/baseline semantics
+        n = encode(emitter, mb); CHECK(n && decode(std::span(mb.data(), n), fx2) && fx2.flags == 63 && fx2.bone == 60);
         emitter.bone = 255;
         n = encode(emitter, mb); CHECK(n && !decode(std::span(mb.data(), n), fx2));
         emitter.bone = 0; emitter.flags = 9; emitter.attach_component = 0;
@@ -323,5 +338,213 @@ TEST_MAIN({
         NameTable t;
         bool fresh = false;
         CHECK(t.intern("a", &fresh) == 1 && fresh && t.intern("a", &fresh) == 1 && !fresh && *t.text(1) == "a" && !t.text(2));
+    }
+    { // Proven feedback audio carries the original FTransform, including the 2D forwarding entry.
+        using namespace elmp::net::proto;
+        std::array<std::uint8_t, 64> wire{};
+        Snd a{5, 60000, 8, 0}, b;
+        a.xf = {0, 0, 0.6f, 0.8f, -1e6f, 1e6f, 123.5f, 0.5f, 2, -1};
+        for (std::uint8_t flags : {0, 2, 3}) for (std::uint8_t is2d : {0, 1}) {
+            a.flags = flags; a.is2d = is2d;
+            const auto n = encode(a, wire);
+            CHECK(n == ((flags & 2) ? 48 : 8));
+            CHECK(decode(std::span(wire.data(), n), b) && b.flags == flags && b.is2d == is2d && b.event == a.event);
+            CHECK(b.xf == ((flags & 2) ? a.xf : Snd{}.xf));
+            for (std::size_t cut = 0; cut < n; ++cut) CHECK(!decode(std::span(wire.data(), cut), b));
+            wire[n] = 0; CHECK(!decode(std::span(wire.data(), n + 1), b));
+            CHECK(encode(a, std::span(wire.data(), n - 1)) == 0);
+        }
+        a.flags = 3; a.is2d = 1;
+        for (std::uint8_t flags : {1, 4, 7, 128, 255}) {
+            auto malformed = a; malformed.flags = flags;
+            CHECK(encode(malformed, wire) == 0);
+            auto n = encode(a, wire); wire[7] = flags;
+            CHECK(!decode(std::span(wire.data(), n), b));
+            // flags=1 is also invalid at the short wire length (including is2d=1).
+            CHECK(!decode(std::span(wire.data(), 8), b));
+        }
+        for (int bad = 0; bad < 5; ++bad) {
+            auto malformed = a;
+            if (bad == 0) malformed.kind = 0;
+            if (bad == 1) malformed.kind = kRefKindMax + 1;
+            if (bad == 2) malformed.event = 0;
+            if (bad == 3) malformed.is2d = 2;
+            if (bad == 4) malformed.is2d = 255;
+            CHECK(encode(malformed, wire) == 0);
+            const auto n = encode(a, wire);
+            if (bad <= 1) wire[1] = malformed.kind;
+            if (bad == 2) wire[4] = wire[5] = 0;
+            if (bad >= 3) wire[6] = malformed.is2d;
+            CHECK(!decode(std::span(wire.data(), n), b));
+        }
+        for (std::size_t field = 0; field < a.xf.size(); ++field) {
+            for (const auto value : {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(), -1e6f - 1, 1e6f + 1}) {
+                auto malformed = a; malformed.xf[field] = value;
+                CHECK(encode(malformed, wire) == 0);
+                const auto n = encode(a, wire);
+                Writer patch(std::span(wire).subspan(8 + 4 * field)); patch.f32(value);
+                CHECK(!decode(std::span(wire.data(), n), b));
+            }
+        }
+        for (const auto qw : {0.0f, 2.0f}) {
+            auto malformed = a; malformed.xf[2] = 0; malformed.xf[3] = qw;
+            CHECK(encode(malformed, wire) == 0);
+            const auto n = encode(a, wire);
+            Writer patch(std::span(wire).subspan(16)); patch.f32(0); patch.f32(qw);
+            CHECK(!decode(std::span(wire.data(), n), b));
+        }
+        // Reusing a receive struct for legacy owner-relative audio must clear all prior exact fields.
+        const auto exact_n = encode(a, wire);
+        CHECK(decode(std::span(wire.data(), exact_n), b) && b.xf == a.xf);
+        a.flags = 0;
+        const auto short_n = encode(a, wire);
+        CHECK(short_n == 8 && decode(std::span(wire.data(), short_n), b) && b.flags == 0 && b.xf == Snd{}.xf);
+    }
+    { // A child stop names a full native path under an immutable root, including repeated entries.
+        using namespace elmp::net::proto;
+        std::array<std::uint8_t, 128> wire{};
+        ChildStop a, b;
+        a.kind = static_cast<std::uint8_t>(RefKind::Companion);
+        a.net_id = 65535; a.seq = std::numeric_limits<std::uint32_t>::max(); a.ability = 65535; a.reason = 3;
+        a.path.depth = static_cast<std::uint8_t>(kAbilityPathDepth);
+        for (std::size_t i = 0; i < kAbilityPathDepth; ++i) {
+            a.path.entries[i] = static_cast<std::uint16_t>(i ? 65535 - i : 0); // entry zero is valid
+            a.path.occurrences[i] = std::numeric_limits<std::uint32_t>::max() - static_cast<std::uint32_t>(i);
+        }
+        const auto n = encode(a, wire);
+        CHECK(n == 60 && decode(std::span(wire.data(), n), b) && a == b);
+        CHECK(type_of(std::span(wire.data(), n)) == Msg::ChildStop);
+        for (std::size_t cut = 0; cut < n; ++cut) CHECK(!decode(std::span(wire.data(), cut), b));
+        wire[n] = 0; CHECK(!decode(std::span(wire.data(), n + 1), b));
+        CHECK(encode(a, std::span(wire.data(), n - 1)) == 0);
+        encode(a, wire);
+        wire[10] = 9; // reject an attacker-controlled path count before reading bounded arrays
+        CHECK(!decode(std::span(wire.data(), n), b));
+        encode(a, wire);
+        wire[13] = wire[14] = wire[15] = wire[16] = 0; // occurrence zero never identifies an activation
+        CHECK(!decode(std::span(wire.data(), n), b));
+        encode(a, wire); wire[n - 1] = 4;
+        CHECK(!decode(std::span(wire.data(), n), b));
+        for (int bad = 0; bad < 9; ++bad) {
+            auto malformed = a;
+            if (bad == 0) malformed.kind = 0;
+            if (bad == 1) malformed.kind = kRefKindMax + 1;
+            if (bad == 2) malformed.net_id = 0;
+            if (bad == 3) malformed.seq = 0;
+            if (bad == 4) malformed.ability = 0;
+            if (bad == 5) malformed.path.depth = 0;
+            if (bad == 6) malformed.path.depth = 9;
+            if (bad == 7) malformed.path.occurrences[7] = 0;
+            if (bad == 8) malformed.reason = 4;
+            CHECK(!valid_child_stop(malformed) && encode(malformed, wire) == 0);
+        }
+        a.path = {}; a.path.depth = 1; a.path.entries[0] = 7; a.path.occurrences[0] = 1;
+        auto short_n = encode(a, wire);
+        CHECK(short_n == 18 && decode(std::span(wire.data(), short_n), b) && b == a);
+        ++a.path.occurrences[0]; // same root/class/entry, a different original activation
+        short_n = encode(a, wire);
+        CHECK(decode(std::span(wire.data(), short_n), b) && b == a && b.path.occurrences[0] == 2);
+    }
+    { // Host-confirmed reaction: complete original data/context and bounded asset references.
+        using namespace elmp::net::proto;
+        std::array<std::uint8_t, 512> wire{};
+        Reaction a, b;
+        a.seat = 2; a.epoch = 3; a.map = 4; a.seq = 1001; a.t_ms = 120;
+        a.flags = 15; a.ground = {500, 0, 500}; a.air = {200, 0, 400}; a.swim = {30, 0, 20};
+        a.stun = 0.25f; a.move = 0.3f; a.strength = 100; a.curve = 9;
+        a.direction = {0, -1, 0}; a.position = {10, 20, 30}; a.velocity = {0, 12, -70};
+        a.launch_factor = {1, 1, 1}; a.effective_launch = {0, -500, 500}; a.movement_factor = 1;
+        a.movement_mode = 3; a.custom_mode = 0; a.context = 3; a.knockback_type = 1;
+        a.state_count = static_cast<std::uint8_t>(kReactionStates);
+        for (std::size_t i = 0; i < kReactionStates; ++i) a.states[i] = static_cast<std::uint16_t>(i + 10);
+        const auto n = encode(a, wire);
+        CHECK(n && decode(std::span(wire.data(), n), b) && a == b && type_of(std::span(wire.data(), n)) == Msg::Reaction);
+        for (std::size_t cut = 0; cut < n; ++cut) CHECK(!decode(std::span(wire.data(), cut), b));
+        wire[n] = 0; CHECK(!decode(std::span(wire.data(), n + 1), b));
+        wire[15] = 17; // shared AdditionalStates count is checked before either payload's array read
+        CHECK(!decode(std::span(wire.data(), n), b));
+        for (int bad = 0; bad < 13; ++bad) {
+            auto malformed = a;
+            if (bad == 0) malformed.seat = 0;
+            if (bad == 1) malformed.epoch = 0;
+            if (bad == 2) malformed.map = 0;
+            if (bad == 3) malformed.seq = 0;
+            if (bad == 4) malformed.flags = 16;
+            if (bad == 5) malformed.state_count = 17;
+            if (bad == 6) malformed.states[0] = 0;
+            if (bad == 7) malformed.knockback_type = 2;
+            if (bad == 8) malformed.context = 2;
+            if (bad == 9) malformed.direction[0] = std::numeric_limits<float>::quiet_NaN();
+            if (bad == 10) malformed.movement_mode = 7;
+            if (bad == 11) malformed.velocity[0] = std::numeric_limits<float>::infinity();
+            if (bad == 12) malformed.kind = 3;
+            CHECK(!valid_reaction(malformed) && encode(malformed, wire) == 0);
+        }
+        auto unused = a;
+        unused.duration = std::numeric_limits<float>::quiet_NaN(); unused.factor = std::numeric_limits<float>::infinity();
+        CHECK(encode(unused, wire) == n && decode(std::span(wire.data(), n), b) && b == a); // HitStop fields are not Knockback data
+    }
+    { // HitStop has its own payload/validation, sharing only route/order and state assets with Knockback.
+        using namespace elmp::net::proto;
+        std::array<std::uint8_t, 128> wire{};
+        Reaction a, b;
+        a.kind = 1; a.seat = 8; a.epoch = 7; a.map = 5; a.seq = 1002; a.t_ms = 121;
+        a.duration = 0.2f; a.factor = 0.75f;
+        a.state_count = static_cast<std::uint8_t>(kReactionStates);
+        for (std::size_t i = 0; i < kReactionStates; ++i) a.states[i] = static_cast<std::uint16_t>(65535 - i);
+        const auto n = encode(a, wire);
+        CHECK(n == 56 && decode(std::span(wire.data(), n), b) && a == b);
+        for (std::size_t cut = 0; cut < n; ++cut) CHECK(!decode(std::span(wire.data(), cut), b));
+        wire[n] = 0; CHECK(!decode(std::span(wire.data(), n + 1), b));
+        CHECK(encode(a, std::span(wire.data(), n - 1)) == 0);
+        encode(a, wire); wire[1] = 3;
+        CHECK(!decode(std::span(wire.data(), n), b));
+        encode(a, wire); wire[15] = 17;
+        CHECK(!decode(std::span(wire.data(), n), b));
+        encode(a, wire); wire[16] = wire[17] = 0;
+        CHECK(!decode(std::span(wire.data(), n), b));
+        encode(a, wire);
+        Writer nonfinite(std::span(wire.data() + 48, 8));
+        nonfinite.f32(std::numeric_limits<float>::quiet_NaN()); nonfinite.f32(1);
+        CHECK(!decode(std::span(wire.data(), n), b));
+        for (int bad = 0; bad < 14; ++bad) {
+            auto malformed = a;
+            if (bad == 0) malformed.duration = 0;
+            if (bad == 1) malformed.duration = -1;
+            if (bad == 2) malformed.factor = 0;
+            if (bad == 3) malformed.factor = -1;
+            if (bad == 4) malformed.duration = std::numeric_limits<float>::quiet_NaN();
+            if (bad == 5) malformed.duration = std::numeric_limits<float>::infinity();
+            if (bad == 6) malformed.factor = std::numeric_limits<float>::quiet_NaN();
+            if (bad == 7) malformed.factor = std::numeric_limits<float>::infinity();
+            if (bad == 8) malformed.duration = 1e6f + 1;
+            if (bad == 9) malformed.factor = 1e6f + 1;
+            if (bad == 10) { malformed.duration = 1e6f; malformed.factor = 2; } // effective value exceeds the wire bound
+            if (bad == 11) malformed.duration = malformed.factor = 1e-30f; // positive inputs underflow to a no-op
+            if (bad == 12) malformed.state_count = 17;
+            if (bad == 13) malformed.states[15] = 0;
+            CHECK(!valid_reaction(malformed) && encode(malformed, wire) == 0);
+        }
+        auto unused = a;
+        unused.flags = unused.movement_mode = unused.knockback_type = unused.context = 255;
+        unused.curve = 65535; unused.position[0] = std::numeric_limits<float>::quiet_NaN();
+        unused.stun = std::numeric_limits<float>::infinity();
+        CHECK(valid_reaction(unused) && encode(unused, wire) == n);
+        CHECK(decode(std::span(wire.data(), n), b) && b == a); // no Knockback context leaks into HitStop
+        a.state_count = 0; a.states = {}; a.duration = 1e6f; a.factor = 1;
+        CHECK(encode(a, wire) == 24 && decode(std::span(wire.data(), 24), b) && b == a);
+    }
+    { // Pure DamageColor carries no Knockback/HitStop payload or additional states.
+        using namespace elmp::net::proto;
+        std::array<std::uint8_t, 32> wire{};
+        Reaction a, b;
+        a.kind = 2; a.seat = 2; a.epoch = 3; a.map = 4; a.seq = 1003; a.t_ms = 122;
+        const auto n = encode(a, wire);
+        CHECK(n == 16 && decode(std::span(wire.data(), n), b) && a == b);
+        for (std::size_t cut = 0; cut < n; ++cut) CHECK(!decode(std::span(wire.data(), cut), b));
+        wire[n] = 0; CHECK(!decode(std::span(wire.data(), n + 1), b));
+        wire[15] = 1; CHECK(!decode(std::span(wire.data(), n), b));
+        a.state_count = 1; a.states[0] = 1;
+        CHECK(!valid_reaction(a) && encode(a, wire) == 0);
     }
 })

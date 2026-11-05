@@ -7,6 +7,7 @@
 #include "coop/client.h"
 
 #include "coop/ability.h"
+#include "coop/reaction.h"
 #include "coop/presentation.h"
 #include "coop/presentation_policy.h"
 #include "coop/visual_state.h"
@@ -57,7 +58,7 @@
 namespace elmp::coop::client {
 
 // P6: replicated owner (net::proto::RefKind) → the local presented actor, nullptr when not presented
-ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id, bool allow_dying = false);
+ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id, bool allow_dying = false, bool feedback = false);
 
 namespace {
 
@@ -67,6 +68,10 @@ namespace proto = net::proto;
 constexpr std::size_t kRing = 32;
 constexpr float kReconcileUU = 150.0f; // local P1 vs host seat drift before a snap (decision P2: prediction + snap)
 std::uint64_t g_reconciles = 0;
+std::uint32_t g_reaction_last = 0, g_reaction_time = 0;
+bool g_reaction_anchor = false;
+std::uint64_t g_reaction_received = 0, g_reaction_stale = 0, g_reaction_failed = 0;
+std::string g_reaction_failure;
 
 void note_host_time(std::uint32_t host_ms, std::int64_t now_us);
 void reset_dynamic();
@@ -329,7 +334,9 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
         if (row.key == g_seat) { // own seat: the local P1 predicts; snap on first placement or when it drifts from the host seat
             auto* p1 = world::p1_pawn();
             if (auto at = p1 ? core::location(p1) : std::nullopt;
-                at && (!g_seat_placed || std::hypot(at->y - row.y, at->z - row.z) > kReconcileUU)) {
+                at && (!g_reaction_anchor || static_cast<std::int32_t>(f.t_ms - g_reaction_time) >= 0) &&
+                (!g_seat_placed || std::hypot(at->y - row.y, at->z - row.z) > kReconcileUU) &&
+                (!g_reaction_last || !reaction::active(p1))) {
                 reflect::Frame tp(s.actor_teleport);
                 tp.arg(0, core::Vec3{row.x, row.y, row.z}).arg_bool(1, false).arg_bool(3, true);
                 if (tp.invoke(p1)) g_seat_placed = true, ++g_reconciles;
@@ -424,7 +431,11 @@ struct RetryEv {
     std::vector<std::uint8_t> msg;
 };
 std::deque<RetryEv> g_ev_retry;
-std::unordered_map<std::uint64_t, ObjHandle> g_ab_live;  // kind << 48 | id << 32 | act seq → replayed ability
+struct PresentedAbility {
+    ObjHandle actor;
+    std::uint64_t activation = 0;
+};
+std::unordered_map<std::uint64_t, PresentedAbility> g_ab_live; // wire activation → exact native activation
 struct PresentedFx {
     ObjHandle psc, owner;
 };
@@ -433,14 +444,29 @@ struct PresentedFx {
 std::unordered_map<std::uint32_t, PresentedFx> g_fx_live;
 std::uint64_t g_ev_absent = 0, g_ev_retried = 0, g_snd_far = 0, g_fx_bad = 0, g_snd_bad = 0, g_stop_missed = 0;
 std::uint64_t g_fx_kept = 0, g_fx_replaced = 0;
+std::uint64_t g_child_stopped = 0, g_child_ended = 0, g_child_failed = 0;
+std::string g_event_failure;
+
+bool feedback_message(std::span<const std::uint8_t> bytes) {
+    if (proto::type_of(bytes) == proto::Msg::Fx) {
+        proto::Fx m;
+        return proto::decode(bytes, m) && (m.flags & 32);
+    }
+    if (proto::type_of(bytes) == proto::Msg::Snd) {
+        proto::Snd m;
+        return proto::decode(bytes, m) && (m.flags & 1);
+    }
+    return false;
+}
 
 void clear_events() {
     g_ev_retry.clear();
     for (auto& [id, e] : g_fx_live) fx::retire(e.psc.get());
-    for (auto& [id, h] : g_ab_live) fx::stop_ability(h.get(), 0);
+    ability::client_reset(); // Stops every network-owned native root/child while settlement gates remain armed.
     g_fx_live.clear();
     g_ab_live.clear();
     g_act_last.clear();
+    g_event_failure.clear();
 }
 
 void reset_remote_world() {
@@ -459,6 +485,7 @@ void reset_remote_world() {
     g_index.clear();
     g_index_version = ~0ull;
     g_seat_placed = false;
+    g_reaction_anchor = false;
 }
 
 bool world_ready() {
@@ -472,11 +499,47 @@ std::uint64_t ab_key(std::uint8_t kind, std::uint16_t id, std::uint32_t seq) { r
 
 EvResult handle_event(std::span<const std::uint8_t> msg) {
     switch (proto::type_of(msg)) {
+    case proto::Msg::Reaction: {
+        if (!g_reaction_failure.empty()) return EvResult::Done;
+        proto::Reaction m;
+        if (!proto::decode(msg, m)) {
+            ++g_reaction_failed;
+            g_reaction_failure = "invalid authoritative reaction";
+            return EvResult::Done;
+        }
+        if (m.seat != g_seat || m.epoch != g_epoch || m.map != g_host_map || m.seq <= g_reaction_last)
+            return ++g_reaction_stale, EvResult::Done;
+        if (!world_ready()) return EvResult::Retry;
+        if ((m.curve && !g_names.text(m.curve))) return EvResult::Retry;
+        for (std::size_t i = 0; i < m.state_count; ++i)
+            if (!g_names.text(m.states[i])) return EvResult::Retry;
+        auto* p1 = world::p1_pawn();
+        if (!p1) return EvResult::Retry;
+        std::string why;
+        g_reaction_last = m.seq;
+        if (m.kind == 0) g_reaction_time = m.t_ms, g_reaction_anchor = true;
+        if (!reaction::replay(p1, m, [](std::uint16_t id) { return g_names.text(id); }, &why)) {
+            ++g_reaction_failed;
+            g_reaction_failure = "authoritative reaction context: " + why;
+            log::warn("coop: {}", g_reaction_failure);
+        } else {
+            if (m.kind == 0) g_seat_placed = true;
+            ++g_reaction_received;
+        }
+        return EvResult::Done;
+    }
     case proto::Msg::Act: {
         proto::Act a;
         if (!proto::decode(msg, a)) return ++g_act_bad, EvResult::Done;
         auto& last = g_act_last[static_cast<std::uint32_t>(a.kind) << 16 | a.net_id];
         if (a.seq <= last) return EvResult::Done; // idempotent per owner
+        // An owner snapshot may arrive between two reliable Acts. Preserve causal order across
+        // retries as well, or the newer last-sequence would silently discard the older family.
+        for (const auto& pending : g_ev_retry) {
+            proto::Act older;
+            if (proto::type_of(pending.msg) == proto::Msg::Act && proto::decode(pending.msg, older) &&
+                older.kind == a.kind && older.net_id == a.net_id && older.seq < a.seq) return EvResult::Retry;
+        }
         const auto* cls = g_names.text(a.ability);
         const auto* cs = a.custom_spawn ? g_names.text(a.custom_spawn) : nullptr;
         const auto* ca = a.custom_attach ? g_names.text(a.custom_attach) : nullptr;
@@ -486,18 +549,77 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
         last = a.seq;
         std::string why;
         ue::UObject* spawned = nullptr;
+        std::uint64_t activation = 0;
         const auto r0 = clock::now_us();
-        const bool ok = ability::replay(owner, a, *cls, cs ? *cs : "", ca ? *ca : "", &why, &spawned);
+        const bool ok = ability::replay(owner, a, *cls, cs ? *cs : "", ca ? *ca : "", &why, &spawned, &activation);
         h_replay.add(static_cast<double>(clock::now_us() - r0));
         if (!ok && ++g_act_bad <= 5) log::warn("coop: act {} on kind {} id {} rejected: {}", *cls, a.kind, a.net_id, why);
-        if (spawned) g_ab_live[ab_key(a.kind, a.net_id, a.seq)] = ObjHandle::of(spawned);
-        if (g_ab_live.size() > 512) std::erase_if(g_ab_live, [](const auto& kv) { return !kv.second.get(); });
+        if (spawned) {
+            const auto h = ObjHandle::of(spawned);
+            // ReusableActor can return the same UObject for a new launch. A stale ActStop
+            // must never retain a binding to the new activation of that pooled object.
+            std::erase_if(g_ab_live, [&](const auto& old) {
+                return old.second.actor == h && !ability::has_active_family(old.second.activation);
+            });
+            if (activation) g_ab_live[ab_key(a.kind, a.net_id, a.seq)] = {h, activation};
+        }
+        if (g_ab_live.size() > 512) std::erase_if(g_ab_live, [](const auto& kv) {
+            return !ability::has_active_family(kv.second.activation);
+        });
+        return EvResult::Done;
+    }
+    case proto::Msg::ChildStop: {
+        if (!g_event_failure.empty()) return EvResult::Done;
+        proto::ChildStop m;
+        if (!proto::decode(msg, m)) {
+            ++g_child_failed;
+            g_event_failure = "invalid authoritative child stop";
+            return EvResult::Done;
+        }
+        const auto root = g_ab_live.find(ab_key(m.kind, m.net_id, m.seq));
+        if (root == g_ab_live.end()) {
+            // Reliable order puts the root Act first, but its owner may still be waiting for a
+            // snapshot. Do not lose its child completion while that exact root remains queued.
+            for (const auto& pending : g_ev_retry) {
+                proto::Act act;
+                if (proto::type_of(pending.msg) == proto::Msg::Act && proto::decode(pending.msg, act) &&
+                    act.kind == m.kind && act.net_id == m.net_id && act.seq == m.seq) return EvResult::Retry;
+            }
+            return ++g_child_ended, EvResult::Done; // retired root/map; no local family can still execute
+        }
+        const auto* cls = g_names.text(m.ability);
+        if (!cls) return EvResult::Retry;
+        const auto token = root->second.activation;
+        switch (ability::child_state(token, m.path, *cls)) {
+        case ability::ChildState::Ended: return ++g_child_ended, EvResult::Done;
+        case ability::ChildState::Missing:
+            return ability::has_active_family(token) ? EvResult::Retry : (++g_child_ended, EvResult::Done);
+        case ability::ChildState::Conflict:
+            ++g_child_failed;
+            g_event_failure = "authoritative child identity conflicts with native timeline";
+            return EvResult::Done;
+        case ability::ChildState::Active: break;
+        }
+        std::uint64_t activation = 0;
+        auto* child = ability::find_child(token, m.path, *cls, &activation);
+        if (!child || !activation || ability::activation(child) != activation) return EvResult::Retry;
+        if (fx::stop_ability(child, m.reason)) ++g_child_stopped;
+        else if (ability::child_state(token, m.path, *cls) == ability::ChildState::Ended) ++g_child_ended;
+        else {
+            ++g_child_failed;
+            g_event_failure = "authoritative child stop could not execute native Stop";
+        }
         return EvResult::Done;
     }
     case proto::Msg::Fx: {
         proto::Fx m;
-        if (!proto::decode(msg, m)) return ++g_fx_bad, EvResult::Done;
-        auto* owner = actor_of(m.kind, m.net_id, true);
+        if (!proto::decode(msg, m)) {
+            g_event_failure = "invalid authoritative FX message";
+            return ++g_fx_bad, EvResult::Done;
+        }
+        const bool feedback = (m.flags & 32) != 0;
+        if (feedback && !world_ready()) return EvResult::Retry;
+        auto* owner = actor_of(m.kind, m.net_id, true, feedback);
         const auto owner_handle = ObjHandle::of(owner);
         if (auto it = g_fx_live.find(m.seq); it != g_fx_live.end()) {
             auto* psc = it->second.psc.get();
@@ -515,7 +637,7 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
         const auto* attach = m.attach_component ? g_names.text(m.attach_component) : nullptr;
         const auto* socket = m.attach_socket ? g_names.text(m.attach_socket) : nullptr;
         if ((m.custom_bone && !bone) || (m.attach_component && !attach) || (m.attach_socket && !socket)) return EvResult::Retry;
-        if (!ps) return ++g_fx_bad, EvResult::Done;
+        if (!ps) return feedback ? EvResult::Retry : (++g_fx_bad, EvResult::Done);
         std::string why;
         if (auto* psc = (m.flags & 8) ? fx::replay_emitter(owner, m, *ps, attach ? *attach : "", socket ? *socket : "", &why)
                                       : fx::replay_spawn(owner, m, *ps, bone ? *bone : "", &why); ue::alive(psc)) {
@@ -524,7 +646,10 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
             // this activation; a delayed stop for its predecessor must no longer find this component.
             std::erase_if(g_fx_live, [&](const auto& e) { return e.second.psc == handle; });
             g_fx_live[m.seq] = {handle, owner_handle};
-        } else if (++g_fx_bad <= 5) log::warn("coop: fx {} rejected: {}", *ps, why);
+        } else {
+            if (feedback) g_event_failure = "authoritative feedback FX failed: " + why;
+            if (++g_fx_bad <= 5) log::warn("coop: fx {} rejected: {}", *ps, why);
+        }
         if (g_fx_live.size() > 512) std::erase_if(g_fx_live, [](const auto& kv) {
             if (kv.second.owner.get() && kv.second.psc.get()) return false;
             fx::retire(kv.second.psc.get());
@@ -548,16 +673,24 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
     }
     case proto::Msg::Snd: {
         proto::Snd m;
-        if (!proto::decode(msg, m)) return ++g_snd_bad, EvResult::Done;
+        if (!proto::decode(msg, m)) {
+            g_event_failure = "invalid authoritative sound message";
+            return ++g_snd_bad, EvResult::Done;
+        }
+        const bool feedback = (m.flags & 1) != 0;
+        if (feedback && !world_ready()) return EvResult::Retry;
         const auto* ev = g_names.text(m.event);
-        auto* owner = actor_of(m.kind, m.net_id, true);
-        if (!ev) return ++g_snd_bad, EvResult::Done;
+        auto* owner = actor_of(m.kind, m.net_id, true, feedback);
+        if (!ev) return feedback ? EvResult::Retry : (++g_snd_bad, EvResult::Done);
         if (!owner) return EvResult::Retry;
         const auto me = core::location(world::p1_pawn());
-        const auto at = core::location(owner);
+        const auto at = (m.flags & 2) && !m.is2d ? std::optional<core::Vec3>{{m.xf[4], m.xf[5], m.xf[6]}} : core::location(owner);
         if (me && at && std::fabs(me->y - at->y) + std::fabs(me->z - at->z) > kSoundRangeUU) return ++g_snd_far, EvResult::Done;
         std::string why;
-        if (!fx::play_sound(owner, *ev, m.is2d != 0, &why) && ++g_snd_bad <= 5) log::warn("coop: sound {} rejected: {}", *ev, why);
+        if (!fx::play_sound(owner, *ev, m, &why)) {
+            if (feedback) g_event_failure = "authoritative feedback sound failed: " + why;
+            if (++g_snd_bad <= 5) log::warn("coop: sound {} rejected: {}", *ev, why);
+        }
         return EvResult::Done;
     }
     case proto::Msg::ActStop: {
@@ -570,8 +703,12 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
             if (last < m.seq) return EvResult::Retry;
             return ++g_stop_missed, EvResult::Done;
         }
-        fx::stop_ability(it->second.get(), m.reason);
-        g_ab_live.erase(it);
+        if (auto* actor = it->second.actor.get(); actor && ability::activation(actor) == it->second.activation)
+            fx::stop_ability(actor, m.reason);
+        else ++g_stop_missed;
+        // A FireAndForget child can outlive its root container (which itself may be pooled again).
+        // Keep the wire root → native root token until the complete original family has ended.
+        if (!ability::has_active_family(it->second.activation)) g_ab_live.erase(it);
         return EvResult::Done;
     }
     default: return EvResult::Done;
@@ -579,14 +716,38 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
 }
 
 void retry_events(std::int64_t now_us) {
+    bool reaction_waiting = false;
     for (std::size_t n = g_ev_retry.size(); n && !g_ev_retry.empty(); --n) {
         auto e = std::move(g_ev_retry.front());
         g_ev_retry.pop_front();
-        if (now_us > e.deadline) {
-            ++g_ev_absent;
+        const bool is_reaction = proto::type_of(e.msg) == proto::Msg::Reaction;
+        if (is_reaction && reaction_waiting) {
+            g_ev_retry.push_back(std::move(e));
             continue;
         }
-        if (handle_event(e.msg) == EvResult::Retry) g_ev_retry.push_back(std::move(e));
+        if (now_us > e.deadline) {
+            // A long frame can carry us past the deadline after the original family has already
+            // ended, or after the exact child became available. Resolve that fact before failing.
+            if (proto::type_of(e.msg) == proto::Msg::ChildStop && handle_event(e.msg) == EvResult::Done) {
+                ++g_ev_retried;
+                continue;
+            }
+            ++g_ev_absent;
+            if (is_reaction) {
+                ++g_reaction_failed, g_reaction_failure = "authoritative reaction context timed out";
+                reaction_waiting = true;
+            }
+            if (proto::type_of(e.msg) == proto::Msg::ChildStop)
+                ++g_child_failed, g_event_failure = "authoritative child stop context timed out";
+            if (proto::type_of(e.msg) == proto::Msg::Act)
+                g_event_failure = "authoritative ability launch context timed out";
+            if (feedback_message(e.msg)) g_event_failure = "authoritative feedback context timed out";
+            continue;
+        }
+        if (handle_event(e.msg) == EvResult::Retry) {
+            reaction_waiting |= is_reaction;
+            g_ev_retry.push_back(std::move(e));
+        }
         else ++g_ev_retried;
     }
 }
@@ -614,10 +775,15 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         proto::Welcome w;
         if (!proto::decode(msg, w)) return;
         g_seat = w.seat, g_epoch = w.epoch, g_host_map = w.map;
+        ability::reset_fault();
         g_seat_placed = false;
         if (!guard::arm()) return void(coop::leave("guard unavailable (fail closed)"));
+        if (!reaction::client_enable(true)) return void(coop::leave("native knockback boundary unavailable"));
+        g_reaction_last = g_reaction_time = 0;
+        g_reaction_anchor = false;
+        g_reaction_failure.clear();
         core::permission::p1_presentation(true);
-        if (!fx::client_enable()) log::warn("coop: local FX suppression unavailable (SpawnFX hook)");
+        if (!fx::client_enable()) return void(coop::leave("native feedback capture/suppression unavailable"));
         log::info("coop: seated as P{} on the host (epoch {})", g_seat, g_epoch);
         break;
     }
@@ -637,6 +803,8 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         break;
     }
     case proto::Msg::Act:
+    case proto::Msg::Reaction:
+    case proto::Msg::ChildStop:
     case proto::Msg::Fx:
     case proto::Msg::FxStop:
     case proto::Msg::Snd:
@@ -649,10 +817,23 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         if (proto::type_of(msg) == proto::Msg::FxStop) return void(handle_event(msg));
         // the local world is loading / tearing down (an act replayed while the client went back to the title
         // crashed inside LaunchAbilityFromDescription: AV 0x130)
-        if (!world_ready()) return void(++g_act_absent);
-        if (handle_event(msg) == EvResult::Retry) {
+        if (proto::type_of(msg) != proto::Msg::Reaction && proto::type_of(msg) != proto::Msg::ChildStop && !feedback_message(msg) && !world_ready()) return void(++g_act_absent);
+        // Accepted reactions are causal and ordered. A later reaction cannot pass one that
+        // still waits for its map/asset context, even though both messages arrived reliably.
+        const bool waiting_reaction = proto::type_of(msg) == proto::Msg::Reaction &&
+            std::any_of(g_ev_retry.begin(), g_ev_retry.end(), [](const RetryEv& e) { return proto::type_of(e.msg) == proto::Msg::Reaction; });
+        if (waiting_reaction || handle_event(msg) == EvResult::Retry) {
             if (g_ev_retry.size() < 64) g_ev_retry.push_back({clock::now_us() + kRetryUs, std::vector<std::uint8_t>(msg.begin(), msg.end())});
-            else ++g_ev_absent;
+            else {
+                ++g_ev_absent;
+                if (proto::type_of(msg) == proto::Msg::Reaction)
+                    ++g_reaction_failed, g_reaction_failure = "authoritative reaction queue exhausted";
+                if (proto::type_of(msg) == proto::Msg::ChildStop)
+                    ++g_child_failed, g_event_failure = "authoritative child stop queue exhausted";
+                if (proto::type_of(msg) == proto::Msg::Act)
+                    g_event_failure = "authoritative ability launch queue exhausted";
+                if (feedback_message(msg)) g_event_failure = "authoritative feedback queue exhausted";
+            }
         }
         break;
     }
@@ -834,6 +1015,21 @@ void present_motion(std::int64_t now_us) {
 }
 
 void tick(std::int64_t now_us) {
+    if (g_seat) if (const auto fault = fx::fault(); !fault.empty()) g_event_failure = fault;
+    if (g_seat) {
+        const auto fault = ability::fault();
+        if (!fault.empty()) g_event_failure = fault;
+    }
+    if (g_seat && !g_event_failure.empty()) {
+        const auto why = g_event_failure;
+        coop::leave(why);
+        return;
+    }
+    if (g_seat && !g_reaction_failure.empty()) {
+        const auto why = g_reaction_failure;
+        coop::leave(why);
+        return;
+    }
     if (!g_seat || lifecycle::state() != lifecycle::State::Settled) return;
     auto t0 = clock::now_us();
     present_motion(now_us);
@@ -847,6 +1043,9 @@ void tick(std::int64_t now_us) {
     h_input.add(static_cast<double>(t3 - t2));
     recheck(now_us);
     retry_events(now_us);
+    static clock::Cadence prune_families(100);
+    if (prune_families.due(now_us))
+        std::erase_if(g_ab_live, [](const auto& entry) { return !ability::has_active_family(entry.second.activation); });
     if (t2 - t1 + clock::now_us() - t3 > 50) h_slow.add(static_cast<double>(t2 - t1 + clock::now_us() - t3));
 }
 
@@ -855,11 +1054,17 @@ void stop() {
     reset_remote_world();
     entities::companion_end_session();
     // Teardown can invoke vanilla callbacks; only disarm after every remote object/result is retired.
+    reaction::client_enable(false);
+    reaction::reset();
     guard::disarm();
     fx::client_disable();
+    ability::reset_fault();
     core::permission::p1_presentation(false);
     overlay::set_banner({});
     g_seat = 0, g_seat_placed = false, g_epoch = 0, g_latest = 0, g_host_map = 0;
+    g_reaction_last = g_reaction_time = 0;
+    g_reaction_anchor = false;
+    g_reaction_failure.clear();
     g_follow_pending = false;
     g_follow_next_us = 0;
     g_follow_tag.clear();
@@ -1054,7 +1259,7 @@ void reset_spirits() {
     g_spirits.clear();
 }
 
-ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id, bool allow_dying) {
+ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id, bool allow_dying, bool feedback) {
     ue::UObject* a = nullptr;
     switch (static_cast<proto::RefKind>(kind)) {
     case proto::RefKind::Enemy: {
@@ -1071,7 +1276,8 @@ ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id, bool allow_dying) {
         break;
     }
     case proto::RefKind::Lily:
-        if (auto it = g_copies.find(id); it != g_copies.end() && it->second.ready) a = core::pawn(it->second.slot);
+        if (feedback && g_seat && id == g_seat) a = world::p1_pawn();
+        else if (auto it = g_copies.find(id); it != g_copies.end() && it->second.ready) a = core::pawn(it->second.slot);
         break;
     case proto::RefKind::Spirit:
         if (auto it = g_spirits.find(id); it != g_spirits.end() && it->second.visible) a = it->second.actor.get();
@@ -1086,7 +1292,10 @@ ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id, bool allow_dying) {
 std::string describe_events() {
     return std::format("events(client): spirits={} spawned={} failed={} retryQueue={} retried={} absent={} fxBad={} soundBad={} soundFar={} stopMissed={} live abilities={} fx={} fxKept={} fxReplaced={}\n",
                        g_spirits.size(), g_spirit_spawned, g_spirit_failed, g_ev_retry.size(), g_ev_retried, g_ev_absent, g_fx_bad, g_snd_bad, g_snd_far, g_stop_missed, g_ab_live.size(),
-                       g_fx_live.size(), g_fx_kept, g_fx_replaced);
+                       g_fx_live.size(), g_fx_kept, g_fx_replaced) +
+           std::format("ability children: stopped={} alreadyEnded={} failed={} fault='{}'\n", g_child_stopped, g_child_ended, g_child_failed, g_event_failure) +
+           std::format("reaction(client): received={} stale={} failed={} last={} reason='{}'\n", g_reaction_received, g_reaction_stale,
+                       g_reaction_failed, g_reaction_last, g_reaction_failure) + reaction::describe();
 }
 
 void present_lily_rows(const ClientCtx& c) {

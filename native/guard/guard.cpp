@@ -17,6 +17,8 @@ namespace {
 using RC::Unreal::UObject;
 
 bool g_installed = false, g_install_failed = false, g_armed = false;
+bool g_effects_installed = false;
+EffectObserver g_effect_observer = nullptr;
 // Identity includes the UObject serial: an allocation reusing an address must never inherit a
 // presentation role or damage permission. Release/disarm clears explicitly; describe prunes stale
 // handles as a low-frequency audit, without adding a world scan to any detour.
@@ -67,11 +69,23 @@ void __fastcall d_effect_apply(UObject* self, UObject* from, UObject* to, const 
     // Host presentation does not grant the client's effect graph settlement authority. Apply and
     // Finalize must use the same policy; the latter can run even when Apply was denied.
     if (g_armed) return void(++g_c.effect_apply_blocked);
+    struct Scope {
+        EffectObserver observer = g_effect_observer;
+        UObject *self, *from, *to;
+        Scope(UObject* s, UObject* f, UObject* t) : self(s), from(f), to(t) { if (observer) observer(true, self, from, to, false); }
+        ~Scope() { if (observer) observer(false, self, from, to, false); }
+    } scope(self, from, to);
     o_effect_apply(self, from, to, hit_infos);
 }
 
 void __fastcall d_effect_finalize(UObject* self, UObject* from, UObject* to, const void* hit_infos) {
     if (g_armed) return void(++g_c.effect_finalize_blocked);
+    struct Scope {
+        EffectObserver observer = g_effect_observer;
+        UObject *self, *from, *to;
+        Scope(UObject* s, UObject* f, UObject* t) : self(s), from(f), to(t) { if (observer) observer(true, self, from, to, true); }
+        ~Scope() { if (observer) observer(false, self, from, to, true); }
+    } scope(self, from, to);
     o_effect_finalize(self, from, to, hit_infos);
 }
 
@@ -122,14 +136,20 @@ void __fastcall d_tick(UObject* actor, bool on) {
     o_tick(actor, on);
 }
 
+bool install_effects() {
+    if (g_effects_installed) return true;
+    const bool apply = hook::install_manifest("GuardEffectApply", reinterpret_cast<void*>(&d_effect_apply), reinterpret_cast<void**>(&o_effect_apply));
+    const bool finalize = hook::install_manifest("GuardEffectFinalize", reinterpret_cast<void*>(&d_effect_finalize), reinterpret_cast<void**>(&o_effect_finalize));
+    return g_effects_installed = apply && finalize;
+}
+
 bool install() {
     if (g_installed) return true;
     if (g_install_failed) return false;
     bool ok = true;
     ok &= hook::install_manifest("GuardDoDamage", reinterpret_cast<void*>(&d_damage), reinterpret_cast<void**>(&o_damage));
     ok &= hook::install_manifest("GuardSkillDamage", reinterpret_cast<void*>(&d_skill), reinterpret_cast<void**>(&o_skill));
-    ok &= hook::install_manifest("GuardEffectApply", reinterpret_cast<void*>(&d_effect_apply), reinterpret_cast<void**>(&o_effect_apply));
-    ok &= hook::install_manifest("GuardEffectFinalize", reinterpret_cast<void*>(&d_effect_finalize), reinterpret_cast<void**>(&o_effect_finalize));
+    ok &= install_effects();
     ok &= hook::install_manifest("GuardDeathStart", reinterpret_cast<void*>(&d_death_start), reinterpret_cast<void**>(&o_death_start));
     ok &= hook::install_manifest("GuardIsPlayerThunk", reinterpret_cast<void*>(&d_isplayer), reinterpret_cast<void**>(&o_isplayer));
     ok &= hook::install_manifest("GuardSaveGame", reinterpret_cast<void*>(&d_save), reinterpret_cast<void**>(&o_save));
@@ -159,6 +179,12 @@ void disarm() {
     unmark_all();
 }
 bool armed() { return g_armed; }
+bool observe_effects(EffectObserver observer) {
+    if (observer && g_effect_observer && g_effect_observer != observer) return false;
+    if (observer && !install_effects()) return false;
+    g_effect_observer = observer;
+    return true;
+}
 
 void mark(ue::UObject* a) {
     if (ue::alive(a)) g_marked.insert(ObjHandle::of(a));
@@ -184,9 +210,9 @@ Counters counters() { return g_c; }
 std::string describe() {
     auto expired = [](const ObjHandle& h) { return !h.get(); };
     g_stale_pruned += std::erase_if(g_marked, expired) + std::erase_if(g_not_player, expired) + std::erase_if(g_replay, expired);
-    return std::format("guard: installed={} armed={} marked={} notPlayer={} replay={} | damage blocked={} replayed={} skill blocked={} replayed={} isPlayerFalse={} saveBlocked={} "
+    return std::format("guard: installed={} armed={} marked={} notPlayer={} replay={} effectsInstalled={} effectObserver={} | damage blocked={} replayed={} skill blocked={} replayed={} isPlayerFalse={} saveBlocked={} "
                        "aiActivateBlocked={} charActivateBlocked={} collisionBlocked={} tickBlocked={} effectApplyBlocked={} effectFinalizeBlocked={} deathStartBlocked={} stalePruned={}\n",
-                       g_installed, g_armed, g_marked.size(), g_not_player.size(), g_replay.size(), g_c.damage_blocked, g_c.damage_replayed, g_c.skill_blocked, g_c.skill_replayed,
+                       g_installed, g_armed, g_marked.size(), g_not_player.size(), g_replay.size(), g_effects_installed, g_effect_observer != nullptr, g_c.damage_blocked, g_c.damage_replayed, g_c.skill_blocked, g_c.skill_replayed,
                        g_c.isplayer_false, g_c.save_blocked, g_c.ai_activate_blocked, g_c.char_activate_blocked, g_c.collision_blocked, g_c.tick_blocked,
                        g_c.effect_apply_blocked, g_c.effect_finalize_blocked, g_c.death_start_blocked, g_stale_pruned);
 }

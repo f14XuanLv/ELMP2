@@ -31,6 +31,8 @@ struct Sound {
     ue::UObject* owner = nullptr;
     ue::UObject* event = nullptr; // UFMODEvent
     bool is2d = false;
+    std::uint8_t flags = 0; // Snd: feedback provenance + exact Host transform
+    std::array<float, 10> xf{0, 0, 0, 1, 0, 0, 0, 1, 1, 1};
 };
 struct Sinks {
     void (*spawn)(const Spawn&) = nullptr;
@@ -46,12 +48,16 @@ struct Sinks {
 void install();
 std::size_t take_early(std::vector<Spawn>& out);
 bool active(ue::UObject* psc); // reflected bIsActive; weak validity / native Deactivate provide the other invalidators
+// Exact PSC most recently spawned by a registered native Ability activation. Host delivery repeats
+// this check; pooled PSC reuse through a capture entry replaces its provenance, including non-Ability use.
+bool native_ability_owned(ue::UObject* psc);
 bool host_enable(const Sinks& s);
 void host_disable();
 
 // Client: suppression of local SpawnFX on presented owners while seated.
 bool client_enable();
 void client_disable();
+std::string fault(); // deferred session failure; never leave from a native/script hook
 
 // Client replays (false on failure, reason in *why).
 ue::UObject* replay_spawn(ue::UObject* actor, const net::proto::Fx& m, const std::string& ps_path, const std::string& custom_bone, std::string* why);
@@ -63,7 +69,7 @@ ue::UObject* replay_emitter(ue::UObject* actor, const net::proto::Fx& m, const s
                            const std::string& attach_comp, const std::string& socket, std::string* why);
 bool deactivate(ue::UObject* psc);
 bool retire(ue::UObject* psc); // network-owned only: deactivate now, global phase destroys after native completion
-bool play_sound(ue::UObject* actor, const std::string& event_path, bool is2d, std::string* why);
+bool play_sound(ue::UObject* actor, const std::string& event_path, const net::proto::Snd& msg, std::string* why);
 bool stop_ability(ue::UObject* ability, std::uint8_t reason);
 
 std::string path_of(ue::UObject* asset); // cached per object (weak handle checked)

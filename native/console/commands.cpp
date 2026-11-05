@@ -1,6 +1,7 @@
 // P0 console commands: status / preflight / perf / registry / lifecycle / events / set / get.
 
 #include "console/console.h"
+#include "coop/session.h"
 
 #include "core/player.h"
 #include "core/schema.h"
@@ -45,7 +46,9 @@ void status(Args, std::string& out) {
     line(out, std::format("preflight: {}{}", pf.ok ? "ok" : "FAILED: ", pf.reason));
     line(out, std::format("world: {} generation={} map={}{}", lifecycle::name(lifecycle::state()), lifecycle::generation(),
                           ue::utf8(world::current_map_id()), lifecycle::waiting_for().empty() ? "" : " (waiting: " + lifecycle::waiting_for() + ")"));
-    line(out, std::format("frame: ticks={} idle={} active_slots={} session=none", frame::ticks(), frame::idle(), core::active()));
+    const auto role = coop::role();
+    line(out, std::format("frame: ticks={} idle={} active_slots={} session={}", frame::ticks(), frame::idle(), core::active(),
+                          role == coop::Role::Host ? "host" : role == coop::Role::Client ? "client" : "none"));
     line(out, "core: " + core::schema::status());
     const auto st = registry::stats();
     std::string counts;

@@ -39,6 +39,11 @@ def request(inst: dict, op: str, code: str | None = None, timeout: float = 30.0)
         body["code"] = code
     resp = d / "response.json"
     tmp = d / "request.tmp"
+    # Requests for one instance are serialized. Remove the previous reply before publishing
+    # the next request: on Windows, polling its open file can race Lua's remove+rename and
+    # make a successfully executed command lose its response ("File exists"). Never retry
+    # the command on a timeout, since it may already have mutated the game.
+    resp.unlink(missing_ok=True)
     tmp.write_text(json.dumps(body), encoding="utf-8")
     tmp.replace(d / "request.json")
     end = time.time() + timeout
