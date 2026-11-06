@@ -6,6 +6,8 @@
 
 #include "coop/host.h"
 #include "coop/native_lily.h"
+#include "coop/causality.h"
+#include <unordered_set>
 #include "coop/presentation.h"
 #include "coop/visual_state.h"
 #include "coop/reaction.h"
@@ -74,6 +76,10 @@ struct Peer {
     std::string build_report;
     std::array<std::string, 9> native_builds;
     std::uint16_t native_map = 0;
+    std::uint32_t native_view = 0;
+    std::deque<proto::LilyFrame> native_frames;
+    std::unordered_set<std::uint64_t> native_roots;
+    std::unordered_map<std::uint64_t,std::int64_t> native_retired;
 };
 
 std::map<std::uint32_t, Peer> g_peers;
@@ -190,6 +196,7 @@ void write_enemies(HostCtx&) {
             auto* row = g_frame->e.add(name(spn));
             if (!row) break;
             row->flags = enemy_flags(enemy);
+            row->instance = static_cast<std::uint32_t>(ObjHandle::of(enemy).serial);
             if (auto at = core::location(enemy)) row->x = at->x, row->y = at->y, row->z = at->z;
             if (spn == g_trace_name && g_trace.size() < 240) g_trace.push_back(row->y); // Dev: raw host Y per frame
             if (auto* hp = s->zc_hp.object(enemy)) {
@@ -584,6 +591,9 @@ void on_fx(const fx::Spawn& s) {
     record.ps = ObjHandle::of(s.ps);
     record.psc = psc;
     record.msg = s.msg;
+    record.msg.t_ms = static_cast<std::uint32_t>(clock::now_us()/1000);
+    record.msg.causal_root = causality::current_root();
+    if(record.msg.flags&32)causality::captured(record.msg.causal_root,record.msg.t_ms,false);
     record.msg.seq = ++g_fx_seq;
     record.custom_bone = s.custom_bone;
     record.attach_component = s.attach_component;
@@ -606,6 +616,9 @@ void on_sound(const fx::Sound& s) {
         return;
     }
     proto::Snd msg;
+    msg.t_ms = static_cast<std::uint32_t>(clock::now_us()/1000);
+    msg.causal_root = causality::current_root();
+    if(s.flags&1)causality::captured(msg.causal_root,msg.t_ms,true);
     msg.is2d = static_cast<std::uint8_t>(s.is2d);
     msg.flags = s.flags;
     msg.xf = s.xf;
@@ -646,7 +659,7 @@ void on_ability_stop(ue::UObject* object, std::uint8_t reason) {
 
 void send_fx_stop(std::uint32_t peer, std::uint32_t seq) {
     if (auto it = g_peers.find(peer); it != g_peers.end() && it->second.slot) {
-        if (const auto n = proto::encode(proto::FxStop{seq}, g_buf)) send_rel(peer, n), ++g_fx_stops_sent;
+        if (const auto n = proto::encode(proto::FxStop{seq,static_cast<std::uint32_t>(clock::now_us()/1000)}, g_buf)) send_rel(peer, n), ++g_fx_stops_sent;
     }
 }
 
@@ -717,7 +730,10 @@ void flush_fx(std::int64_t now_us) {
                     named = true;
                 }
                 if (!e.first_flush) m.flags |= 16; // late join / recovery / periodic baseline always reuse seq
-                if (const auto n = proto::encode(m, g_buf)) {
+                auto delivered=m;
+                if(delivered.causal_root&&causality::source_seat(delivered.causal_root)==peer.slot)delivered.causal_root=0;
+                if(delivered.causal_root&&!peer.native_roots.contains(delivered.causal_root))continue;
+                if (const auto n = proto::encode(delivered, g_buf)) {
                     send_rel(id, n);
                     if (delivery) delivery->next_baseline_us = now_us + kFxBaselineUs, ++g_fx_baselines;
                     else {
@@ -769,7 +785,11 @@ void send_events(std::int64_t now_us) {
         }
         for (auto& [id, peer] : g_peers)
             if (wants_feedback(peer, *r, msg.flags & 1) && peer.map_sent == map && peer.map_ready == map) {
-                send_rel(id, n), ++g_snd_sent;
+                auto delivered=msg;
+                if(delivered.causal_root&&causality::source_seat(delivered.causal_root)==peer.slot)delivered.causal_root=0;
+                if(delivered.causal_root&&!peer.native_roots.contains(delivered.causal_root))continue;
+                const auto count=proto::encode(delivered,g_buf);if(!count)return lifecycle_fault("causal sound encoding failed");
+                send_rel(id, count), ++g_snd_sent;
                 if (msg.flags & 1) {
                     ++g_feedback_sound_sent;
                     if (r->kind == proto::RefKind::Lily && r->id == peer.slot) ++g_feedback_own_sent;
@@ -820,12 +840,15 @@ void send_snapshots() {
         } else ++c_snap_fail;
         if (p.map_sent != v.map) { // follow the seat's map (client replies MapReady)
             p.map_sent = v.map;
+            p.map_ready = 0;
+            ++p.native_view;
+            p.native_frames.clear(); p.native_roots.clear(); p.native_retired.clear(); p.native_map = 0; p.native_builds.fill({});
             std::string tag = slot == 0 ? std::string{} : maps::tag_of_seat(p.slot);
             if (slot == 0)
                 if (auto* wl = world::world_loader())
                     if (auto* prop = reflect::find_property(static_cast<ue::UStruct*>(wl->GetClassPrivate()), L"PlayerStartTag"))
                         tag = ue::utf8(*reinterpret_cast<const ue::FName*>(reinterpret_cast<const std::uint8_t*>(wl) + prop->GetOffset_Internal()));
-            send_rel(id, proto::encode(proto::MapMsg{v.map, tag}, g_buf));
+            send_rel(id, proto::encode(proto::MapMsg{v.map, tag, p.native_view}, g_buf));
         }
     }
 }
@@ -914,7 +937,7 @@ void on_reliable(std::uint32_t peer, std::span<const std::uint8_t> msg) {
     }
     case proto::Msg::MapReady: {
         proto::MapReady m;
-        if (proto::decode(msg, m)) p.map_ready = m.map;
+        if (proto::decode(msg, m) && m.map == p.map_sent && m.view == p.native_view) p.map_ready = m.map;
         break;
     }
     default: break;
@@ -944,15 +967,36 @@ void native_frame(ue::UObject* pawn, proto::LilyFrame& f) {
     if (slot < 0) return;
     f.map = name(slot == 0 ? ue::utf8(world::current_map_id()) : maps::map_id(slot));
     f.position[1] -= maps::offset(slot);
-    std::array<std::uint8_t, 256> bytes{};
-    const auto n = proto::encode(f, bytes);
-    if (!n) {
-        const auto reason = std::format("native Lily frame encoding failed: seat={} seq={} dt={} step={} mode={} direction={} states={}", f.seat, f.seq, f.dt, f.step, f.mode, f.direction, f.state_count);
-        return lifecycle_fault(reason.c_str());
-    }
     for (auto& [id, peer] : g_peers)
         if (peer.slot && peer.slot != f.seat && !peer.native_builds[f.seat].empty() && peer.native_map == f.map && maps::slot_of_seat(peer.slot) == slot && peer.map_ready == f.map && peer.map_sent == f.map)
-            coop::send_reliable(id, std::span(bytes.data(), n));
+            if (peer.native_frames.size() < 128) { auto copy=f; copy.epoch=peer.epoch; copy.view=peer.native_view; peer.native_frames.push_back(copy); }
+            else lifecycle_fault("native Lily source frame queue capacity");
+}
+bool causal_place(std::uint16_t seat, std::uint16_t& map, float& offset) {
+    auto* pawn=seat==1?world::p1_pawn():core::pawn(seat);auto at=core::location(pawn);if(!at)return false;
+    const int slot=maps::slot_of_y(at->y);if(slot<0)return false;offset=maps::offset(slot);map=name(slot?maps::map_id(slot):ue::utf8(world::current_map_id()));return map!=0;
+}
+bool causal_reference(ue::UObject* actor, proto::Cause& fact, std::uint16_t map) {
+    const auto ref=ref_of(actor);if(!ref||(ref->kind!=proto::RefKind::Enemy&&ref->kind!=proto::RefKind::Dyn))return false;
+    const auto actual=name(ref->slot?maps::map_id(ref->slot):ue::utf8(world::current_map_id()));if(actual!=map)return false;
+    fact.ref_kind=static_cast<std::uint8_t>(ref->kind);fact.ref_id=ref->id;fact.ref_generation=static_cast<std::uint32_t>(ObjHandle::of(actor).serial);return true;
+}
+void flush_native(std::int64_t now) {
+    auto facts=causality::take();static std::vector<std::uint8_t> bytes(net::Link::kMaxMessage);
+    for(auto& [id,p]:g_peers){
+        if(!p.slot||!p.native_map||p.map_ready!=p.native_map||p.map_sent!=p.native_map)continue;
+        proto::LilyCauses batch;batch.epoch=p.epoch;batch.map=p.native_map;batch.view=p.native_view;batch.fence_ms=static_cast<std::uint32_t>(now/1000);
+        for(const auto& f:facts){if(f.map!=p.native_map||f.seat==p.slot||p.native_builds[f.seat].empty())continue;
+            if(f.kind==proto::CauseKind::Root)p.native_roots.insert(f.root);
+            if(p.native_roots.contains(f.root))batch.facts.push_back(f);
+        }
+        // A fence also advances a live skill after this Lily temporarily stopped consuming input.
+        if(!batch.facts.empty()||!p.native_frames.empty()||!p.native_roots.empty()){
+            const auto n=proto::encode(batch,bytes);if(!n)return lifecycle_fault("causal batch encoding/capacity");coop::send_reliable(id,std::span(bytes.data(),n));
+        }
+        for(const auto& f:p.native_frames){const auto n=proto::encode(f,bytes);if(!n)return lifecycle_fault("native Lily frame encoding");coop::send_reliable(id,std::span(bytes.data(),n));}p.native_frames.clear();
+        std::erase_if(p.native_roots,[&](auto root){if(causality::root_active(root)){p.native_retired.erase(root);return false;}const auto [it,fresh]=p.native_retired.try_emplace(root,now);if(now-it->second<2'000'000)return false;p.native_retired.erase(it);return true;});
+    }
 }
 
 void send_native_builds(std::int64_t now_us) {
@@ -975,7 +1019,7 @@ void send_native_builds(std::int64_t now_us) {
             if (peer.native_map != map) { peer.native_builds.fill({}); peer.native_map = map; }
             if (peer.native_builds[seat] == signature) continue;
             json::Value body = json::Value::object();
-            body.set("seat", static_cast<int>(seat)); body.set("map", static_cast<int>(map)); body.set("profile", value);
+            body.set("seat", static_cast<int>(seat)); body.set("map", static_cast<int>(map)); body.set("view", static_cast<std::int64_t>(peer.native_view)); body.set("profile", value);
             std::vector<std::uint8_t> bytes(proto::kMaxJson + 64);
             const auto n = proto::encode(proto::Msg::LilyBuild, proto::Json{json::dump(body, 0)}, bytes);
             if (!n) return lifecycle_fault("native Lily profile exceeds reliable packet limit");
@@ -986,6 +1030,9 @@ void send_native_builds(std::int64_t now_us) {
 }
 
 void tick(std::int64_t now_us) {
+    causality::host_api({name,causal_place,causal_reference});
+    if(const auto why=causality::fault();!why.empty())return coop::leave(why);
+    flush_native(now_us);
     if (const auto fault = fx::fault(); !fault.empty()) lifecycle_fault(fault.c_str());
     if (const auto fault = ability::fault(); !fault.empty()) lifecycle_fault(fault.c_str());
     if (const auto fault = reaction::host_fault(); !fault.empty()) lifecycle_fault(fault.c_str());

@@ -10,6 +10,7 @@ void install(); // initialization only: registers the inactive low-frequency fra
 bool enable(); // session-only observer + exact script pre/post hooks; idempotent
 void disable();
 bool scoped();
+ue::UObject* effect_source(); // exact innermost Effect self, never its From/To or an outer scope
 bool effect_scope(); // current exact source is an Effect graph (Client refuses that entire graph)
 ue::UObject* sound_target(ue::UObject* context);
 bool owns(ue::UObject* source);

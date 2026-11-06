@@ -167,6 +167,7 @@ void disable() {
     g_stack = {}; g_depth = 0; g_fault.clear();
 }
 bool scoped() { return g_enabled && ue::on_game_thread() && g_depth != 0; }
+UObject* effect_source() { const auto* s=current();return s&&s->origin!=Origin::Contact?s->self.get():nullptr; }
 bool effect_scope() { return scoped() && g_stack[g_depth - 1].origin != Origin::Contact; }
 UObject* sound_target(UObject* ctx) {
     const auto* s = current();

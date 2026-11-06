@@ -1,6 +1,7 @@
 #include "coop/native_lily.h"
 #include "coop/session.h"
 #include "coop/ability.h"
+#include "coop/causality.h"
 #include "core/player.h"
 #include "core/profile.h"
 #include "core/schema.h"
@@ -51,6 +52,8 @@ std::unordered_map<std::uint16_t, ObjHandle> g_state_classes;
 FrameSink g_sink = nullptr;
 Name g_name = nullptr;
 std::array<std::uint32_t, 9> g_sequence{};
+ObjHandle g_executing_pawn;
+struct ExecutionScope { ObjHandle previous=g_executing_pawn; explicit ExecutionScope(ue::UObject* pawn){g_executing_pawn=ObjHandle::of(pawn);}~ExecutionScope(){g_executing_pawn=previous;} };
 struct SourceCadence {
     std::uint32_t generation = 0;
     std::array<float, 31> samples{};
@@ -65,16 +68,18 @@ struct SourceCadence {
 };
 std::array<SourceCadence, 9> g_source_cadence{};
 struct Replica {
-    struct Step { proto::LilyFrame frame; bool begin = false, end = false; };
+    struct Step { proto::LilyFrame frame; bool begin = false, end = false; double host_ms = 0; };
     ObjHandle pawn, controller, camera;
     std::int64_t slot = 0;
     std::uint32_t received = 0, consumed = 0, generation = 0;
+    std::uint32_t playing = 0;
     std::string build, applied;
     std::deque<proto::LilyFrame> frames;
     std::deque<Step> pending;
     float elapsed = 0, rate = 1;
     bool started = false;
     bool ready = false;
+    float world_rate = 1;
 };
 std::map<std::uint16_t, Replica> g_replicas;
 std::uint64_t g_captured = 0, g_received = 0, g_consumed = 0, g_profiles = 0, g_state_changes = 0;
@@ -142,6 +147,7 @@ void consumed(ue::UObject* pawn, const input::InputSnapshot& value) {
     if (g_sequence[seat] == ~std::uint32_t{0}) return fail("native Lily input sequence exhausted");
     proto::LilyFrame f;
     f.seat = seat; f.seq = ++g_sequence[seat]; f.dt = g_source_dt; f.step = world_delta(pawn);
+    f.t_ms = static_cast<std::uint32_t>(clock::now_us()/1000); f.world_dt = f.step;
     f.generation = static_cast<std::uint32_t>(ObjHandle::of(pawn).serial);
     if (!std::isfinite(f.step) || f.step <= 0 || f.step > 60) return fail(std::format("native Lily Host World delta out of range: {}", f.step));
     const float interval = g_source_cadence[seat].interval(f.generation, f.step);
@@ -187,14 +193,15 @@ namespace { bool install_tick(); }
 bool host_enable(FrameSink sink, Name name) {
     if (!resolve()) return false;
     g_sink = sink; g_name = name;
-    return install_tick() && input::pad::observe(consumed);
+    return install_tick() && input::pad::observe(consumed) && causality::enable();
 }
-void host_disable() { input::pad::observe(nullptr); g_sink = nullptr; g_name = nullptr; g_sequence.fill(0); g_source_cadence = {}; g_fault.clear(); }
+void host_disable() { input::pad::observe(nullptr); g_sink = nullptr; g_name = nullptr; g_sequence.fill(0); g_source_cadence = {}; g_fault.clear(); causality::reset(); }
 namespace { bool install_tick(); }
 std::string bind(std::uint16_t seat, std::int64_t slot, ue::UObject* pawn) {
     if (!pawn || !resolve()) return g_fault.empty() ? "native Lily pawn missing" : g_fault;
     if (!install_tick()) return "native Lily original Tick preflight failed";
     if (!ability::client_native_enable()) return "native Lily ability lifecycle hooks unavailable";
+    if (!causality::enable()) return "native Lily causality hooks unavailable";
     auto& r = g_replicas[seat];
     const auto h = ObjHandle::of(pawn);
     if (r.pawn == h) return {};
@@ -287,6 +294,8 @@ void execute_frame(Replica& r, const Replica::Step& step) {
     if (const auto why = input::pad::snapshot(r.slot, input); !why.empty()) { fail(why); return; }
 
     if (!g_fault.empty()) return;
+    r.playing = f.seq;
+    ExecutionScope source_scope(pawn);
     g_original_tick(pawn, f.dt);
     if (step.begin) g_edges_played += std::popcount(static_cast<unsigned>(input.flags));
     if (step.end) { r.consumed = f.seq; ++g_consumed; }
@@ -332,9 +341,11 @@ void __fastcall character_tick(ue::UObject* pawn, float dt) {
             return;
         }
         schedule(r);
+        if(r.pending.empty() && r.playing)causality::advance(causality::playback_ms(),0);
         h_steps.add(static_cast<float>(r.pending.size()));
         while (!r.pending.empty() && g_fault.empty()) {
             const auto value = r.pending.front(); r.pending.pop_front();
+            causality::advance(value.host_ms, r.world_rate);
             execute_frame(r, value);
         }
         h_tick.add(static_cast<float>(clock::now_us() - begin));
@@ -342,6 +353,7 @@ void __fastcall character_tick(ue::UObject* pawn, float dt) {
     }
     const auto previous = g_source_dt;
     g_source_dt = dt;
+    ExecutionScope source_scope(pawn);
     g_original_tick(pawn, dt);
     g_source_dt = previous;
 }
@@ -370,13 +382,17 @@ void schedule(Replica& r) {
     // Correct only clock drift, never multiply time by the integer count of arrivals.
     const float desired = std::clamp(1.0f + (buffer - 0.05f) * 2.0f, 0.9f, 1.1f);
     r.rate += (desired - r.rate) * (1.0f - std::exp(-4.0f * g_dt));
-    float budget = g_dt * r.rate, total = 0;
+    float budget = g_dt * r.rate, total = 0, world_total = 0;
     while (budget > 0 && !r.frames.empty()) {
         const auto& source = r.frames.front();
         const float remaining = std::max(source.step - r.elapsed, 0.0f);
         const float span = std::min(remaining, budget);
         Replica::Step part{source, r.elapsed == 0, remaining <= budget};
+        const auto until = r.frames.size() > 1 ? static_cast<std::int32_t>(r.frames[1].t_ms-source.t_ms) : source.step*1000;
+        part.host_ms = source.t_ms + std::max(0.0,static_cast<double>(until)) * ((r.elapsed+span)/source.step);
+        if(!causality::ready(part.host_ms))break;
         part.frame.dt = source.dt * (span / source.step);
+        world_total += source.world_dt * (span/source.step);
         total += part.frame.dt;
         r.pending.push_back(part);
         budget -= span;
@@ -385,6 +401,7 @@ void schedule(Replica& r) {
     }
     if (budget > 0.0001f) ++g_starved;
     *g_schema.dilation.at<float>(pawn) = total / std::max(g_dt, 0.001f);
+    r.world_rate = world_total / std::max(g_dt,0.001f);
     h_rate.add(*g_schema.dilation.at<float>(pawn));
 }
 }
@@ -408,7 +425,7 @@ void forget(std::uint16_t seat) {
         g_replicas.erase(it);
     }
 }
-void reset() { g_replicas.clear(); g_state_classes.clear(); g_text = nullptr; g_fault.clear(); }
+void reset() { g_replicas.clear(); g_state_classes.clear(); g_text = nullptr; g_fault.clear(); causality::reset(); }
 ue::UObject* actor(std::uint16_t seat) { const auto i = g_replicas.find(seat); return i == g_replicas.end() ? nullptr : i->second.pawn.get(); }
 bool owns(ue::UObject* object) {
     if (!object || g_replicas.empty() || !g_schema.ready()) return false;
@@ -435,6 +452,28 @@ bool owns(ue::UObject* object) {
     return false;
 }
 std::string fault() { return g_fault; }
+bool source(ue::UObject* object, Source& out) {
+    out = {};
+    if (!object || !g_schema.ready()) return false;
+    const auto* s = core::schema::script();
+    for (int depth = 0; object && depth < 8; ++depth) {
+        if (g_sink) {
+            for (std::uint16_t seat = 1; seat <= 8; ++seat) {
+                auto* pawn = seat == 1 ? world::p1_pawn() : core::pawn(seat);
+                auto* pc = seat == 1 ? world::p1_controller() : core::controller(seat);
+                if (object == pawn || (pc && object == pc)) { out = {seat, static_cast<std::uint32_t>(ObjHandle::of(pawn).serial), g_sequence[seat],g_executing_pawn.get()==pawn}; return true; }
+            }
+        } else for (const auto& [seat, r] : g_replicas) {
+            if (object == r.pawn.get() || object == r.controller.get()) { out = {seat, r.generation, r.playing,g_executing_pawn==r.pawn}; return true; }
+        }
+        if (auto* cls = static_cast<ue::UClass*>(g_schema.actor.get()); cls && object->IsA(cls)) {
+            if (auto* ai = static_cast<ue::UClass*>(g_schema.companion_ai.get()); ai && object->IsA(ai)) {
+                reflect::Frame leader(g_schema.leader); object = leader.invoke(object) ? leader.ret<ue::UObject*>() : nullptr;
+            } else { reflect::Frame owner(g_schema.get_owner); object = owner.invoke(object) ? owner.ret<ue::UObject*>() : nullptr; }
+        } else object = object->GetOuterPrivate();
+    }
+    return false;
+}
 std::string describe() {
     std::size_t queued = 0; for (const auto& [seat, r] : g_replicas) queued += r.frames.size();
     return std::format("native Lily: replicas={} captured={} received={} consumed={} queued={} profiles={} stateChanges={} edges={}/{} starved={} fault='{}'\n", g_replicas.size(), g_captured, g_received, g_consumed, queued, g_profiles, g_state_changes, g_edges_played, g_edges_received, g_starved, g_fault);

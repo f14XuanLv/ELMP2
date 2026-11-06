@@ -49,6 +49,7 @@ enum class Msg : std::uint8_t {
     ChildStop = 16, // stop an exact native descendant of a replicated root Act; never a second launch
     LilyFrame = 17, // original consumed input and required movement/state context
     LilyBuild = 18, // authoritative per-seat profile baseline/change
+    LilyCauses = 19, // sealed original activation / query / target / completion facts
 };
 
 // Owner of a replicated event (P6): which presented actor on the client it belongs to.
@@ -63,8 +64,8 @@ inline constexpr std::uint8_t kRefKindMax = 5;
 
 struct Welcome { std::uint8_t seat = 0; std::uint16_t epoch = 0; std::uint16_t map = 0; };
 struct NameDef { std::uint16_t id = 0; std::string text; };
-struct MapMsg { std::uint16_t map = 0; std::string tag; };
-struct MapReady { std::uint16_t map = 0; };
+struct MapMsg { std::uint16_t map = 0; std::string tag; std::uint32_t view = 0; };
+struct MapReady { std::uint16_t map = 0; std::uint32_t view = 0; };
 struct Act {
     std::uint16_t net_id = 0; // owner id (meaning per kind)
     std::uint8_t kind = 1;    // RefKind
@@ -100,8 +101,10 @@ struct Fx {
     std::uint16_t attach_component = 0; // owner-relative component path; Component/SpineBone only
     std::uint16_t attach_socket = 0; // exact AttachPointName; 0 = None
     std::uint8_t emitter_flags = 0; // bit0 original AutoDestroy, bit1 original AutoActivate
+    std::uint32_t t_ms = 0;
+    std::uint64_t causal_root = 0;
 };
-struct FxStop { std::uint32_t seq = 0; };
+struct FxStop { std::uint32_t seq = 0, t_ms = 0; };
 struct Snd {
     std::uint8_t kind = 1;
     std::uint16_t net_id = 0;
@@ -109,6 +112,8 @@ struct Snd {
     std::uint8_t is2d = 0;
     std::uint8_t flags = 0; // bit0 proven Host feedback, bit1 exact Host transform; feedback requires bit1 even for is2d
     std::array<float, 10> xf{0, 0, 0, 1, 0, 0, 0, 1, 1, 1}; // quat, translation (map-normalized), scale; serialized only with bit1
+    std::uint32_t t_ms = 0;
+    std::uint64_t causal_root = 0;
 };
 struct ActStop {
     std::uint8_t kind = 1;
@@ -159,8 +164,10 @@ struct Json { std::string text; };
 inline constexpr std::size_t kLilyStates = 48;
 struct LilyFrame {
     std::uint16_t seat = 0, map = 0;
+    std::uint16_t epoch = 0;
+    std::uint32_t view = 0, t_ms = 0;
     std::uint32_t seq = 0, generation = 0; // Host Pawn serial, distinct from input sequence
-    float dt = 0, step = 0; // actual character delta (includes HitStop), bounded Host playout interval
+    float dt = 0, step = 0, world_dt = 0; // character delta, bounded playout interval, actual Host World delta
     std::array<float, 7> input{}; // left/right axes and original movement vector
     std::uint8_t direction = 0, mode = 0, custom_mode = 0, state_count = 0;
     std::uint16_t flags = 0, raw = 0;
@@ -170,6 +177,30 @@ struct LilyFrame {
 };
 std::size_t encode(const LilyFrame& m, std::span<std::uint8_t> out);
 bool decode(std::span<const std::uint8_t> in, LilyFrame& m);
+enum class CauseKind : std::uint8_t { Root, Query, Target, End };
+struct Cause {
+    CauseKind kind = CauseKind::Root;
+    std::uint16_t seat = 0, map = 0;
+    std::uint32_t generation = 0, input = 0, t_ms = 0;
+    std::uint64_t root = 0;
+    std::uint16_t ordinal = 0, cls = 0, invoker = 0, query = 0;
+    AbilityPath path;
+    std::uint8_t ref_kind = 0, flags = 0, channel = 0, reason = 0;
+    std::uint16_t ref_id = 0, component = 0;
+    std::uint32_t ref_generation = 0;
+    float min = 0, range = 0;
+    float actor_scale = 1;
+    std::array<float, 3> actor_position{}, target_position{}, target_velocity{};
+    bool operator==(const Cause&) const = default;
+};
+inline constexpr std::size_t kCauses = 256;
+struct LilyCauses {
+    std::uint16_t epoch = 0, map = 0;
+    std::uint32_t view = 0, fence_ms = 0;
+    std::vector<Cause> facts;
+};
+std::size_t encode(const LilyCauses& m, std::span<std::uint8_t> out);
+bool decode(std::span<const std::uint8_t> in, LilyCauses& m);
 struct Control { std::uint8_t code = 0; std::string text; };
 inline constexpr std::uint8_t kControlBanner = 10; // host → client: mode status line (empty = clear)
 

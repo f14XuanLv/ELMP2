@@ -19,6 +19,7 @@ TEST_MAIN({
         using namespace elmp::net::proto;
         LilyFrame a, b;
         a.seat = 1; a.map = 2; a.seq = 1; a.generation = 10; a.dt = a.step = 1.0f / 60;
+        a.epoch=2;a.view=1;a.t_ms=100;a.world_dt=a.dt;
         a.mode = 1; a.state_count = static_cast<std::uint8_t>(kLilyStates);
         a.flags = a.raw = 0x3FE; a.input[0] = -1; a.velocity[1] = 300;
         for (std::size_t i = 0; i < kLilyStates; ++i) a.states[i] = static_cast<std::uint16_t>(i + 1);
@@ -39,6 +40,26 @@ TEST_MAIN({
         a.step = 60.01f; CHECK(encode(a, wire) == 0);
         a.step = 1.0f / 60;
         a.state_count = 49; CHECK(encode(a, wire) == 0);
+    }
+    {
+        using namespace elmp::net::proto;
+        LilyCauses a,b;a.epoch=2;a.map=3;a.view=4;a.fence_ms=100;
+        Cause root;root.seat=1;root.map=3;root.generation=10;root.input=99;root.root=42;root.ordinal=1;root.cls=5;root.invoker=6;root.t_ms=90;
+        a.facts.push_back(root);
+        auto q=root;q.kind=CauseKind::Query;q.cls=7;q.query=1;q.path.depth=1;q.path.entries[0]=0;q.path.occurrences[0]=1;q.ref_kind=1;q.ref_id=8;q.ref_generation=123;q.component=9;q.range=2000;q.flags=3;q.channel=3;
+        a.facts.push_back(q);q.kind=CauseKind::Target;a.facts.push_back(q);q.kind=CauseKind::End;q.reason=2;a.facts.push_back(q);
+        std::vector<std::uint8_t> wire(128*1024);const auto n=encode(a,wire);
+        CHECK(n>0&&decode(std::span(wire.data(),n),b)&&a.facts==b.facts&&a.view==b.view&&a.fence_ms==b.fence_ms);
+        for(std::size_t cut=0;cut<n;++cut)CHECK(!decode(std::span(wire.data(),cut),b));
+        CHECK(!decode(std::span(wire.data(),n+1),b));
+        auto bad=a;bad.facts[1].path.occurrences[0]=0;CHECK(encode(bad,wire)==0);
+        bad=a;bad.facts[1].range=std::numeric_limits<float>::quiet_NaN();CHECK(encode(bad,wire)==0);
+        bad=a;bad.facts[1].ref_generation=0;CHECK(encode(bad,wire)==0);
+        bad=a;bad.facts[2].component=0;CHECK(encode(bad,wire)==0);
+        bad=a;bad.facts[0].root=0;CHECK(encode(bad,wire)==0);
+        bad=a;bad.facts[0].ordinal=0;CHECK(encode(bad,wire)==0);
+        bad=a;bad.facts[1].actor_scale=std::numeric_limits<float>::infinity();CHECK(encode(bad,wire)==0);
+        a.facts.assign(kCauses,root);CHECK(encode(a,wire)>0);a.facts.push_back(root);CHECK(encode(a,wire)==0);
     }
     std::array<std::uint8_t, 64> buf{};
     Writer w(buf.data(), buf.size());
@@ -331,12 +352,14 @@ TEST_MAIN({
         using namespace elmp::net::proto;
         std::array<std::uint8_t, 64> wire{};
         Snd a{5, 60000, 8, 0}, b;
+        a.t_ms=1234;a.causal_root=42;
         a.xf = {0, 0, 0.6f, 0.8f, -1e6f, 1e6f, 123.5f, 0.5f, 2, -1};
         for (std::uint8_t flags : {0, 2, 3}) for (std::uint8_t is2d : {0, 1}) {
             a.flags = flags; a.is2d = is2d;
             const auto n = encode(a, wire);
-            CHECK(n == ((flags & 2) ? 48 : 8));
+            CHECK(n == ((flags & 2) ? 60 : 20));
             CHECK(decode(std::span(wire.data(), n), b) && b.flags == flags && b.is2d == is2d && b.event == a.event);
+            CHECK(b.t_ms==a.t_ms&&b.causal_root==a.causal_root);
             CHECK(b.xf == ((flags & 2) ? a.xf : Snd{}.xf));
             for (std::size_t cut = 0; cut < n; ++cut) CHECK(!decode(std::span(wire.data(), cut), b));
             wire[n] = 0; CHECK(!decode(std::span(wire.data(), n + 1), b));
@@ -386,7 +409,7 @@ TEST_MAIN({
         CHECK(decode(std::span(wire.data(), exact_n), b) && b.xf == a.xf);
         a.flags = 0;
         const auto short_n = encode(a, wire);
-        CHECK(short_n == 8 && decode(std::span(wire.data(), short_n), b) && b.flags == 0 && b.xf == Snd{}.xf);
+        CHECK(short_n == 20 && decode(std::span(wire.data(), short_n), b) && b.flags == 0 && b.xf == Snd{}.xf);
     }
     { // A child stop names a full native path under an immutable root, including repeated entries.
         using namespace elmp::net::proto;

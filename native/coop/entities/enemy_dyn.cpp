@@ -45,6 +45,7 @@ public:
             auto* row = c.frame.ed.add(it->second);
             if (!row) break;
             row->flags = host::enemy_flags(a);
+            row->instance = static_cast<std::uint32_t>(e.handle.serial);
             if (auto at = core::location(a)) row->x = at->x, row->y = at->y, row->z = at->z;
             if (auto* hp = s->zc_hp.object(a)) {
                 const auto cur = s->hp_curr.read<std::int32_t>(hp);

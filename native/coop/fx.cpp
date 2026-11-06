@@ -1,5 +1,6 @@
 #include "coop/fx.h"
 #include "coop/ability.h"
+#include "coop/causality.h"
 #include "coop/entities/companion.h"
 #include "coop/feedback_context.h"
 
@@ -525,6 +526,8 @@ UObject* __fastcall d_attached(UObject* ev, UObject* parent, std::uint64_t socke
 void __fastcall d_stop(UObject* ability, std::uint8_t reason) {
     elmp::coop::ability::Identity before;
     if (ue::on_game_thread()) elmp::coop::ability::identity(ability, before);
+    if (ue::on_game_thread() && !causality::allow_stop(ability, before, reason)) return;
+    if (ue::on_game_thread()) causality::stop_requested(ability, before, reason);
     if (g_host && g_sinks.ability_stop && ability && ue::on_game_thread()) ++g_cap_stop, g_sinks.ability_stop(ability, reason);
     if (!ue::on_game_thread()) { o_stop(ability, reason); return; }
     elmp::coop::ability::NativeScope scope(ability);

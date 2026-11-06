@@ -6,6 +6,7 @@
 
 #include "coop/client.h"
 #include "coop/native_lily.h"
+#include "coop/causality.h"
 
 #include "coop/ability.h"
 #include "coop/reaction.h"
@@ -83,6 +84,7 @@ struct Sample {
     float x = 0, y = 0, z = 0;
 };
 struct Taken {
+    std::uint32_t instance = 0;
     std::array<Sample, 16> s{}; // ≥ 100 ms buffer at 60 Hz host capture (4 was too few: held the oldest sample, stepped on rotation)
     int head = 0, n = 0;
     ObjHandle enemy, controller;
@@ -98,6 +100,10 @@ std::uint8_t g_seat = 0;
 bool g_seat_placed = false;
 std::uint16_t g_epoch = 0, g_host_map = 0;
 std::uint32_t g_latest = 0;
+std::uint32_t g_host_view = 0;
+ue::UObject* causal_target(std::uint8_t kind, std::uint16_t id, std::uint32_t generation);
+void causal_motion(double host_ms);
+void causal_api();
 std::string g_follow_tag;
 std::string g_equip_sent, g_equip_result;
 std::uint64_t g_equip_requests = 0;
@@ -105,6 +111,7 @@ bool g_follow_pending = false;
 std::int64_t g_follow_next_us = 0;
 std::unique_ptr<std::array<snap::Frame, kRing>> g_ring;
 proto::NameTable g_names;
+void causal_api() { causality::client_api({[](std::uint16_t id){return g_names.text(id);},causal_target,causal_motion}); }
 proto::Input g_input;
 std::array<std::uint8_t, 2048> g_buf;
 std::unordered_map<std::string, Taken> g_taken; // spawn point name → local enemy
@@ -214,6 +221,7 @@ void present_enemy(const std::string& key, ue::UObject* enemy, const snap::Enemy
     const auto* s = &s_;
     if (auto t = g_taken.find(key); t == g_taken.end() || t->second.enemy.get() != enemy) take(key, enemy);
     auto& t = g_taken[key];
+    t.instance = row.instance;
     if (!t.ready) {
         t.ready = presentation_policy::apply(enemy);
         if (!t.ready) return;
@@ -478,6 +486,7 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
         if (!m.seat || m.seat > 8 || m.epoch != g_epoch || m.map != g_host_map || m.seq <= g_reaction_seats[m.seat])
             return ++g_reaction_stale, EvResult::Done;
         if (!world_ready()) return EvResult::Retry;
+        if(m.seat!=g_seat&&causality::playback_ms()>0&&m.t_ms>causality::playback_ms())return EvResult::Retry;
         if ((m.curve && !g_names.text(m.curve))) return EvResult::Retry;
         for (std::size_t i = 0; i < m.state_count; ++i)
             if (!g_names.text(m.states[i])) return EvResult::Retry;
@@ -587,6 +596,7 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
             return ++g_fx_bad, EvResult::Done;
         }
         const bool feedback = (m.flags & 32) != 0;
+        if(m.causal_root&&!causality::event_due(m.causal_root,m.t_ms))return EvResult::Retry;
         if (feedback && !world_ready()) return EvResult::Retry;
         auto* owner = actor_of(m.kind, m.net_id, true, feedback);
         const auto owner_handle = ObjHandle::of(owner);
@@ -615,6 +625,7 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
             // this activation; a delayed stop for its predecessor must no longer find this component.
             std::erase_if(g_fx_live, [&](const auto& e) { return e.second.psc == handle; });
             g_fx_live[m.seq] = {handle, owner_handle};
+            causality::presented(m.causal_root, m.t_ms, false);
         } else {
             if (feedback) g_event_failure = "authoritative feedback FX failed: " + why;
             if (++g_fx_bad <= 5) log::warn("coop: fx {} rejected: {}", *ps, why);
@@ -629,6 +640,8 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
     case proto::Msg::FxStop: {
         proto::FxStop m;
         if (!proto::decode(msg, m)) return EvResult::Done;
+        const bool pending_spawn=std::any_of(g_ev_retry.begin(),g_ev_retry.end(),[&](const RetryEv& e){proto::Fx pending;return proto::type_of(e.msg)==proto::Msg::Fx&&proto::decode(e.msg,pending)&&pending.seq==m.seq;});
+        if((g_fx_live.contains(m.seq)||pending_spawn)&&causality::playback_ms()>0&&m.t_ms>causality::playback_ms())return EvResult::Retry;
         // Stop also cancels a spawn still waiting for its owner snapshot.
         std::erase_if(g_ev_retry, [&](const RetryEv& e) {
             proto::Fx pending;
@@ -647,6 +660,7 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
             return ++g_snd_bad, EvResult::Done;
         }
         const bool feedback = (m.flags & 1) != 0;
+        if(m.causal_root&&!causality::event_due(m.causal_root,m.t_ms))return EvResult::Retry;
         if (feedback && !world_ready()) return EvResult::Retry;
         const auto* ev = g_names.text(m.event);
         auto* owner = actor_of(m.kind, m.net_id, true, feedback);
@@ -659,7 +673,7 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
         if (!fx::play_sound(owner, *ev, m, &why)) {
             if (feedback) g_event_failure = "authoritative feedback sound failed: " + why;
             if (++g_snd_bad <= 5) log::warn("coop: sound {} rejected: {}", *ev, why);
-        }
+        } else causality::presented(m.causal_root, m.t_ms, true);
         return EvResult::Done;
     }
     case proto::Msg::ActStop: {
@@ -711,6 +725,7 @@ void retry_events(std::int64_t now_us) {
             if (proto::type_of(e.msg) == proto::Msg::Act)
                 g_event_failure = "authoritative ability launch context timed out";
             if (feedback_message(e.msg)) g_event_failure = "authoritative feedback context timed out";
+            if (proto::type_of(e.msg) == proto::Msg::FxStop) g_event_failure = "authoritative FX stop context timed out";
             continue;
         }
         if (handle_event(e.msg) == EvResult::Retry) {
@@ -740,6 +755,10 @@ void on_connected(std::uint32_t) {
 
 void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
     switch (proto::type_of(msg)) {
+    case proto::Msg::LilyCauses: {
+        proto::LilyCauses batch;if(!proto::decode(msg,batch))return coop::leave("invalid causal batch");
+        if(batch.epoch==g_epoch&&batch.map==g_host_map&&batch.view==g_host_view){causal_api();if(!causality::receive(batch))coop::leave("causal facts invalid or conflicting");}return;
+    }
     case proto::Msg::LilyBuild: {
         proto::Json m;
         if (!proto::decode(msg, m)) return void(coop::leave("invalid native Lily build"));
@@ -747,14 +766,14 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         json::Value root;
         if (!json::parse(m.text, root, &why) || !root.get("seat") || !root.get("map") || !root.get("profile")) return void(coop::leave("native Lily build layout"));
         const auto seat = static_cast<std::uint16_t>(root.get("seat")->number_or(0));
-        if (seat != g_seat && root.get("map")->number_or(0) == g_host_map)
+        if (seat != g_seat && root.get("map")->number_or(0) == g_host_map && root.get("view") && root.get("view")->number_or(0) == g_host_view)
             native_lily::build(seat, json::dump(*root.get("profile"), 0));
         return;
     }
     case proto::Msg::LilyFrame: {
         proto::LilyFrame value;
         if (!proto::decode(msg, value)) return void(coop::leave("invalid native Lily frame"));
-        if (value.seat != g_seat && value.map == g_host_map) native_lily::receive(value);
+        if (value.seat != g_seat && value.map == g_host_map && value.epoch==g_epoch && value.view==g_host_view) native_lily::receive(value);
         return;
     }
     case proto::Msg::Welcome: {
@@ -781,8 +800,9 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
     case proto::Msg::Map: {
         proto::MapMsg m;
         if (!proto::decode(msg, m) || !g_seat) return;
-        if (m.map != g_host_map) reset_remote_world();
+        if (m.map != g_host_map || m.view != g_host_view) reset_remote_world();
         g_host_map = m.map;
+        g_host_view = m.view;causal_api();
         g_follow_tag = m.tag;
         g_follow_pending = true;
         g_follow_next_us = 0;
@@ -800,10 +820,9 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         if (!g_seat) return;
         // A stop never launches gameplay. Cancel a pending spawn even during loading, so a queued
         // owner retry cannot resurrect a lifecycle that ended in the same network/game frame.
-        if (proto::type_of(msg) == proto::Msg::FxStop) return void(handle_event(msg));
         // the local world is loading / tearing down (an act replayed while the client went back to the title
         // crashed inside LaunchAbilityFromDescription: AV 0x130)
-        if (proto::type_of(msg) != proto::Msg::Reaction && proto::type_of(msg) != proto::Msg::ChildStop && !feedback_message(msg) && !world_ready()) return void(++g_act_absent);
+        if (proto::type_of(msg) != proto::Msg::Reaction && proto::type_of(msg) != proto::Msg::ChildStop && proto::type_of(msg) != proto::Msg::FxStop && !feedback_message(msg) && !world_ready()) return void(++g_act_absent);
         // Accepted reactions are causal and ordered. A later reaction cannot pass one that
         // still waits for its map/asset context, even though both messages arrived reliably.
         const bool waiting_reaction = proto::type_of(msg) == proto::Msg::Reaction &&
@@ -819,6 +838,7 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
                 if (proto::type_of(msg) == proto::Msg::Act)
                     g_event_failure = "authoritative ability launch queue exhausted";
                 if (feedback_message(msg)) g_event_failure = "authoritative feedback queue exhausted";
+                if (proto::type_of(msg) == proto::Msg::FxStop) g_event_failure = "authoritative FX stop queue exhausted";
             }
         }
         break;
@@ -865,7 +885,7 @@ void follow(std::int64_t now_us) {
     bool loading = true, ready = false;
     if (!world::loader_flags(loading, ready) || loading || !ready) return;
     if (*host_map == ue::utf8(world::current_map_id())) {
-        coop::send_reliable(0, std::span(g_buf.data(), proto::encode(proto::MapReady{g_host_map}, g_buf)));
+        coop::send_reliable(0, std::span(g_buf.data(), proto::encode(proto::MapReady{g_host_map,g_host_view}, g_buf)));
         g_follow_pending = false;
         g_seat_placed = false;
         return;
@@ -957,7 +977,7 @@ void note_host_time(std::uint32_t host_ms, std::int64_t now_us) {
 void present_motion(std::int64_t now_us) {
     const auto* s = core::schema::script();
     if (!s || !g_offset_known) return;
-    const double render = static_cast<double>(now_us) / 1000.0 + g_offset_ms - 100.0;
+    const double render = causality::playback_ms()>0?causality::playback_ms():static_cast<double>(now_us) / 1000.0 + g_offset_ms - 50.0;
     // a position write costs ~80 µs (actor + Spine children transform update, net-facts「敌人位置插值」):
     // enemies farther than 3000 UU from the local lily (off-screen) are written at ~10 Hz only
     static std::uint32_t frame = 0;
@@ -969,6 +989,7 @@ void present_motion(std::int64_t now_us) {
         if (!t.ready || !t.n || t.hidden) continue;
         auto* e = t.enemy.get();
         if (!e) continue;
+        if(causality::target_owned(e))continue; // exact target context is the sole motion writer while it is in use
         if (me) {
             const auto& last = t.s[(t.head + t.n - 1) % 16];
             if (std::fabs(last.y - me->y) + std::fabs(last.z - me->z) > 3000.0f && (frame + idx) % 6) continue;
@@ -1001,6 +1022,8 @@ void present_motion(std::int64_t now_us) {
 }
 
 void tick(std::int64_t now_us) {
+    causal_api();
+    if(const auto why=causality::fault();!why.empty())return coop::leave(why);
     if (g_seat) if (const auto fault = fx::fault(); !fault.empty()) g_event_failure = fault;
     if (g_seat) {
         const auto fault = ability::fault();
@@ -1050,6 +1073,7 @@ void stop() {
     core::permission::p1_presentation(false);
     overlay::set_banner({});
     g_seat = 0, g_seat_placed = false, g_epoch = 0, g_latest = 0, g_host_map = 0;
+    g_host_view = 0;
     g_reaction_last = g_reaction_time = 0;
     g_reaction_seats.fill(0);
     g_reaction_anchor = false;
@@ -1182,6 +1206,15 @@ ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id, bool allow_dying, boo
         break;
     }
     return a && !a->HasAnyFlags(RC::Unreal::RF_BeginDestroyed) ? a : nullptr;
+}
+namespace {
+ue::UObject* causal_target(std::uint8_t kind,std::uint16_t id,std::uint32_t generation) {
+    const auto* name=kind==1?g_names.text(id):nullptr;
+    const auto key=kind==1?(name?*name:std::string{}):std::format("dyn:{}",id);
+    auto it=g_taken.find(key);if(it==g_taken.end()||it->second.instance!=generation)return nullptr;
+    return it->second.enemy.get();
+}
+void causal_motion(double) { present_motion(clock::now_us()); }
 }
 
 std::string describe_events() {

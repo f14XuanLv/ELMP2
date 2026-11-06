@@ -1,5 +1,6 @@
 #include "coop/ability.h"
 #include "coop/native_lily.h"
+#include "coop/causality.h"
 
 #include "engine/handle.h"
 #include "engine/reflect.h"
@@ -278,6 +279,7 @@ void __fastcall d_native_launch(UObject* actor, UObject* invoker) {
     if (g_resetting && parent && parent->client) { ++g_reset_launches; return; }
     // A rejected duplicate Launch must not revoke the activation vanilla keeps running.
     if (original_active(actor)) { o_native_launch(actor, invoker); return; }
+    causality::prepare_reuse(actor);
     const bool description_matches = g_description && !g_description->token && g_description->owner == invoker && g_description->cls == actor->GetClassPrivate();
     const bool root = description_matches && !g_description->child;
     const bool child = parent && parent->invoker.get() == invoker && invoker;
@@ -317,6 +319,7 @@ void __fastcall d_native_launch(UObject* actor, UObject* invoker) {
         f->second.members.push_back({a.actor, copied(a)}); ++g_member_count;
     }
     if (description_matches) { g_description->spawned = ObjHandle::of(actor); g_description->token = token; }
+    causality::launched(actor, invoker, copied(a));
     NativeScope scope(actor);
     o_native_launch(actor, invoker);
     // OnLaunch can request Stop while native state is 2; CAC480 may complete it inline without
@@ -397,6 +400,7 @@ bool identity(UObject* actor, Identity& out) {
     out = copied(*a);
     return true;
 }
+bool current(Identity& out) { const auto* e = executing(); out = e ? copied(*e) : Identity{}; return e != nullptr; }
 namespace {
 ChildState lookup_child(std::uint64_t root, const net::proto::AbilityPath& path, const std::string& cls, Member*& found) {
     found = nullptr;
@@ -435,6 +439,7 @@ void stopped(UObject* actor, const Identity& before) {
         }
         current->active = false;
         current->stop_pending = false;
+        causality::ended(actor, before);
     }
     if (const auto f = g_families.find(before.root); f != g_families.end())
         for (auto& m : f->second.members) if (m.id.token == before.token && m.id.active) { m.id.active = false; ++g_ended; break; }

@@ -435,6 +435,8 @@ Companion `cp` 基线包含 Actor 世界位置及 pitch/yaw/roll；世界旋转�
 
 ### 16.3 已恢复的原版执行链（2026-11-05，ADR 0009）
 
+2026-11-07 按 [ADR0011](adr/0011-native-lily-causality.md) 增加原版技能因果观测、Host目标事实、技能激活关联及共同播放时间。先闭合一招实际追踪技能的完整命中/停止，不开放Client结算；实测范围与边界见[因果闭环记录](kb/native-lily-causality-2026-11-07.md)。
+
 2026-11-05 用户授权的远端 Lily 原版执行试验按 [ADR 0010](adr/0010-native-remote-lily-pilot.md) 替换该域旧冻结/输出复制：可靠真实输入消费 + 运动/状态上下文 + 原版装备/召唤/动画；敌人域保持现有实现。2026-11-06 用户反馈卡顿，改为连续时间缓冲与同总时长的角色/组件推进，取消整数包数驱动的0/4倍时钟，见ADR0010修正。该版本等待用户双窗口游玩验收，不预先标记全部表现完成。
 
 本机Client保留原版输入/移动/动画。Host接受的LaunchKnockback事实含原参数、模式/速度/位置及资产身份，Client调用同一原版入口，核对实际Type/LaunchVector；不从HP差猜动画。重复自主Launch仅在该受控座位收窄拦截，原版Tick/恢复继续运行。协议8把原版LaunchHitStop和exact DamageColorCurve.PlayFromStart加入同一Reaction流，按native entry_order排序，不让嵌套回调的返回顺序颠倒因果。HitStop校验factor/AdditionalStates后复用原版暂停/恢复，色闪严格核原曲线/同Actor回调后复用原版Timeline；不广播带无敌状态的HP委托。实际范围与未闭合音效/AdditiveDamage等边见验收记录。

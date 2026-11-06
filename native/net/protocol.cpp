@@ -72,11 +72,13 @@ std::size_t encode(const MapMsg& m, std::span<std::uint8_t> out) {
     auto w = start(out, Msg::Map);
     w.u16(m.map);
     w.str(m.tag.substr(0, kMaxName));
+    w.u32(m.view);
     return done(w);
 }
 std::size_t encode(const MapReady& m, std::span<std::uint8_t> out) {
     auto w = start(out, Msg::MapReady);
     w.u16(m.map);
+    w.u32(m.view);
     return done(w);
 }
 std::size_t encode(const Act& m, std::span<std::uint8_t> out) {
@@ -182,12 +184,14 @@ bool decode(std::span<const std::uint8_t> in, MapMsg& m) {
     if (!open(r, Msg::Map)) return false;
     m.map = r.u16();
     m.tag = std::string(r.str(kMaxName));
+    m.view = r.u32();
     return r.done();
 }
 bool decode(std::span<const std::uint8_t> in, MapReady& m) {
     Reader r(in);
     if (!open(r, Msg::MapReady)) return false;
     m.map = r.u16();
+    m.view = r.u32();
     return r.done();
 }
 bool decode(std::span<const std::uint8_t> in, Act& m) {
@@ -224,6 +228,7 @@ std::size_t encode(const Fx& m, std::span<std::uint8_t> out) {
     w.u16(m.attach_component);
     w.u16(m.attach_socket);
     w.u8(m.emitter_flags);
+    w.u32(m.t_ms); w.u64(m.causal_root);
     return done(w);
 }
 bool decode(std::span<const std::uint8_t> in, Fx& m) {
@@ -243,6 +248,7 @@ bool decode(std::span<const std::uint8_t> in, Fx& m) {
     m.attach_component = r.u16();
     m.attach_socket = r.u16();
     m.emitter_flags = r.u8();
+    m.t_ms = r.u32(); m.causal_root = r.u64();
     if (!r.done() || !m.ps || !kind_ok(m.kind) || (m.flags & ~63u) || m.pool > 3) return false;
     if (!(m.flags & 8)) return unit(m.xf) && !m.attach_kind && !m.attach_component && !m.attach_socket && !m.emitter_flags;
     const bool path = m.attach_kind == static_cast<std::uint8_t>(FxAttach::Component) || m.attach_kind == static_cast<std::uint8_t>(FxAttach::SpineBone);
@@ -254,12 +260,14 @@ bool decode(std::span<const std::uint8_t> in, Fx& m) {
 std::size_t encode(const FxStop& m, std::span<std::uint8_t> out) {
     auto w = start(out, Msg::FxStop);
     w.u32(m.seq);
+    w.u32(m.t_ms);
     return done(w);
 }
 bool decode(std::span<const std::uint8_t> in, FxStop& m) {
     Reader r(in);
     if (!open(r, Msg::FxStop)) return false;
     m.seq = r.u32();
+    m.t_ms = r.u32();
     return r.done();
 }
 std::size_t encode(const Snd& m, std::span<std::uint8_t> out) {
@@ -271,6 +279,7 @@ std::size_t encode(const Snd& m, std::span<std::uint8_t> out) {
     w.u8(m.is2d);
     w.u8(m.flags);
     if (m.flags & 2) for (const auto f : m.xf) w.f32(f);
+    w.u32(m.t_ms); w.u64(m.causal_root);
     return done(w);
 }
 bool decode(std::span<const std::uint8_t> in, Snd& m) {
@@ -283,6 +292,7 @@ bool decode(std::span<const std::uint8_t> in, Snd& m) {
     m.is2d = r.u8();
     m.flags = r.u8();
     if (m.flags & 2) read_xf(r, m.xf);
+    m.t_ms = r.u32(); m.causal_root = r.u64();
     return r.done() && sound_ok(m);
 }
 std::size_t encode(const ActStop& m, std::span<std::uint8_t> out) {
@@ -326,9 +336,12 @@ bool decode(std::span<const std::uint8_t> in, ChildStop& m) {
     return r.done() && valid_child_stop(m);
 }
 std::size_t encode(const LilyFrame& m, std::span<std::uint8_t> out) {
+    if(!m.epoch||!m.view||!std::isfinite(m.world_dt)||m.world_dt<=0||m.world_dt>60)return 0;
     if (!m.seat || m.seat > 8 || !m.map || !m.seq || !m.generation || m.direction > 8 || m.mode > 6 || !std::isfinite(m.dt) || m.dt < 0 || m.dt > 60 || !std::isfinite(m.step) || m.step <= 0 || m.step > 60 || m.state_count > kLilyStates || (m.flags & ~0x3FEu) || (m.raw & ~0x3FEu)) return 0;
     auto w = start(out, Msg::LilyFrame);
     w.u16(m.seat); w.u16(m.map); w.u32(m.seq); w.u32(m.generation); w.f32(m.dt); w.f32(m.step);
+    w.u16(m.epoch); w.u32(m.view); w.u32(m.t_ms);
+    w.f32(m.world_dt);
     for (float f : m.input) { if (!std::isfinite(f)) return 0; w.f32(f); }
     w.u8(m.direction); w.u8(m.mode); w.u8(m.custom_mode); w.u16(m.flags); w.u16(m.raw);
     for (float f : m.position) { if (!std::isfinite(f)) return 0; w.f32(f); }
@@ -341,6 +354,8 @@ bool decode(std::span<const std::uint8_t> in, LilyFrame& m) {
     Reader r(in);
     if (!open(r, Msg::LilyFrame)) return false;
     m.seat = r.u16(); m.map = r.u16(); m.seq = r.u32(); m.generation = r.u32(); m.dt = r.f32(); m.step = r.f32();
+    m.epoch = r.u16(); m.view = r.u32(); m.t_ms = r.u32();
+    m.world_dt = r.f32();
     for (auto& f : m.input) f = r.f32();
     m.direction = r.u8(); m.mode = r.u8(); m.custom_mode = r.u8(); m.flags = r.u16(); m.raw = r.u16();
     for (auto& f : m.position) f = r.f32();

@@ -17,6 +17,7 @@ add_library(elmp_base STATIC
     net/endpoint.cpp
     net/snapshot.cpp
     net/protocol.cpp
+    net/causes.cpp
 )
 target_include_directories(elmp_base PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${ELMP_GENERATED_DIR})
 target_compile_definitions(elmp_base PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
@@ -85,6 +86,8 @@ set(ELMP_MOD_SOURCES
     coop/client.cpp
     coop/native_lily.cpp
     coop/ability.cpp
+    coop/causality.cpp
+    coop/causal_facts.cpp
     coop/reaction.cpp
     coop/reaction_color.cpp
     coop/feedback_context.cpp

@@ -6,6 +6,41 @@
   "image_base_note": "0x140000000",
   "_comment": "运行时加载（Mods/ELMP/data/binary/EL.json）。只放没有反射入口的原生函数与无反射的原始结构偏移；适用的 EXE 由 elmp.json game.sha256 唯一给出（C1.5，本文件不重复哈希）。每个函数：预检通过（EXE SHA-256）且 rva 处字节与 prefix 逐字节一致才可武装（fail closed）。每个偏移：check 描述它与反射字段的关系（equals = 与该反射属性偏移相等；within = 落在 after 属性末尾与 before 属性起点之间，before 为 <end> 表示原生类 PropertiesSize；struct_size = 等于该结构体尺寸），世界就位后逐项校验，失败的项其依赖能力 fail closed。source 标注证据等级与出处。",
   "functions": {
+    "SpiritStartNative": {
+      "rva": "0x00CF2F00",
+      "prefix": "48895C24104889742418574883EC30488BF2488BD9",
+      "signature": "uintptr AZenithSpirit::Start(this, UCommandAction*)",
+      "owner": "coop/causality",
+      "source": "[E-IDA] ELMP v2 2026-11-07 elmp DB decompile/get_bytes; original source binding before OnAppear and command execution; return register preserved"
+    },
+    "SpiritCommandsNative": {
+      "rva": "0x00CF3090",
+      "prefix": "48895C241048896C24184889742420574883EC40498BE8",
+      "signature": "uintptr AZenithSpirit::StartCommands(this, UCommandAction*, CommandList*)",
+      "owner": "coop/causality",
+      "source": "[E-IDA] ELMP v2 2026-11-07 elmp DB decompile/get_bytes; original source binding before OnAppear and command execution; return register preserved"
+    },
+    "HomingSetTargetNative": {
+      "rva": "0x00CBD030",
+      "prefix": "4881C104010000E9A49C4000",
+      "signature": "void UHomingComponent::SetTarget(this, USceneComponent*)",
+      "owner": "coop/causality",
+      "source": "[E-IDA][E-SDK] lily-homing-context-2026-11-04.md; current working DB get_bytes verified 2026-11-07"
+    },
+    "HomingQueryNative": {
+      "rva": "0x00CDECE0",
+      "prefix": "0FB644243088442430E982C30200",
+      "signature": "AActor* GetClosestEnemyOfActor(AActor*, float MinDistance XMM1, float Range XMM2, bool LOS R9, uint8 channel stack, bool front stack)",
+      "owner": "coop/causality",
+      "source": "[E-IDA][E-SDK] ELMP v2 2026-11-07 elmp working DB get_bytes; lily-homing-context-2026-11-04.md; GameLogicBPFLibrary.h"
+    },
+    "HomingTickNative": {
+      "rva": "0x00CC0BC0",
+      "prefix": "488BC4488958104889701855488D68A14881ECE0000000",
+      "signature": "void UHomingComponent::TickComponent(this, float delta XMM1, uint8 tickType R8, FActorComponentTickFunction* R9)",
+      "owner": "coop/causality",
+      "source": "[E-IDA][E-SDK] ELMP v2 2026-11-07 elmp working DB get_bytes; HomingComponent.h; Components/ActorComponent.h"
+    },
     "NativeLilyCharacterTick": {
       "rva": "0x00CF3740",
       "prefix": "488BC4564881EC900000000F2970E80F28F148895808",

@@ -52,6 +52,7 @@ struct LilyRow { // key = seat slot (1 = host P1)
 
 struct EnemyRow { // key = net id (spawn point name id) or dyn id (section ed)
     std::uint16_t key = 0;
+    std::uint32_t instance = 0; // Host weak serial, never a Client UObject serial
     float x = 0, y = 0, z = 0, vz = 0;
     std::int8_t facing = 0;
     std::uint8_t flags = 0; // bit0 Actor Tick enabled, bit1 hidden, bit2 dead (last sample hp <= 0),
@@ -61,7 +62,7 @@ struct EnemyRow { // key = net id (spawn point name id) or dyn id (section ed)
     Pose pose;
     Visual visual;
     static constexpr auto fields() {
-        return std::make_tuple(&EnemyRow::x, &EnemyRow::y, &EnemyRow::z, &EnemyRow::vz, &EnemyRow::facing, &EnemyRow::flags, &EnemyRow::hp, &EnemyRow::mhp,
+        return std::make_tuple(&EnemyRow::instance, &EnemyRow::x, &EnemyRow::y, &EnemyRow::z, &EnemyRow::vz, &EnemyRow::facing, &EnemyRow::flags, &EnemyRow::hp, &EnemyRow::mhp,
                                &EnemyRow::type, &EnemyRow::pose, &EnemyRow::visual);
     }
 };

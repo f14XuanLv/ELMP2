@@ -48,6 +48,7 @@ struct Identity {
 };
 // Copy at native Stop entry; unsupported descendants still return an identity, never a guessed path.
 bool identity(ue::UObject* actor, Identity& out);
+bool current(Identity& out); // current original Launch/Tick/Stop native scope
 enum class ChildState { Missing, Active, Ended, Conflict };
 ChildState child_state(std::uint64_t root, const net::proto::AbilityPath& path, const std::string& cls);
 ue::UObject* find_child(std::uint64_t root, const net::proto::AbilityPath& path, const std::string& cls, std::uint64_t* token_out = nullptr);
