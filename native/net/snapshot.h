@@ -44,11 +44,9 @@ struct LilyRow { // key = seat slot (1 = host P1)
     std::uint8_t heals = 0, mheals = 0;
     std::uint16_t skin = 0;
     std::uint16_t map = 0; // name id of the map the seat is in
-    Pose pose;
-    Visual visual;
     static constexpr auto fields() {
         return std::make_tuple(&LilyRow::x, &LilyRow::y, &LilyRow::z, &LilyRow::facing, &LilyRow::alive, &LilyRow::hp, &LilyRow::mhp, &LilyRow::mp, &LilyRow::mmp,
-                               &LilyRow::heals, &LilyRow::mheals, &LilyRow::skin, &LilyRow::map, &LilyRow::pose, &LilyRow::visual);
+                               &LilyRow::heals, &LilyRow::mheals, &LilyRow::skin, &LilyRow::map);
     }
 };
 
@@ -82,36 +80,6 @@ struct PickRow { // key = dyn id of a drop on the host
     static constexpr auto fields() { return std::make_tuple(&PickRow::x, &PickRow::y, &PickRow::z, &PickRow::cls); }
 };
 
-struct SpiritRow { // key = seat << 8 | per-seat index; only visible (summoned) spirits have rows
-    std::uint16_t key = 0;
-    std::uint16_t cls = 0; // class path name id
-    float x = 0, y = 0, z = 0;
-    std::int8_t facing = 0;
-    Pose pose;
-    Visual visual;
-    static constexpr auto fields() {
-        return std::make_tuple(&SpiritRow::cls, &SpiritRow::x, &SpiritRow::y, &SpiritRow::z, &SpiritRow::facing, &SpiritRow::pose, &SpiritRow::visual);
-    }
-};
-
-struct CompanionRow { // key = stable Host object id; follows the owner's player seat independently of spirits
-    std::uint16_t key = 0;
-    std::uint8_t seat = 0;
-    std::uint16_t cls = 0; // class path name id
-    float x = 0, y = 0, z = 0;
-    float pitch = 0, yaw = 0, roll = 0; // Actor world rotation, distinct from skeleton facing / renderer relative rotation
-    std::int8_t facing = 0;
-    std::uint8_t flags = 0; // bit0 Actor hidden, bit1 native IsActive, bit2 renderer hidden, bit3 renderer visible,
-                            // bit4 FX exists, bit5 FX active, bit6 FX visible, bit7 FX hidden (only the exact BP.FX PSC)
-    Pose pose;
-    Visual visual;
-    static constexpr auto fields() {
-        return std::make_tuple(&CompanionRow::seat, &CompanionRow::cls, &CompanionRow::x, &CompanionRow::y, &CompanionRow::z,
-                               &CompanionRow::pitch, &CompanionRow::yaw, &CompanionRow::roll,
-                               &CompanionRow::facing, &CompanionRow::flags, &CompanionRow::pose, &CompanionRow::visual);
-    }
-};
-
 // The delta codec carries one mask bit per field (snapshot.cpp). It used to be 16 bits: LilyRow grew past 16
 // and the extra field was silently never transmitted (zoff, 2026-10-30) — the mask is 32 bits now, and these
 // asserts keep a future field from falling off the end again.
@@ -119,8 +87,6 @@ static_assert(std::tuple_size_v<decltype(LilyRow::fields())> <= 32, "LilyRow exc
 static_assert(std::tuple_size_v<decltype(EnemyRow::fields())> <= 32, "EnemyRow exceeds the 32-field mask");
 static_assert(std::tuple_size_v<decltype(WorldRow::fields())> <= 32, "WorldRow exceeds the 32-field mask");
 static_assert(std::tuple_size_v<decltype(PickRow::fields())> <= 32, "PickRow exceeds the 32-field mask");
-static_assert(std::tuple_size_v<decltype(SpiritRow::fields())> <= 32, "SpiritRow exceeds the 32-field mask");
-static_assert(std::tuple_size_v<decltype(CompanionRow::fields())> <= 32, "CompanionRow exceeds the 32-field mask");
 
 template <class Row, std::size_t Cap>
 struct Section {    std::array<Row, Cap> rows;
@@ -152,10 +118,8 @@ struct Frame {
     Section<EnemyRow, 64> ed;
     Section<WorldRow, 512> w;
     Section<PickRow, 64> pk;
-    Section<SpiritRow, 32> sp;
-    Section<CompanionRow, 48> cp;
     void clear() {
-        l.clear(), e.clear(), ed.clear(), w.clear(), pk.clear(), sp.clear(), cp.clear();
+        l.clear(), e.clear(), ed.clear(), w.clear(), pk.clear();
     }
 };
 

@@ -33,6 +33,10 @@ struct Info {
 };
 Info info(std::int64_t slot);
 std::uint32_t take_presses(std::int64_t slot); // press edges since the last call (bench / menu edges)
+// Reliable remote simulation supplies one exact consumed snapshot, never regenerated edges.
+std::string snapshot(std::int64_t slot, const InputSnapshot& value);
+using ConsumeObserver = void (*)(ue::UObject* pawn, const InputSnapshot& value);
+bool observe(ConsumeObserver observer); // same native detour; no second hook on InputConsume
 
 std::string allow_player1(bool on);
 bool player1_allowed();

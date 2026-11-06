@@ -83,6 +83,7 @@ set(ELMP_MOD_SOURCES
     modes/hunter.cpp
     sdk/sdk.cpp
     coop/client.cpp
+    coop/native_lily.cpp
     coop/ability.cpp
     coop/reaction.cpp
     coop/reaction_color.cpp

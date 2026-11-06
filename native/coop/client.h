@@ -17,8 +17,6 @@ void present_dynamic(const ClientCtx& c);
 // adapter halves enemy / lily (coop/entities/{enemy,lily}.cpp)
 void present_enemies(const ClientCtx& c);
 void present_lily_rows(const ClientCtx& c);
-void present_spirits(const ClientCtx& c); // adapter spirit (client half)
-void reset_spirits();
 std::string describe_dynamic(); // Dev: returns the previous trace, starts a new one (240 frames of presented Y)
 
 } // namespace elmp::coop::client

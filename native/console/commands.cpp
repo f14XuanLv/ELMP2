@@ -36,8 +36,8 @@ void line(std::string& out, std::string s) {
     out += '\n';
 }
 
-std::string summary_us(const metrics::Summary& s) {
-    return std::format("n={} mean={:.1f} p50={:.1f} p95={:.1f} p99={:.1f} max={:.1f} us", s.n, s.mean, s.p50, s.p95, s.p99, s.max);
+std::string summary_us(const metrics::Summary& s, std::string_view unit = "us") {
+    return std::format("n={} mean={:.3f} p50={:.3f} p95={:.3f} p99={:.3f} max={:.3f} {}", s.n, s.mean, s.p50, s.p95, s.p99, s.max, unit);
 }
 
 void status(Args, std::string& out) {
@@ -72,12 +72,16 @@ void preflight_cmd(Args, std::string& out) {
 void perf(Args args, std::string& out) {
     if (!args.empty() && args[0] == "reset") {
         metrics::reset_histograms("frame.");
+        metrics::reset_histograms("native_lily.");
         line(out, "frame histograms reset");
         return;
     }
     const auto snap = metrics::snapshot();
     for (const auto& [name, s] : snap.histograms)
-        if (s.n) line(out, std::format("{:<26} {}", name, summary_us(s)));
+        if (s.n) {
+            const auto unit = name == "native_lily.component_rate" ? "x" : name == "native_lily.steps" ? "steps" : name.ends_with("_ms") ? "ms" : name.ends_with("_uu") ? "UU" : "us";
+            line(out, std::format("{:<26} {}", name, summary_us(s, unit)));
+        }
     for (const auto& [name, v] : snap.counters) line(out, std::format("{:<26} {}", name, v));
 }
 

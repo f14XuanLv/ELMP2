@@ -1,3 +1,4 @@
+#include "coop/native_lily.h"
 #include "coop/reaction.h"
 #include "coop/reaction_color.h"
 
@@ -251,7 +252,7 @@ bool capture_before(const Schema& s, ue::UObject* comp, const void* data, const 
 
 std::int32_t __fastcall d_launch(ue::UObject* comp, const void* data, Vec* direction) {
     auto* outer = ue::alive(comp) ? comp->GetOuterPrivate() : nullptr;
-    if (g_client && guard::armed() && outer && outer == world::p1_pawn()) {
+    if (g_client && guard::armed() && outer && (outer == world::p1_pawn() || native_lily::owns(outer))) {
         if (!g_knockback_allow_once || g_knockback_allowed.get() != comp) { ++g_local_blocked; return -1; }
         g_knockback_allow_once = false;
     }
@@ -286,7 +287,7 @@ std::int32_t __fastcall d_launch(ue::UObject* comp, const void* data, Vec* direc
 
 void __fastcall d_hitstop(ue::UObject* comp, float duration) {
     auto* outer = ue::alive(comp) ? comp->GetOuterPrivate() : nullptr;
-    if (g_client && guard::armed() && outer && outer == world::p1_pawn()) {
+    if (g_client && guard::armed() && outer && (outer == world::p1_pawn() || native_lily::owns(outer))) {
         if (!g_hitstop_allow_once || g_hitstop_allowed.get() != comp) { ++g_hitstop_local_blocked; return; }
         // A nested original callback receives its own ordered Host event. It must not borrow the
         // outer reaction's permission and execute once locally plus once from the wire.
@@ -448,7 +449,7 @@ bool replay(ue::UObject* actor, const net::proto::Reaction& e, NameLookup lookup
     const auto fail = [&](std::string text) {
         g_failure = std::move(text); ++g_rejected; if (why) *why = g_failure; return false;
     };
-    if (!g_client || !guard::armed() || !ue::on_game_thread() || !ue::alive(actor) || actor != world::p1_pawn())
+    if (!g_client || !guard::armed() || !ue::on_game_thread() || !ue::alive(actor) || (actor != world::p1_pawn() && !native_lily::owns(actor)))
         return fail("reaction requires armed Client's controlled Lily on game thread");
     if (!net::proto::valid_reaction(e)) return fail("malformed Reaction");
     if (e.kind == 1) {
@@ -545,7 +546,7 @@ bool replay(ue::UObject* actor, const net::proto::Reaction& e, NameLookup lookup
 }
 
 bool active(ue::UObject* actor) {
-    if (!g_client || !actor || actor != world::p1_pawn()) return false;
+    if (!g_client || !actor || (actor != world::p1_pawn() && !native_lily::owns(actor))) return false;
     const auto* hs = hitstop_schema();
     if (!hs) return true;
     reflect::Frame find_hitstop(hs->by_class); find_hitstop.arg(0, hs->component_class.get());

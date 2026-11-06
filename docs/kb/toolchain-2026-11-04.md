@@ -33,3 +33,11 @@
 本机 Codex 配置备份：`~/.codex/config.toml.elmp-backup-20261104-205152`。完整 JSON 证据在被忽略的 `build/toolchain-smoke/`，需要时由 Shell 读取；本文件保存跨会话的关键结论。
 
 后续复核（22:20前后）：`doctor-final.json`为25通过/0失败；全部游戏停止时`smoke-tools-final.json`为38通过/0失败/4跳过（四个UEBridge因实例停止而跳过）。上表PID、DLL哈希和打包记录属于较早的工具链验收版本；后续同步修改、最新构建/包和最终进程状态以[同步修正实测记录](sync-correction-2026-11-04.md)为准。
+
+## ELMP v2：IDA 502 与启动失败修复（2026-11-05）
+
+- `[E-实测]` 故障时 8745 无监听，旧服务 PID 已不存在。环境含 HTTP_PROXY / HTTPS_PROXY（127.0.0.1:10808），没有 NO_PROXY；urllib 默认代理访问本地 MCP 得到 HTTP 502。显式禁用代理后同一地址返回本机连接拒绝，证明 502 不是 IDA 工具调用结果。服务先前退出的原因未确定。
+- `[E-实测]` Windows 上 2 秒 TCP 探测先超时，无法进入原启动脚本的 ConnectionRefusedError 分支。改为本地独占绑定判断端口可用性；占用或绑定失败仍拒绝启动，不终止未知服务。HTTP 客户端仅对 loopback / localhost 禁用代理，不修改系统环境或外部服务源码。
+- `[E-实测]` 修复后 `ida_service.py start` 返回 ready=true，工作库为配置的 build/toolchain-smoke/ida 副本；会话 elmp、imagebase=0x140000000、auto_analysis_ready=true、hexrays_ready=true。
+- `[E-IDA][E-实测]` 仓库 CLI 批处理依次调用 idb_list、server_health、decompile(0x140CF3740, database=elmp)，返回完整 70 行伪代码、truncated=false。再次执行 start 返回 service_started=false、相同 worker PID 25480，验证复用已有会话。原始结果在 build/toolchain-smoke/ida/repair-2026-11-05.json。
+- 本轮只修改工具客户端、启动检查与文档；未启动或操作游戏，未替换原数据库。未运行与本次 Python 工具修复无关的 C++ 构建或 CTest。

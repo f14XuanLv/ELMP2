@@ -328,6 +328,7 @@ FrameSnapshot {
 - `tools/mcp_client.py` 是现有 MCP 的客户端，不新增游戏服务。提供工具清单、schema、调用与同会话批处理；CUE4Parse 进程内的 provider 必须先挂载，IDA 必须验证已打开的数据库身份后再查询。调用有超时，错误返回非零，完整 JSON 可保存到仓库外或被忽略的 `build/toolchain-smoke/`。
 - `tools/toolchain.py` 汇总本地依赖与只读 smoke，按配置连接 CUE4Parse / IDA 与运行实例的 UEBridge；工具连接路径、端点与数据库路径归 `devconfig.json` / `devconfig.local.json`。不把本机路径写进运行时 DLL，不从旧仓库复制工具代码。
 - `tools/ida_service.py start` 幂等启动已有 idalib supervisor（仅 loopback、无 GUI），复用经身份核对的工作库会话；工作库不存在才复制原 `.i64`，关闭自动分析，不覆写原库。`status` 只读；服务只在显式 `start` 时启动，doctor/smoke 不隐式启动服务或游戏。
+- 2026-11-05：HTTP MCP 的 loopback / localhost 请求由客户端显式直连，不依赖环境代理的 NO_PROXY；其它端点保留代理行为。IDA 连接失败后以本地端口绑定核查能否启动（Windows 使用独占绑定），不以短 TCP 连接超时推断端口占用，不终止未知服务。
 - Codex 的 MCP 配置连接已验证的现有服务；本机配置与服务启动不等同于当前会话已加载原生工具。命令行 MCP 客户端作为立即可用的入口；工具清单是否加载以会话实际可用工具为证。
 - 检查不向游戏发输入、不切图、不重启实例、不操作前台窗口。截图在 `IsIconic` 或客户区无效时停止；资产提取参数先校验再启动 .NET；测试临时目录仅作用于构建命令进程，不改系统环境。
 
@@ -433,6 +434,8 @@ Companion `cp` 基线包含 Actor 世界位置及 pitch/yaw/roll；世界旋转�
 | 持续FX | Host激活ID+PSC句柄，逐peer的Ref/地图投递绑定；停止、对象失效、离图、会话结束 | live/baselines/bindingsClosed；Client kept/replaced/stopMissed |
 
 ### 16.3 已恢复的原版执行链（2026-11-05，ADR 0009）
+
+2026-11-05 用户授权的远端 Lily 原版执行试验按 [ADR 0010](adr/0010-native-remote-lily-pilot.md) 替换该域旧冻结/输出复制：可靠真实输入消费 + 运动/状态上下文 + 原版装备/召唤/动画；敌人域保持现有实现。2026-11-06 用户反馈卡顿，改为连续时间缓冲与同总时长的角色/组件推进，取消整数包数驱动的0/4倍时钟，见ADR0010修正。该版本等待用户双窗口游玩验收，不预先标记全部表现完成。
 
 本机Client保留原版输入/移动/动画。Host接受的LaunchKnockback事实含原参数、模式/速度/位置及资产身份，Client调用同一原版入口，核对实际Type/LaunchVector；不从HP差猜动画。重复自主Launch仅在该受控座位收窄拦截，原版Tick/恢复继续运行。协议8把原版LaunchHitStop和exact DamageColorCurve.PlayFromStart加入同一Reaction流，按native entry_order排序，不让嵌套回调的返回顺序颠倒因果。HitStop校验factor/AdditionalStates后复用原版暂停/恢复，色闪严格核原曲线/同Actor回调后复用原版Timeline；不广播带无敌状态的HP委托。实际范围与未闭合音效/AdditiveDamage等边见验收记录。
 

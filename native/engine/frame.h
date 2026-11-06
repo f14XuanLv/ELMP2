@@ -31,5 +31,6 @@ void install();
 void uninstall();
 
 std::uint64_t ticks();
+float delta(); // current EngineTick delta, available to every phase in the same frame
 
 } // namespace elmp::frame

@@ -325,9 +325,36 @@ bool decode(std::span<const std::uint8_t> in, ChildStop& m) {
     m.reason = r.u8();
     return r.done() && valid_child_stop(m);
 }
+std::size_t encode(const LilyFrame& m, std::span<std::uint8_t> out) {
+    if (!m.seat || m.seat > 8 || !m.map || !m.seq || !m.generation || m.direction > 8 || m.mode > 6 || !std::isfinite(m.dt) || m.dt < 0 || m.dt > 60 || !std::isfinite(m.step) || m.step <= 0 || m.step > 60 || m.state_count > kLilyStates || (m.flags & ~0x3FEu) || (m.raw & ~0x3FEu)) return 0;
+    auto w = start(out, Msg::LilyFrame);
+    w.u16(m.seat); w.u16(m.map); w.u32(m.seq); w.u32(m.generation); w.f32(m.dt); w.f32(m.step);
+    for (float f : m.input) { if (!std::isfinite(f)) return 0; w.f32(f); }
+    w.u8(m.direction); w.u8(m.mode); w.u8(m.custom_mode); w.u16(m.flags); w.u16(m.raw);
+    for (float f : m.position) { if (!std::isfinite(f)) return 0; w.f32(f); }
+    for (float f : m.velocity) { if (!std::isfinite(f)) return 0; w.f32(f); }
+    w.u8(m.state_count);
+    for (std::size_t i = 0; i < m.state_count; ++i) { if (!m.states[i]) return 0; w.u16(m.states[i]); }
+    return done(w);
+}
+bool decode(std::span<const std::uint8_t> in, LilyFrame& m) {
+    Reader r(in);
+    if (!open(r, Msg::LilyFrame)) return false;
+    m.seat = r.u16(); m.map = r.u16(); m.seq = r.u32(); m.generation = r.u32(); m.dt = r.f32(); m.step = r.f32();
+    for (auto& f : m.input) f = r.f32();
+    m.direction = r.u8(); m.mode = r.u8(); m.custom_mode = r.u8(); m.flags = r.u16(); m.raw = r.u16();
+    for (auto& f : m.position) f = r.f32();
+    for (auto& f : m.velocity) f = r.f32();
+    m.state_count = r.u8();
+    if (m.state_count > kLilyStates) return false;
+    for (std::size_t i = 0; i < m.state_count; ++i) m.states[i] = r.u16();
+    std::array<std::uint8_t, 256> scratch{};
+    return r.done() && encode(m, scratch) != 0 && m.mode <= 6 && m.direction <= 9;
+}
+
 bool decode(std::span<const std::uint8_t> in, Json& m) {    Reader r(in);
     const auto t = r.u8();
-    if (t != static_cast<std::uint8_t>(Msg::Build) && t != static_cast<std::uint8_t>(Msg::EquipRequest) && t != static_cast<std::uint8_t>(Msg::EquipResult)) return false;
+    if (t != static_cast<std::uint8_t>(Msg::Build) && t != static_cast<std::uint8_t>(Msg::EquipRequest) && t != static_cast<std::uint8_t>(Msg::EquipResult) && t != static_cast<std::uint8_t>(Msg::LilyBuild)) return false;
     m.text = std::string(r.str(kMaxJson));
     return r.done();
 }

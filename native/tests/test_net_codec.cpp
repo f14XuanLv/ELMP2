@@ -15,6 +15,31 @@
 using namespace elmp::net;
 
 TEST_MAIN({
+    { // Reliable original input history: bounded states, complete frames, no NaN or trailing bytes.
+        using namespace elmp::net::proto;
+        LilyFrame a, b;
+        a.seat = 1; a.map = 2; a.seq = 1; a.generation = 10; a.dt = a.step = 1.0f / 60;
+        a.mode = 1; a.state_count = static_cast<std::uint8_t>(kLilyStates);
+        a.flags = a.raw = 0x3FE; a.input[0] = -1; a.velocity[1] = 300;
+        for (std::size_t i = 0; i < kLilyStates; ++i) a.states[i] = static_cast<std::uint16_t>(i + 1);
+        std::array<std::uint8_t, 512> wire{};
+        const auto n = encode(a, wire);
+        CHECK(n > 0 && decode(std::span(wire.data(), n), b) && a == b);
+        for (std::size_t cut = 0; cut < n; ++cut) CHECK(!decode(std::span(wire.data(), cut), b));
+        CHECK(!decode(std::span(wire.data(), n + 1), b));
+        a.input[0] = std::numeric_limits<float>::quiet_NaN(); CHECK(encode(a, wire) == 0);
+        a.input[0] = 0; a.seq = 0; CHECK(encode(a, wire) == 0);
+        a.seq = 1; a.step = 0; CHECK(encode(a, wire) == 0);
+        a.step = std::numeric_limits<float>::infinity(); CHECK(encode(a, wire) == 0);
+        a.step = 1.0f / 60; a.dt = 0; // a genuine zero-delta HitStop is distinct from no received frame
+        CHECK(encode(a, wire) > 0);
+        a.step = 2; a.dt = 0.4f; // a streaming hitch is legitimate, unlike a non-finite/corrupt clock
+        const auto long_frame = encode(a, wire);
+        CHECK(long_frame > 0 && decode(std::span(wire.data(), long_frame), b) && a == b);
+        a.step = 60.01f; CHECK(encode(a, wire) == 0);
+        a.step = 1.0f / 60;
+        a.state_count = 49; CHECK(encode(a, wire) == 0);
+    }
     std::array<std::uint8_t, 64> buf{};
     Writer w(buf.data(), buf.size());
     w.u8(7);
@@ -125,76 +150,39 @@ TEST_MAIN({
             for (std::uint16_t k = 1; k <= cap; ++k) { auto* row = section.add(k); row->pose = pose; row->visual = visual; }
         };
         a->seq = 1;
-        fill(a->l, 8); fill(a->e, 128); fill(a->ed, 64); fill(a->sp, 32); fill(a->cp, 48);
-        for (std::uint16_t i = 0; i < a->cp.n; ++i) {
-            auto& row = a->cp.rows[i];
-            row.seat = static_cast<std::uint8_t>(i % 8 + 1); row.cls = 600 + i;
-            row.x = i * 1.5f; row.y = -i * 2.0f; row.z = 80 + i;
-            row.pitch = i * 0.25f; row.yaw = 90 + i; row.roll = -i * 0.5f;
-            row.facing = -1; row.flags = 2;
-        }
-        CHECK(!a->cp.add(49)); // the declared companion capacity cannot be exceeded
+        for (std::uint16_t i = 1; i <= 8; ++i) a->l.add(i)->hp = 400;
+        fill(a->e, 128); fill(a->ed, 64);
+        CHECK(!a->e.add(129));
         for (std::uint16_t i = 1; i <= 512; ++i) a->w.add(i)->flags = 1;
         for (std::uint16_t i = 1; i <= 64; ++i) a->pk.add(i)->x = 2;
         std::vector<std::uint8_t> bytes(128 * 1024);
         auto n = encode(*a, nullptr, 0, bytes);
         CHECK(n > 64 * 1024 && n < bytes.size());
         CHECK(decode(std::span(bytes.data(), n), nullptr, *out));
-        CHECK(out->e.rows[0].pose == pose && out->sp.rows[31].visual.color == visual.color);
-        CHECK(out->cp.n == 48 && out->cp.find(48)->seat == 8 && out->cp.find(48)->cls == 647 && out->cp.find(48)->flags == 2);
-        CHECK(out->cp.find(48)->x == 70.5f && out->cp.find(48)->y == -94 && out->cp.find(48)->z == 127 && out->cp.find(48)->facing == -1);
-        CHECK(out->cp.find(48)->pitch == 11.75f && out->cp.find(48)->yaw == 137 && out->cp.find(48)->roll == -23.5f);
-        CHECK(out->cp.find(48)->pose == pose && out->cp.find(48)->visual.dissolve == visual.dissolve);
-        std::fprintf(stderr, "maximum pose/visual/48-companion snapshot: %zu bytes (limit %zu)\n", n, bytes.size());
+        CHECK(out->e.rows[0].pose == pose && out->ed.rows[63].visual.color == visual.color);
         const auto maximum_full = n;
-        CHECK(maximum_full == 128649 + 48 * 12); // protocol 6 adds the complete Actor rotation to each cp
+        std::fprintf(stderr, "maximum native-Lily/enemy snapshot: %zu bytes (limit %zu)\\n", n, bytes.size());
         *b = *a; b->seq = 2;
         const auto replace_keys = [](auto& section) {
             for (auto& row : std::span(section.rows.data(), section.n)) row.key += 1000;
         };
-        replace_keys(b->l); replace_keys(b->e); replace_keys(b->ed); replace_keys(b->w);
-        replace_keys(b->pk); replace_keys(b->sp); replace_keys(b->cp);
-        n = encode(*b, a.get(), 1, bytes); // all rows change identity: full payload plus every removed key
+        replace_keys(b->l); replace_keys(b->e); replace_keys(b->ed); replace_keys(b->w); replace_keys(b->pk);
+        n = encode(*b, a.get(), 1, bytes);
         CHECK(n > maximum_full && n < bytes.size() && decode(std::span(bytes.data(), n), a.get(), *out));
-        CHECK(n == 130363 + 48 * 12 && bytes.size() - n == 133);
-        CHECK(out->l.n == 8 && out->e.n == 128 && out->ed.n == 64 && out->w.n == 512 && out->pk.n == 64 && out->sp.n == 32 && out->cp.n == 48);
-        CHECK(!out->cp.find(1) && out->cp.find(1048)->pose == pose && out->w.find(1512) && out->e.find(1128));
-        std::fprintf(stderr, "maximum replacement delta: %zu bytes (limit %zu)\n", n, bytes.size());
-        *b = *a; b->seq = 2;
-        auto& cp = b->cp.rows[0];
-        cp.seat = 8; cp.cls = 1234; cp.x = -15; cp.facing = 1; cp.flags = 0xFF;
-        cp.pitch = 7; cp.yaw = -23; cp.roll = 9;
-        ++cp.pose.tracks[0].generation;
-        cp.visual.dissolve = 0.875f;
-        b->cp.rows[1] = b->cp.rows[--b->cp.n]; // removal can reorder rows independently of their identities
-        n = encode(*b, a.get(), 1, bytes);
-        CHECK(n > 0 && n < 1024 && decode(std::span(bytes.data(), n), a.get(), *out));
-        CHECK(out->cp.n == 47 && !out->cp.find(2) && out->cp.find(1)->seat == 8 && out->cp.find(1)->cls == 1234);
-        CHECK(out->cp.find(1)->x == -15 && out->cp.find(1)->facing == 1 && out->cp.find(1)->flags == 0xFF);
-        CHECK(out->cp.find(1)->pitch == 7 && out->cp.find(1)->yaw == -23 && out->cp.find(1)->roll == 9);
-        CHECK(out->cp.find(1)->pose == cp.pose && out->cp.find(1)->visual.dissolve == 0.875f && out->sp.n == 32);
-        for (std::size_t cut = 0; cut < n; ++cut) CHECK(!decode(std::span(bytes.data(), cut), a.get(), *out));
-        *b = *a; b->seq = 3;
-        b->cp.rows[0].key = 60000; // replacing a key in a full section must remove the old key before insertion
+        CHECK(out->l.n == 8 && out->e.n == 128 && out->ed.n == 64 && out->w.n == 512 && out->pk.n == 64);
+        CHECK(!out->e.find(1) && out->ed.find(1064)->pose == pose && out->w.find(1512));
+        *b = *a; b->seq = 3; b->e.rows[0].key = 60000;
         n = encode(*b, a.get(), 1, bytes);
         CHECK(n > 0 && decode(std::span(bytes.data(), n), a.get(), *out));
-        CHECK(out->cp.n == 48 && !out->cp.find(1) && out->cp.find(60000) && out->cp.find(60000)->pose == pose);
-        *b = *a; b->seq = 4; b->cp.clear();
+        CHECK(out->e.n == 128 && !out->e.find(1) && out->e.find(60000)->pose == pose);
+        *b = *a; b->seq = 4; b->ed.clear();
         n = encode(*b, a.get(), 1, bytes);
-        CHECK(n > 0 && n < 160 && decode(std::span(bytes.data(), n), a.get(), *out));
-        CHECK(out->cp.n == 0 && out->l.n == 8 && out->e.n == 128);
-        *b = *a; b->seq = 5; b->cp.rows[0].visual.valid = 0;
+        CHECK(n > 0 && n < 512 && decode(std::span(bytes.data(), n), a.get(), *out));
+        CHECK(out->ed.n == 0 && out->l.n == 8 && out->e.n == 128);
+        *b = *a; b->seq = 5; b->e.rows[0].visual.valid = 0;
         n = encode(*b, a.get(), 1, bytes);
         CHECK(n > 0 && decode(std::span(bytes.data(), n), a.get(), *out));
-        CHECK(out->cp.find(1)->visual.valid == 0 && out->cp.find(1)->visual.dissolve == 0);
-        for (int bad = 0; bad < 3; ++bad) {
-            *b = *a; b->seq = 6;
-            if (bad == 0) b->cp.rows[0].pitch = std::numeric_limits<float>::quiet_NaN();
-            if (bad == 1) b->cp.rows[0].yaw = std::numeric_limits<float>::infinity();
-            if (bad == 2) b->cp.rows[0].roll = -std::numeric_limits<float>::infinity();
-            n = encode(*b, a.get(), 1, bytes);
-            CHECK(n && !decode(std::span(bytes.data(), n), a.get(), *out));
-        }
+        CHECK(out->e.find(1)->visual.valid == 0 && out->e.find(1)->visual.dissolve == 0);
         *b = *a; b->seq = 2;
         auto& changed = b->e.rows[0].pose;
         ++changed.tracks[7].generation; // same animation name, new playback instance

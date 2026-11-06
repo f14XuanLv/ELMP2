@@ -1,3 +1,4 @@
+#include "coop/native_lily.h"
 #include "coop/reaction_color.h"
 
 #include "base/clock.h"
@@ -251,7 +252,7 @@ bool replay(ue::UObject* actor, const net::proto::Reaction& event, std::string* 
     const auto fail = [&](std::string reason) {
         g_failure = std::move(reason); ++g_rejected; if (why) *why = g_failure; return false;
     };
-    if (!g_client || !guard::armed() || !ue::on_game_thread() || !ue::alive(actor) || actor != world::p1_pawn())
+    if (!g_client || !guard::armed() || !ue::on_game_thread() || !ue::alive(actor) || (actor != world::p1_pawn() && !native_lily::owns(actor)))
         return fail("DamageColor requires armed Client controlled Lily on game thread");
     if (event.kind != 2 || !net::proto::valid_reaction(event)) return fail("malformed DamageColor reaction");
     const auto* s = schema();

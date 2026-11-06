@@ -5,6 +5,7 @@
 // under the guest key for reconnection (FR-NET-2c); an explicit leave removes it.
 
 #include "coop/host.h"
+#include "coop/native_lily.h"
 #include "coop/presentation.h"
 #include "coop/visual_state.h"
 #include "coop/reaction.h"
@@ -71,6 +72,8 @@ struct Peer {
     std::uint16_t map_sent = 0;
     std::uint16_t map_ready = 0;
     std::string build_report;
+    std::array<std::string, 9> native_builds;
+    std::uint16_t native_map = 0;
 };
 
 std::map<std::uint32_t, Peer> g_peers;
@@ -141,8 +144,7 @@ void lily_row(std::uint16_t key, ue::UObject* pawn, const core::schema::Script& 
         if (f.invoke(loco)) row->facing = f.ret_bool() ? 1 : -1;
     }
     row->skin = static_cast<std::uint16_t>(std::max(0, core::skin::current(pawn)));
-    presentation::capture(pawn, name, row->pose);
-    visual_state::capture(pawn, row->visual);
+
 }
 
 } // namespace
@@ -208,62 +210,6 @@ void write_enemies(HostCtx&) {
         }
 }
 
-// adapter spirit (host half, P6): summoned spirits of P1 and every seat. Spirits are pooled per equipped
-// spirit and hidden while not summoned; Owner = the summoner's controller.
-namespace {
-std::unordered_map<ObjHandle, std::uint16_t> g_spirit_keys; // spirit → row key (seat << 8 | index)
-std::array<std::uint8_t, 256> g_spirit_next{};
-std::unordered_map<std::uint16_t, std::string> g_spirit_paths; // registry class id → class path
-reflect::PropRef g_hidden, g_owner, g_spirit_loco;
-
-std::uint16_t seat_of_controller(const ue::UObject* pc) {
-    if (!pc) return 0;
-    if (pc == world::p1_controller()) return 1;
-    for (const auto& seat : party::seats())
-        if (core::controller(seat.slot) == pc) return static_cast<std::uint16_t>(seat.slot);
-    return 0;
-}
-} // namespace
-
-void write_spirits(HostCtx&) {
-    const auto* s = core::schema::script();
-    static bool tried = false;
-    if (!tried) {
-        tried = true;
-        reflect::Resolver a("Actor", reflect::find_class(L"/Script/Engine.Actor"));
-        g_hidden = a.prop(L"bHidden", reflect::Kind::Bool);
-        g_owner = a.prop(L"Owner", reflect::Kind::Object);
-        g_spirit_loco = reflect::Resolver("ZenithSpirit", reflect::find_class(L"/Script/Zenith.ZenithSpirit")).prop(L"LocomotionComponent", reflect::Kind::Object);
-        if (!a.ok()) log::warn("coop: spirit capture unavailable: {}", a.failure());
-    }
-    if (!s || !g_hidden.ok() || !g_owner.ok() || registry::size(registry::Kind::Spirit) == 0) return;
-    for (const auto& e : registry::bucket(registry::Kind::Spirit)) {
-        auto* a = e.handle.get();
-        if (!a || g_hidden.read_bool(a)) continue;
-        const auto seat = seat_of_controller(g_owner.object(a));
-        if (!seat || seat > 255) continue;
-        auto [it, fresh] = g_spirit_keys.try_emplace(e.handle, 0);
-        if (fresh) it->second = static_cast<std::uint16_t>(seat << 8 | g_spirit_next[seat]++);
-        auto* row = g_frame->sp.add(it->second);
-        if (!row) break;
-        auto& path = g_spirit_paths[e.class_id];
-        if (path.empty()) path = log::utf8(a->GetClassPrivate()->GetPathName());
-        row->cls = name(path);
-        if (auto at = core::location(a)) row->x = at->x, row->y = at->y, row->z = at->z;
-        if (auto* loco = g_spirit_loco.ok() ? g_spirit_loco.object(a) : nullptr) {
-            reflect::Frame fr(s->loco_facing_right);
-            if (fr.invoke(loco)) row->facing = fr.ret_bool() ? 1 : -1;
-        }
-        presentation::capture(a, name, row->pose);
-        visual_state::capture(a, row->visual);
-    }
-}
-
-void reset_spirits() {
-    g_spirit_keys.clear();
-    g_spirit_next.fill(0);
-}
-
 namespace {
 void capture(std::int64_t now_us) {
     const auto t0 = clock::now_us();
@@ -313,9 +259,6 @@ std::optional<Ref> ref_of(ue::UObject* owner) {
     for (const auto& [p, seat] : g_lily_pawns)
         if (p == owner) return r.kind = proto::RefKind::Lily, r.id = seat, r;
     const auto h = ObjHandle::of(owner);
-    if (auto it = g_spirit_keys.find(h); it != g_spirit_keys.end()) return r.kind = proto::RefKind::Spirit, r.id = it->second, r;
-    if (const auto id = entities::companion_id_of(h))
-        return r.kind = proto::RefKind::Companion, r.id = id, r.seat = entities::companion_seat_of(id), r;
     // SourceSpawnPoint is a ZenithCharacter property: other owners must not be read with it (access violation
     // 0x40000000d when a lily's spirit launched an ability)
     static ue::UClass* zc = reflect::find_class(L"/Script/Zenith.ZenithCharacter");
@@ -343,7 +286,9 @@ std::optional<Ref> ref_of_owner(ue::UObject* o) {
     return std::nullopt;
 }
 
-bool wants(const Peer& p, const Ref& r) {    if (!p.slot || std::max(0, maps::slot_of_seat(p.slot)) != r.slot) return false;
+bool wants(const Peer& p, const Ref& r) {
+    if (r.kind == proto::RefKind::Lily || r.kind == proto::RefKind::Spirit || r.kind == proto::RefKind::Companion) return false;
+    if (!p.slot || std::max(0, maps::slot_of_seat(p.slot)) != r.slot) return false;
     if (r.kind == proto::RefKind::Lily && r.id == p.slot) return false;
     if (r.kind == proto::RefKind::Spirit && (r.id >> 8) == p.slot) return false;
     if (r.kind == proto::RefKind::Companion && r.seat == p.slot) return false;
@@ -531,80 +476,48 @@ std::uint32_t g_reaction_seq = 0; // process lifetime; do not reuse a sequence a
 std::uint64_t g_reaction_order = 0; // last flushed native entry ordinal, shared across reaction kinds
 std::uint64_t g_reaction_sent = 0, g_reaction_stale = 0, g_reaction_failed = 0;
 
-Peer* reaction_peer(ue::UObject* owner) {
-    if (!ue::alive(owner)) return nullptr;
-    for (auto& [id, p] : g_peers)
-        if (p.slot > 0 && p.slot <= 8 && p.map_sent && p.map_ready == p.map_sent && core::pawn(p.slot) == owner) {
-            const int slot = maps::slot_of_seat(p.slot);
-            const auto* map = g_names.text(p.map_sent);
-            const auto actual = slot == 0 ? ue::utf8(world::current_map_id()) : maps::map_id(slot);
-            if (slot >= 0 && map && *map == actual) return &p;
-        }
-    return nullptr;
+std::uint16_t reaction_seat(ue::UObject* owner) {
+    if (!ue::alive(owner)) return 0;
+    if (owner == world::p1_pawn()) return 1;
+    for (const auto& seat : party::seats())
+        if (seat.slot > 1 && seat.slot <= 8 && core::pawn(seat.slot) == owner) return static_cast<std::uint16_t>(seat.slot);
+    return 0;
 }
-
-bool wants_reaction(ue::UObject* owner) { return reaction_peer(owner) != nullptr; }
+bool wants_reaction(ue::UObject* owner) { return !g_peers.empty() && reaction_seat(owner) != 0; }
 
 void on_reaction(const reaction::Capture& capture) {
-    auto* peer = reaction_peer(capture.owner);
-    if (!peer) return void(++g_reaction_stale);
-    if (!capture.entry_order || g_reactions.size() >= kReactionPending) {
-        ++g_reaction_failed;
-        return lifecycle_fault("reaction capture order unavailable or queue overloaded");
-    }
+    const auto seat = reaction_seat(capture.owner);
+    const auto at = core::location(capture.owner);
+    if (!seat || !at) return void(++g_reaction_stale);
+    if (!capture.entry_order || g_reactions.size() >= kReactionPending) return lifecycle_fault("reaction capture order unavailable or overloaded");
     ReactionPending p;
-    p.peer = peer->id;
-    p.owner = ObjHandle::of(capture.owner);
-    p.capture = capture;
-    p.capture.owner = nullptr; // only the serial-checked identity above survives the native callback
+    p.owner = ObjHandle::of(capture.owner); p.capture = capture; p.capture.owner = nullptr;
     auto& event = p.capture.event;
-    event.seat = static_cast<std::uint8_t>(peer->slot);
-    event.epoch = peer->epoch;
-    event.map = peer->map_sent;
-    if (event.kind == 0) event.position[1] -= maps::offset(maps::slot_of_seat(peer->slot));
-    // event.t_ms is the native call time; queue/flush latency must not change its timeline.
+    const int slot = maps::slot_of_y(at->y);
+    event.seat = static_cast<std::uint8_t>(seat);
+    event.map = name(slot == 0 ? ue::utf8(world::current_map_id()) : maps::map_id(slot));
+    if (event.kind == 0) event.position[1] -= maps::offset(slot);
     g_reactions.push_back(std::move(p));
 }
-
 void send_reactions() {
-    auto pending = std::move(g_reactions);
-    g_reactions.clear();
-    // A native reaction can call another one before its post-call capture reaches us. Sequence
-    // numbers follow the shared entry ordinal, never the reversed callback return order.
+    auto pending = std::move(g_reactions); g_reactions.clear();
     std::sort(pending.begin(), pending.end(), [](const auto& a, const auto& b) { return a.capture.entry_order < b.capture.entry_order; });
     for (auto& p : pending) {
-        if (p.capture.entry_order <= g_reaction_order) {
-            ++g_reaction_failed;
-            return lifecycle_fault("reaction native entry order repeated or reversed");
-        }
+        if (p.capture.entry_order <= g_reaction_order) return lifecycle_fault("reaction native entry order repeated or reversed");
         g_reaction_order = p.capture.entry_order;
         auto& event = p.capture.event;
-        auto peer = g_peers.find(p.peer);
-        if (peer == g_peers.end() || peer->second.slot != event.seat || peer->second.epoch != event.epoch ||
-            peer->second.map_sent != event.map || peer->second.map_ready != event.map ||
-            p.owner.get() != core::pawn(event.seat) || reaction_peer(p.owner.get()) != &peer->second) {
-            ++g_reaction_stale;
-            continue;
-        }
-        if (g_reaction_seq == ~std::uint32_t{0} || p.capture.states.size() != event.state_count) {
-            ++g_reaction_failed;
-            return lifecycle_fault("reaction sequence exhausted or invalid state capture");
-        }
+        if (!p.owner.valid() || reaction_seat(p.owner.get()) != event.seat) { ++g_reaction_stale; continue; }
+        if (g_reaction_seq == ~std::uint32_t{0} || p.capture.states.size() != event.state_count) return lifecycle_fault("reaction sequence/state capture invalid");
         event.seq = ++g_reaction_seq;
         event.curve = event.kind == 0 && !p.capture.curve.empty() ? name(p.capture.curve) : 0;
-        bool valid = event.kind != 0 || p.capture.curve.empty() || event.curve != 0;
-        if (event.state_count > proto::kReactionStates) valid = false;
-        else for (std::size_t i = 0; i < event.state_count; ++i) {
-            event.states[i] = name(p.capture.states[i]);
-            valid = event.states[i] != 0 && valid;
+        for (std::size_t i = 0; i < event.state_count; ++i) event.states[i] = name(p.capture.states[i]);
+        for (auto& [id, peer] : g_peers) {
+            if (!peer.slot || peer.map_sent != event.map || peer.map_ready != event.map) continue;
+            event.epoch = peer.epoch;
+            const auto n = proto::encode(event, g_buf);
+            if (!n) return lifecycle_fault("reaction asset identity or encoding failed");
+            send_rel(id, n); ++g_reaction_sent;
         }
-        const auto n = valid ? proto::encode(event, g_buf) : 0;
-        if (!n) {
-            ++g_reaction_failed;
-            return lifecycle_fault("reaction asset identity or encoding failed");
-        }
-        send_rel(p.peer, n);
-        ++g_reaction_sent;
     }
 }
 
@@ -646,8 +559,8 @@ std::uint64_t g_snd_map_retired = 0;
 std::uint64_t g_feedback_fx_sent = 0, g_feedback_sound_sent = 0, g_feedback_own_sent = 0;
 
 bool wants_feedback(const Peer& peer, const Ref& r, bool feedback) {
-    return wants(peer, r) || (feedback && r.kind == proto::RefKind::Lily && peer.slot == r.id &&
-                             peer.slot && std::max(0, maps::slot_of_seat(peer.slot)) == r.slot);
+    return wants(peer, r) || (feedback && r.kind == proto::RefKind::Lily && peer.slot &&
+                             std::max(0, maps::slot_of_seat(peer.slot)) == r.slot);
 }
 
 void on_fx(const fx::Spawn& s) {
@@ -893,8 +806,6 @@ void send_snapshots() {
         band(g_frame->e, v.e, slot, off);
         band(g_frame->ed, v.ed, slot, off);
         band(g_frame->pk, v.pk, slot, off);
-        band(g_frame->sp, v.sp, slot, off);
-        band(g_frame->cp, v.cp, slot, off);
         v.w = g_frame->w;
         const snap::Frame* base = nullptr;
         if (p.acked) {
@@ -1027,6 +938,53 @@ void on_unreliable(std::uint32_t peer, std::uint8_t stream, std::span<const std:
     p.stalled = false;
 }
 
+void native_frame(ue::UObject* pawn, proto::LilyFrame& f) {
+    if (g_peers.empty()) return;
+    const int slot = maps::slot_of_y(f.position[1]);
+    if (slot < 0) return;
+    f.map = name(slot == 0 ? ue::utf8(world::current_map_id()) : maps::map_id(slot));
+    f.position[1] -= maps::offset(slot);
+    std::array<std::uint8_t, 256> bytes{};
+    const auto n = proto::encode(f, bytes);
+    if (!n) {
+        const auto reason = std::format("native Lily frame encoding failed: seat={} seq={} dt={} step={} mode={} direction={} states={}", f.seat, f.seq, f.dt, f.step, f.mode, f.direction, f.state_count);
+        return lifecycle_fault(reason.c_str());
+    }
+    for (auto& [id, peer] : g_peers)
+        if (peer.slot && peer.slot != f.seat && !peer.native_builds[f.seat].empty() && peer.native_map == f.map && maps::slot_of_seat(peer.slot) == slot && peer.map_ready == f.map && peer.map_sent == f.map)
+            coop::send_reliable(id, std::span(bytes.data(), n));
+}
+
+void send_native_builds(std::int64_t now_us) {
+    static clock::Cadence cadence(500);
+    if (!cadence.due(now_us)) return;
+    for (std::uint16_t seat = 1; seat <= 8; ++seat) {
+        auto* pawn = seat == 1 ? world::p1_pawn() : core::pawn(seat);
+        auto* pc = seat == 1 ? world::p1_controller() : core::controller(seat);
+        if (!pawn || !pc) continue;
+        const auto at = core::location(pawn);
+        if (!at) continue;
+        const int slot = maps::slot_of_y(at->y);
+        const auto map = name(slot == 0 ? ue::utf8(world::current_map_id()) : maps::map_id(slot));
+        auto profile = core::profile::read(pc, nullptr);
+        if (!profile) return lifecycle_fault("native Lily profile capture unavailable");
+        const auto value = core::profile::to_json(*profile);
+        const auto signature = json::dump(value, 0);
+        for (auto& [id, peer] : g_peers) {
+            if (!peer.slot || peer.slot == seat || peer.map_ready != map || peer.map_sent != map) continue;
+            if (peer.native_map != map) { peer.native_builds.fill({}); peer.native_map = map; }
+            if (peer.native_builds[seat] == signature) continue;
+            json::Value body = json::Value::object();
+            body.set("seat", static_cast<int>(seat)); body.set("map", static_cast<int>(map)); body.set("profile", value);
+            std::vector<std::uint8_t> bytes(proto::kMaxJson + 64);
+            const auto n = proto::encode(proto::Msg::LilyBuild, proto::Json{json::dump(body, 0)}, bytes);
+            if (!n) return lifecycle_fault("native Lily profile exceeds reliable packet limit");
+            coop::send_reliable(id, std::span(bytes.data(), n));
+            peer.native_builds[seat] = signature;
+        }
+    }
+}
+
 void tick(std::int64_t now_us) {
     if (const auto fault = fx::fault(); !fault.empty()) lifecycle_fault(fault.c_str());
     if (const auto fault = ability::fault(); !fault.empty()) lifecycle_fault(fault.c_str());
@@ -1039,6 +997,9 @@ void tick(std::int64_t now_us) {
             p.stalled = true;
         }
     capture(now_us);
+    if (!native_lily::host_enable(native_frame, name)) return coop::leave("native Lily input observer unavailable");
+    if (const auto why = native_lily::fault(); !why.empty()) return coop::leave(why);
+    send_native_builds(now_us);
     if (!ability::host_enable(on_launch)) return coop::leave("host ability capture unavailable");
     if (!fx::host_enable({on_fx, on_deactivate, on_sound, on_ability_stop})) return coop::leave("host feedback capture unavailable");
     if (!reaction::host_enable(on_reaction, wants_reaction)) return coop::leave("host reaction capture unavailable");
@@ -1063,8 +1024,8 @@ void stop() {
     for (auto& [id, p] : g_peers)
         if (p.slot) party::leave(p.slot);
     for (auto& [k, slot] : g_parked) party::leave(slot);
-    reset_spirits();
-    entities::companion_end_session();
+    native_lily::host_disable();
+
     presentation::reset();
     visual_state::reset();
     g_snd_pending.clear(), g_fx_live.clear(), g_fx_by_psc.clear(), g_ab_live.clear();
@@ -1104,7 +1065,7 @@ std::string describe() {
                                   g_fx_by_psc.size(), g_fx_canceled, g_fx_retired, g_fx_initial, g_fx_retry_ready, g_fx_baselines, g_fx_bindings_closed, g_fx_companion_owned, g_fx_native_owned) +
                       std::format("ability lifecycle: pending={} reused={} expired={} unmatchedStops={} childStops={} childUnmatched={} familiesReleased={} fault={}\n", g_pending.size(), g_ab_reused, g_ab_expired, g_ab_unmatched_stops, g_ab_child_stops, g_ab_child_unmatched, g_ab_families_released, g_lifecycle_fault) +
                       std::format("reactions: pending={} seq={} sent={} stale={} failed={}\n", g_reactions.size(), g_reaction_seq, g_reaction_sent, g_reaction_stale, g_reaction_failed) +
-                      ability::describe() + fx::describe() + reaction::describe();
+                      native_lily::describe() + ability::describe() + fx::describe() + reaction::describe();
     for (auto* a : adapters()) out += a->describe();
     out += maps::describe() + presentation::describe() + visual_state::describe();
     for (const auto& [id, p] : g_peers)

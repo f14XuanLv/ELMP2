@@ -47,6 +47,8 @@ enum class Msg : std::uint8_t {
     // 14 was the removed experimental Cmd channel; never reuse its wire id.
     Reaction = 15, // ordered Host-accepted Knockback / HitStop / DamageColor for the client's own Lily
     ChildStop = 16, // stop an exact native descendant of a replicated root Act; never a second launch
+    LilyFrame = 17, // original consumed input and required movement/state context
+    LilyBuild = 18, // authoritative per-seat profile baseline/change
 };
 
 // Owner of a replicated event (P6): which presented actor on the client it belongs to.
@@ -154,6 +156,20 @@ struct Reaction {
 };
 bool valid_reaction(const Reaction& m) noexcept;
 struct Json { std::string text; };
+inline constexpr std::size_t kLilyStates = 48;
+struct LilyFrame {
+    std::uint16_t seat = 0, map = 0;
+    std::uint32_t seq = 0, generation = 0; // Host Pawn serial, distinct from input sequence
+    float dt = 0, step = 0; // actual character delta (includes HitStop), bounded Host playout interval
+    std::array<float, 7> input{}; // left/right axes and original movement vector
+    std::uint8_t direction = 0, mode = 0, custom_mode = 0, state_count = 0;
+    std::uint16_t flags = 0, raw = 0;
+    std::array<float, 3> position{}, velocity{};
+    std::array<std::uint16_t, kLilyStates> states{};
+    bool operator==(const LilyFrame&) const = default;
+};
+std::size_t encode(const LilyFrame& m, std::span<std::uint8_t> out);
+bool decode(std::span<const std::uint8_t> in, LilyFrame& m);
 struct Control { std::uint8_t code = 0; std::string text; };
 inline constexpr std::uint8_t kControlBanner = 10; // host → client: mode status line (empty = clear)
 

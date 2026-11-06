@@ -55,8 +55,16 @@ SOCKET open_socket(std::uint16_t port, std::string& err) {
         closesocket(s);
         return INVALID_SOCKET;
     }
-    DWORD tmo = 2; // ms: network thread cadence
-    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&tmo), sizeof(tmo));
+    // A full world snapshot can exceed the Windows default receive buffer in one burst.
+    // Losing one packet now also blocks the ordered 60Hz Lily inputs behind its retransmit.
+    int receive_bytes = 1024 * 1024;
+    u_long nonblocking = 1;
+    if (setsockopt(s, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&receive_bytes), sizeof(receive_bytes)) != 0 ||
+        ioctlsocket(s, FIONBIO, &nonblocking) != 0) {
+        err = std::format("UDP receive setup failed ({})", WSAGetLastError());
+        closesocket(s);
+        return INVALID_SOCKET;
+    }
     BOOL no = FALSE; // ignore ICMP port-unreachable resets on UDP
     DWORD ret = 0;
     WSAIoctl(s, SIO_UDP_CONNRESET, &no, sizeof(no), nullptr, 0, &ret, nullptr, nullptr);
@@ -209,7 +217,7 @@ void Endpoint::run() {
     std::array<std::uint8_t, 2048> buf;
     double next_status = 0;
     while (true) {
-        const double now = clock::now_s();
+        double now = clock::now_s();
         std::string fatal;
         {
             std::lock_guard lk(mu_);
@@ -222,37 +230,47 @@ void Endpoint::run() {
             }
             break;
         }
-        sockaddr_in from{};
-        int flen = sizeof(from);
-        const int n = recvfrom(s, reinterpret_cast<char*>(buf.data()), static_cast<int>(buf.size()), 0, reinterpret_cast<sockaddr*>(&from), &flen);
-        if (n > 0) {
-            const std::span<const std::uint8_t> pkt(buf.data(), static_cast<std::size_t>(n));
-            auto it = std::find_if(peers_.begin(), peers_.end(), [&](const auto& p) { return same(p->addr, from); });
-            if (it != peers_.end() && (*it)->link->closed() && host_ && Link::is_hello(pkt)) { // reconnect from the same address
-                peers_.erase(it);
-                it = peers_.end();
-            }
-            if (it != peers_.end()) {
-                (*it)->link->on_datagram(pkt, now);
-            } else if (host_ && Link::is_hello(pkt)) {
-                const auto live = std::count_if(peers_.begin(), peers_.end(), [](const auto& p) { return !p->link->closed(); });
-                if (static_cast<std::size_t>(live) >= max_peers_) {
-                    const auto r = Link::reject_packet(Reject::Full);
-                    sendto(s, reinterpret_cast<const char*>(r.data()), static_cast<int>(r.size()), 0, reinterpret_cast<const sockaddr*>(&from), sizeof(from));
-                    std::lock_guard lk(mu_);
-                    ++status_.full_rejects;
-                } else {
-                    auto p = std::make_unique<Peer>();
-                    p->id = next_id_++;
-                    p->addr = from;
-                    p->addr_text = addr_text(from);
-                    p->link = std::make_unique<Link>(Link::Role::Host, id_, code_, now);
-                    p->link->on_datagram(pkt, now);
-                    peers_.push_back(std::move(p));
+        fd_set readable;
+        FD_ZERO(&readable);
+        FD_SET(s, &readable);
+        timeval timeout{0, 2000};
+        select(0, &readable, nullptr, nullptr, &timeout);
+        now = clock::now_s();
+        // Drain a burst before packing ACKs. Bound work so sends/stop cannot be starved by a flood.
+        for (int packet = 0; packet < 256; ++packet) {
+            sockaddr_in from{};
+            int flen = sizeof(from);
+            const int n = recvfrom(s, reinterpret_cast<char*>(buf.data()), static_cast<int>(buf.size()), 0, reinterpret_cast<sockaddr*>(&from), &flen);
+            if (n == SOCKET_ERROR) break;
+            if (n > 0) {
+                const std::span<const std::uint8_t> pkt(buf.data(), static_cast<std::size_t>(n));
+                auto it = std::find_if(peers_.begin(), peers_.end(), [&](const auto& p) { return same(p->addr, from); });
+                if (it != peers_.end() && (*it)->link->closed() && host_ && Link::is_hello(pkt)) { // reconnect from the same address
+                    peers_.erase(it);
+                    it = peers_.end();
                 }
-            } else {
-                std::lock_guard lk(mu_);
-                ++status_.bad_source;
+                if (it != peers_.end()) {
+                    (*it)->link->on_datagram(pkt, now);
+                } else if (host_ && Link::is_hello(pkt)) {
+                    const auto live = std::count_if(peers_.begin(), peers_.end(), [](const auto& p) { return !p->link->closed(); });
+                    if (static_cast<std::size_t>(live) >= max_peers_) {
+                        const auto r = Link::reject_packet(Reject::Full);
+                        sendto(s, reinterpret_cast<const char*>(r.data()), static_cast<int>(r.size()), 0, reinterpret_cast<const sockaddr*>(&from), sizeof(from));
+                        std::lock_guard lk(mu_);
+                        ++status_.full_rejects;
+                    } else {
+                        auto p = std::make_unique<Peer>();
+                        p->id = next_id_++;
+                        p->addr = from;
+                        p->addr_text = addr_text(from);
+                        p->link = std::make_unique<Link>(Link::Role::Host, id_, code_, now);
+                        p->link->on_datagram(pkt, now);
+                        peers_.push_back(std::move(p));
+                    }
+                } else {
+                    std::lock_guard lk(mu_);
+                    ++status_.bad_source;
+                }
             }
         }
         std::vector<Cmd> cmds;

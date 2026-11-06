@@ -10,6 +10,7 @@
 
 #include <array>
 #include <cstring>
+#include <optional>
 
 namespace elmp::input::pad {
 
@@ -30,6 +31,7 @@ struct Entry {
     PadState state;
     std::uint64_t frames = 0;
     std::uint32_t presses = 0;
+    std::optional<InputSnapshot> exact;
 };
 
 std::array<Entry, kMax> g_entries{};
@@ -42,6 +44,8 @@ reflect::PropRef g_pawn_controller, g_controller_pawn;
 
 using Consume = std::uintptr_t(__fastcall*)(ue::UObject*, void*);
 Consume g_original = nullptr;
+ConsumeObserver g_observer = nullptr;
+reflect::PropRef g_input_owner;
 
 metrics::Counter& c_dropped = metrics::counter("core.pad_dropped");
 metrics::Counter& c_writes = metrics::counter("core.pad_writes");
@@ -60,7 +64,6 @@ bool still_bound(const Entry& e, ue::UObject* component) {
 
 std::uintptr_t __fastcall consume(ue::UObject* component, void* parameter) {
     const auto result = g_original(component, parameter);
-    if (!g_count) return result;
     for (std::size_t i = 0; i < g_count; ++i) {
         Entry& e = g_entries[i];
         if (e.component != component) continue;
@@ -69,12 +72,17 @@ std::uintptr_t __fastcall consume(ue::UObject* component, void* parameter) {
             remove_at(i);
             return result;
         }
-        const InputSnapshot snap = e.state.consume();
+        const InputSnapshot snap = e.exact ? *e.exact : e.state.consume();
+        e.exact.reset();
         std::memcpy(reinterpret_cast<std::uint8_t*>(component) + g_snapshot_offset, &snap, sizeof(snap));
         e.presses |= snap.flags;
         ++e.frames;
         ++c_writes;
-        return result;
+        break;
+    }
+    if (g_observer && g_snapshot_offset >= 0 && g_input_owner.ok()) {
+        const auto snap = *reinterpret_cast<const InputSnapshot*>(reinterpret_cast<const std::uint8_t*>(component) + g_snapshot_offset);
+        g_observer(g_input_owner.object(component), snap);
     }
     return result;
 }
@@ -91,6 +99,23 @@ Entry* live(std::int64_t slot) {
 }
 
 } // namespace
+
+bool observe(ConsumeObserver observer) {
+    if (!observer) { g_observer = nullptr; return true; }
+    const auto* s = core::schema::script();
+    if (!s || (!g_original && !hook::install_manifest("InputConsume", reinterpret_cast<void*>(&consume), reinterpret_cast<void**>(&g_original)))) return false;
+    g_snapshot_offset = s->zic_snapshot.offset;
+    g_input_owner = s->zic_pawn_owner;
+    g_observer = observer;
+    return true;
+}
+
+std::string snapshot(std::int64_t slot, const InputSnapshot& value) {
+    auto* e = live(slot);
+    if (!e) return "native snapshot has no attached pad";
+    e->exact = value;
+    return {};
+}
 
 std::string attach(std::int64_t slot, ue::UObject* pawn, ue::UObject* controller) {
     if (slot == 1 && !(kDev && g_player1)) return "slot 1 input injection is disabled (Dev builds only, explicit `elmp pad allow1 on`)";

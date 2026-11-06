@@ -35,6 +35,7 @@ Hook::GlobalCallbackId g_hook{};
 bool g_installed = false;
 std::uint64_t g_ticks = 0;
 std::int64_t g_last_us = 0;
+float g_delta = 0;
 
 metrics::Histogram& h_elmp = metrics::histogram("frame.elmp_us");
 metrics::Histogram& h_idle = metrics::histogram("frame.idle_elmp_us");
@@ -45,6 +46,7 @@ metrics::Counter& c_idle_ticks = metrics::counter("g0.idle_ticks");
 metrics::Counter& c_exceptions = metrics::counter("frame.exceptions");
 
 void on_tick(UEngine* engine, float dt) {
+    g_delta = dt;
     const auto t0 = clock::now_us();
     if (!g_ticks) ue::mark_game_thread();
     ++g_ticks;
@@ -108,5 +110,6 @@ void uninstall() {
 }
 
 std::uint64_t ticks() { return g_ticks; }
+float delta() { return g_delta; }
 
 } // namespace elmp::frame

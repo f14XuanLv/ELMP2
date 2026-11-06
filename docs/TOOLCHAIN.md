@@ -71,6 +71,8 @@ IDA 调用前先 `idb_list` 与 `server_health` 核对工作库身份。当前�
 
 IDA 基址 `0x140000000`；示例 RVA 为 `0xCF3740`（AZenithCharacter::Tick）。服务在 `127.0.0.1:8745/mcp`，`status` 只读。工作副本位于配置的 `workDatabase`；原 `.i64` 保留。空闲一小时会话可能释放，重新 `ida_service.py start` 即可。服务不会安装为系统自启动；电脑重启后仍用同一命令启动。
 
+本地 HTTP MCP（loopback 地址或 localhost）由仓库客户端强制直连；即使环境设置 HTTP_PROXY / HTTPS_PROXY 且没有 NO_PROXY，也不会把本地请求发给代理。IDA 服务退出后执行 `start` 会重新启动；初始化失败时先尝试绑定本地端口（Windows 独占绑定），若端口被占用或无法绑定则报告错误，不替换未知服务。
+
 ## 已修复的工具使用问题
 
 - CTest 默认系统 TEMP 创建目录失败：构建脚本局部重定向，不改系统环境变量。

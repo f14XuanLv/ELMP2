@@ -1,4 +1,5 @@
 #include "coop/ability.h"
+#include "coop/native_lily.h"
 
 #include "engine/handle.h"
 #include "engine/reflect.h"
@@ -331,6 +332,10 @@ void __fastcall d_native_tick(UObject* actor, float delta) {
 }
 
 UObject* __fastcall d_launch(UObject* comp, const std::uint8_t* desc, const std::uint8_t* offset) {
+    if (!g_sink && ue::on_game_thread() && comp && desc && native_lily::owns(comp->GetOuterPrivate()) && !executing() && layout().ok) {
+        DescriptionScope scope(comp->GetOuterPrivate(), *g_l.cls.at<UObject*>(desc), true);
+        return o_launch(comp, desc, offset);
+    }
     // The original root already owns these launches, including later native container ticks.
     if (ue::on_game_thread()) if (const auto* parent = executing()) {
         if (g_resetting && parent->client) { ++g_reset_launches; return nullptr; }
@@ -457,6 +462,7 @@ bool host_enable(void (*sink)(const Launch&)) {
     g_sink = g_installed ? sink : nullptr;
     return g_installed;
 }
+bool client_native_enable() { return install_hooks() && layout().ok; }
 
 void host_disable() {
     g_sink = nullptr;

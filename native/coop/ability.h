@@ -38,6 +38,7 @@ bool replay(ue::UObject* owner, const net::proto::Act& act, const std::string& c
 std::uint64_t activation(ue::UObject* actor);
 std::uint64_t next_capture_order();
 bool native_writer(ue::UObject* actor); // only a captured/replayed root or its original descendants
+bool client_native_enable(); // initialize lifecycle tracking before original avatar commands execute
 
 struct Identity {
     std::uint64_t token = 0, root = 0;

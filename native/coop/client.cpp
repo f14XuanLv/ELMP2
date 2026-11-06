@@ -5,6 +5,7 @@
 // HP-written from the host rows. The client process never settles (guard), never saves (guard).
 
 #include "coop/client.h"
+#include "coop/native_lily.h"
 
 #include "coop/ability.h"
 #include "coop/reaction.h"
@@ -69,6 +70,7 @@ constexpr std::size_t kRing = 32;
 constexpr float kReconcileUU = 150.0f; // local P1 vs host seat drift before a snap (decision P2: prediction + snap)
 std::uint64_t g_reconciles = 0;
 std::uint32_t g_reaction_last = 0, g_reaction_time = 0;
+std::array<std::uint32_t, 9> g_reaction_seats{};
 bool g_reaction_anchor = false;
 std::uint64_t g_reaction_received = 0, g_reaction_stale = 0, g_reaction_failed = 0;
 std::string g_reaction_failure;
@@ -316,6 +318,7 @@ void drop_copy(std::uint16_t key) {
     if (auto* p = core::pawn(it->second.slot)) release_presentation(p), guard::mark_not_player(p, false);
     core::spawn::despawn(it->second.slot, false);
     core::leases().release({"ELMP", slots::OwnerKind::Elmp}, it->second.slot);
+    native_lily::forget(key);
     g_copies.erase(it);
 }
 
@@ -357,62 +360,26 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
             core::spawn::Options o;
             o.location = core::Vec3{row.x, row.y, row.z};
             o.skin = row.skin ? row.skin : 1;
-            if (auto e = core::spawn::spawn(slot, o); !e.empty()) {
-                log::warn("coop: copy of P{} failed: {}", row.key, e);
-                continue;
-            }
-            auto* p = core::pawn(slot);
-            if (g_set_collision.ok()) {
-                reflect::Frame fc(g_set_collision);
-                fc.arg_bool(0, false);
-                fc.invoke(p);
-            }
-            resolve();
-            c.ready = presentation_policy::apply(p);
-            guard::mark_not_player(p, true);
+            if (const auto why = core::spawn::spawn(slot, o); !why.empty()) { log::warn("native Lily spawn: {}", why); continue; }
             c.skin = o.skin;
-            c.facing = 0;
-            if (!c.ready) entities::hide_actor(p);
-            log::info("coop: presenting host P{} as local slot {}", row.key, slot);
+            if (const auto why = native_lily::bind(row.key, slot, core::pawn(slot)); !why.empty()) { coop::leave(why); return; }
+            c.ready = true;
         }
         auto* p = core::pawn(c.slot);
         if (!p) continue;
-        if (!c.ready) {
-            c.ready = presentation_policy::apply(p);
-            if (!c.ready) continue;
-            actor_hidden(p, false);
-        }
         if (core::skin::valid(row.skin) && row.skin != c.skin) {
-            if (const auto error = core::skin::apply(p, row.skin); !error.empty()) {
-                log::warn("coop: remote skin {} failed: {}", row.skin, error);
-                continue;
-            }
+            if (const auto why = core::skin::apply(p, row.skin); !why.empty()) { coop::leave(why); return; }
             c.skin = row.skin;
-            presentation::forget(p);
-            visual_state::forget(p);
-            c.ready = presentation_policy::apply(p);
-            if (!c.ready) { entities::hide_actor(p); continue; }
         }
-        if (auto at = core::location(p); at && (std::fabs(at->x - row.x) + std::fabs(at->y - row.y) + std::fabs(at->z - row.z)) > 0.5f) {
-            reflect::Frame tp(s.actor_teleport);
-            tp.arg(0, core::Vec3{row.x, row.y, row.z}).arg_bool(1, false).arg_bool(3, true);
-            tp.invoke(p);
-        }
-        if (auto* hp = s.zc_hp.object(p)) { // presented vitals (host values; the copy never settles)
+        // Vitals are Host state; all animation, summon and movement writers belong to vanilla.
+        if (auto* hp = s.zc_hp.object(p)) {
             *s.hp_max.at<std::int32_t>(hp) = row.mhp;
-            *s.hp_curr.at<std::int32_t>(hp) = row.hp;
+            *s.hp_curr.at<std::int32_t>(hp) = std::max<std::int32_t>(row.hp, 1);
         }
         if (auto* mp = s.zc_mp.object(p)) {
             *s.mp_max.at<std::int32_t>(mp) = row.mmp;
             *s.mp_curr.at<std::int32_t>(mp) = row.mp;
         }
-        if (row.facing && row.facing != c.facing && g_set_rotation.ok()) {
-            reflect::Frame fr(g_set_rotation);
-            fr.arg(0, core::Vec3{0, row.facing > 0 ? 90.0f : -90.0f, 0}).arg_bool(1, false);
-            if (fr.invoke(p)) c.facing = row.facing;
-        }
-        visual_state::apply(p, row.visual);
-        presentation::apply(p, row.pose, [](std::uint16_t id) { return g_names.text(id); });
     }
     std::vector<std::uint16_t> gone;
     for (auto& [k, c] : g_copies)
@@ -474,7 +441,8 @@ void reset_remote_world() {
     // This is a map/session boundary, not a MapReady acknowledgement or a follow retry.
     clear_events();
     drop_copies();
-    reset_spirits();
+    ability::client_reset(); // original equipment teardown may have emitted a final activation
+    native_lily::reset();
     reset_dynamic();
     for (auto& [name, t] : g_taken) release_presentation(t.enemy.get());
     g_taken.clear();
@@ -507,23 +475,24 @@ EvResult handle_event(std::span<const std::uint8_t> msg) {
             g_reaction_failure = "invalid authoritative reaction";
             return EvResult::Done;
         }
-        if (m.seat != g_seat || m.epoch != g_epoch || m.map != g_host_map || m.seq <= g_reaction_last)
+        if (!m.seat || m.seat > 8 || m.epoch != g_epoch || m.map != g_host_map || m.seq <= g_reaction_seats[m.seat])
             return ++g_reaction_stale, EvResult::Done;
         if (!world_ready()) return EvResult::Retry;
         if ((m.curve && !g_names.text(m.curve))) return EvResult::Retry;
         for (std::size_t i = 0; i < m.state_count; ++i)
             if (!g_names.text(m.states[i])) return EvResult::Retry;
-        auto* p1 = world::p1_pawn();
+        auto* p1 = m.seat == g_seat ? world::p1_pawn() : native_lily::actor(m.seat);
         if (!p1) return EvResult::Retry;
         std::string why;
-        g_reaction_last = m.seq;
-        if (m.kind == 0) g_reaction_time = m.t_ms, g_reaction_anchor = true;
+        g_reaction_seats[m.seat] = m.seq;
+        if (m.seat == g_seat) g_reaction_last = m.seq;
+        if (m.kind == 0 && m.seat == g_seat) g_reaction_time = m.t_ms, g_reaction_anchor = true;
         if (!reaction::replay(p1, m, [](std::uint16_t id) { return g_names.text(id); }, &why)) {
             ++g_reaction_failed;
             g_reaction_failure = "authoritative reaction context: " + why;
             log::warn("coop: {}", g_reaction_failure);
         } else {
-            if (m.kind == 0) g_seat_placed = true;
+            if (m.kind == 0 && m.seat == g_seat) g_seat_placed = true;
             ++g_reaction_received;
         }
         return EvResult::Done;
@@ -771,6 +740,23 @@ void on_connected(std::uint32_t) {
 
 void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
     switch (proto::type_of(msg)) {
+    case proto::Msg::LilyBuild: {
+        proto::Json m;
+        if (!proto::decode(msg, m)) return void(coop::leave("invalid native Lily build"));
+        std::string why;
+        json::Value root;
+        if (!json::parse(m.text, root, &why) || !root.get("seat") || !root.get("map") || !root.get("profile")) return void(coop::leave("native Lily build layout"));
+        const auto seat = static_cast<std::uint16_t>(root.get("seat")->number_or(0));
+        if (seat != g_seat && root.get("map")->number_or(0) == g_host_map)
+            native_lily::build(seat, json::dump(*root.get("profile"), 0));
+        return;
+    }
+    case proto::Msg::LilyFrame: {
+        proto::LilyFrame value;
+        if (!proto::decode(msg, value)) return void(coop::leave("invalid native Lily frame"));
+        if (value.seat != g_seat && value.map == g_host_map) native_lily::receive(value);
+        return;
+    }
     case proto::Msg::Welcome: {
         proto::Welcome w;
         if (!proto::decode(msg, w)) return;
@@ -1039,6 +1025,8 @@ void tick(std::int64_t now_us) {
     auto t2 = clock::now_us();
     send_input();
     follow(now_us);
+    native_lily::client_tick(g_host_map, [](std::uint16_t id) { return g_names.text(id); });
+    if (const auto why = native_lily::fault(); !why.empty()) return coop::leave(why);
     auto t3 = clock::now_us();
     h_input.add(static_cast<double>(t3 - t2));
     recheck(now_us);
@@ -1052,7 +1040,7 @@ void tick(std::int64_t now_us) {
 void stop() {
     const bool was_seated = g_seat != 0;
     reset_remote_world();
-    entities::companion_end_session();
+
     // Teardown can invoke vanilla callbacks; only disarm after every remote object/result is retired.
     reaction::client_enable(false);
     reaction::reset();
@@ -1063,6 +1051,7 @@ void stop() {
     overlay::set_banner({});
     g_seat = 0, g_seat_placed = false, g_epoch = 0, g_latest = 0, g_host_map = 0;
     g_reaction_last = g_reaction_time = 0;
+    g_reaction_seats.fill(0);
     g_reaction_anchor = false;
     g_reaction_failure.clear();
     g_follow_pending = false;
@@ -1168,97 +1157,6 @@ void present_enemies(const ClientCtx& c) {
     if (const auto* s = core::schema::script(); s && g_resolved) present_enemies_impl(c.frame, *s);
 }
 
-// adapter spirit (client half, P6): one presentation actor per host spirit row of another seat — spawned from
-// the row's class, frozen (presentation component whitelist), marked, no collision; shown / hidden with the
-// row (kept for reuse), positioned / turned / posed from the row like the lily copies.
-struct SpiritCopy {
-    ObjHandle actor;
-    std::uint16_t cls = 0;
-    std::int8_t facing = 0;
-    bool seen = false, visible = false, ready = false;
-};
-std::map<std::uint16_t, SpiritCopy> g_spirits;
-std::uint64_t g_spirit_spawned = 0, g_spirit_failed = 0;
-
-namespace {
-void set_hidden(ue::UObject* a, bool hidden) {
-    static reflect::FuncRef hide = reflect::Resolver("Actor", reflect::find_class(L"/Script/Engine.Actor")).func(L"SetActorHiddenInGame", 1);
-    if (!a || !hide.ok()) return;
-    reflect::Frame h(hide);
-    h.arg_bool(0, hidden);
-    h.invoke(a);
-}
-} // namespace
-
-void present_spirits(const ClientCtx& c) {
-    const auto* s = core::schema::script();
-    if (!s || !g_seat) return;
-    if (!g_set_collision.ok()) {
-        reflect::Resolver a("Actor", reflect::find_class(L"/Script/Engine.Actor"));
-        g_set_collision = a.func(L"SetActorEnableCollision", 1);
-        g_set_rotation = a.func(L"K2_SetActorRotation", 2);
-    }
-    static reflect::PropRef loco_prop =
-        reflect::Resolver("ZenithSpirit", reflect::find_class(L"/Script/Zenith.ZenithSpirit")).prop(L"LocomotionComponent", reflect::Kind::Object);
-    static reflect::FuncRef set_facing = reflect::Resolver("LocomotionComponent", reflect::find_class(L"/Script/Zenith.LocomotionComponent")).func(L"SetFacing", 1);
-    for (auto& [k, sc] : g_spirits) sc.seen = false;
-    for (const auto& row : c.frame.sp.view()) {
-        if ((row.key >> 8) == g_seat) continue; // own spirits: the local P1 summons them itself
-        auto& sc = g_spirits[row.key];
-        sc.seen = true;
-        auto* a = sc.actor.get();
-        if (!a || sc.cls != row.cls) {
-            if (a) release_presentation(a), entities::destroy_copy(a);
-            sc = SpiritCopy{};
-            sc.seen = true;
-            const auto* path = c.text(row.cls);
-            auto* cls = path ? entities::class_by_path(*path) : nullptr;
-            static ue::UClass* spirit_base = reflect::find_class(L"/Script/Zenith.ZenithSpirit");
-            if (!cls || !spirit_base || !cls->IsChildOf(spirit_base)) continue;
-            if (!(a = entities::spawn_copy(cls, row.x, row.y, row.z))) {
-                ++g_spirit_failed;
-                continue;
-            }
-            ++g_spirit_spawned;
-            sc.actor = ObjHandle::of(a);
-            sc.cls = row.cls;
-            if (g_set_collision.ok()) {
-                reflect::Frame fc(g_set_collision);
-                fc.arg_bool(0, false);
-                fc.invoke(a);
-            }
-            sc.ready = presentation_policy::apply(a);
-            if (!sc.ready) entities::hide_actor(a);
-        }
-        if (!sc.ready) {
-            sc.ready = presentation_policy::apply(a);
-            if (!sc.ready) continue;
-        }
-        if (!sc.visible) set_hidden(a, false), sc.visible = true;
-        if (auto at = core::location(a); at && (std::fabs(at->x - row.x) + std::fabs(at->y - row.y) + std::fabs(at->z - row.z)) > 0.5f) {
-            reflect::Frame tp(s->actor_teleport);
-            tp.arg(0, core::Vec3{row.x, row.y, row.z}).arg_bool(1, false).arg_bool(3, false);
-            tp.invoke(a);
-        }
-        if (row.facing && row.facing != sc.facing)
-            if (auto* loco = loco_prop.ok() ? loco_prop.object(a) : nullptr; loco && set_facing.ok()) {
-                reflect::Frame ff(set_facing);
-                ff.arg_bool(0, row.facing > 0);
-                if (ff.invoke(loco)) sc.facing = row.facing;
-            }
-        visual_state::apply(a, row.visual);
-        presentation::apply(a, row.pose, [](std::uint16_t id) { return g_names.text(id); });
-    }
-    for (auto& [k, sc] : g_spirits)
-        if (!sc.seen && sc.visible) set_hidden(sc.actor.get(), true), sc.visible = false;
-}
-
-void reset_spirits() {
-    for (auto& [k, sc] : g_spirits)
-        if (auto* a = sc.actor.get()) release_presentation(a), entities::destroy_copy(a);
-    g_spirits.clear();
-}
-
 ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id, bool allow_dying, bool feedback) {
     ue::UObject* a = nullptr;
     switch (static_cast<proto::RefKind>(kind)) {
@@ -1280,10 +1178,7 @@ ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id, bool allow_dying, boo
         else if (auto it = g_copies.find(id); it != g_copies.end() && it->second.ready) a = core::pawn(it->second.slot);
         break;
     case proto::RefKind::Spirit:
-        if (auto it = g_spirits.find(id); it != g_spirits.end() && it->second.visible) a = it->second.actor.get();
-        break;
     case proto::RefKind::Companion:
-        a = entities::companion_actor_of(id);
         break;
     }
     return a && !a->HasAnyFlags(RC::Unreal::RF_BeginDestroyed) ? a : nullptr;
@@ -1291,7 +1186,7 @@ ue::UObject* actor_of(std::uint8_t kind, std::uint16_t id, bool allow_dying, boo
 
 std::string describe_events() {
     return std::format("events(client): spirits={} spawned={} failed={} retryQueue={} retried={} absent={} fxBad={} soundBad={} soundFar={} stopMissed={} live abilities={} fx={} fxKept={} fxReplaced={}\n",
-                       g_spirits.size(), g_spirit_spawned, g_spirit_failed, g_ev_retry.size(), g_ev_retried, g_ev_absent, g_fx_bad, g_snd_bad, g_snd_far, g_stop_missed, g_ab_live.size(),
+                       std::size_t{0}, std::uint64_t{0}, std::uint64_t{0}, g_ev_retry.size(), g_ev_retried, g_ev_absent, g_fx_bad, g_snd_bad, g_snd_far, g_stop_missed, g_ab_live.size(),
                        g_fx_live.size(), g_fx_kept, g_fx_replaced) +
            std::format("ability children: stopped={} alreadyEnded={} failed={} fault='{}'\n", g_child_stopped, g_child_ended, g_child_failed, g_event_failure) +
            std::format("reaction(client): received={} stale={} failed={} last={} reason='{}'\n", g_reaction_received, g_reaction_stale,
@@ -1322,7 +1217,7 @@ std::string adapters_text() {
 
 std::string describe() {
     return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} copies={} reconciles={} kills={} actBad={} actAbsent={} rechecks={} aiLeaks={} world={} equipRequests={} motionWrites={} presses(attack)={}\n{}{}", g_seat,
-                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, std::uint64_t{0}, g_equip_requests, g_motion_writes, g_input.presses[3], presentation_policy::describe() + presentation::describe() + visual_state::describe() + ability::describe() + fx::describe() + describe_events() + adapters_text(),
+                       g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, std::uint64_t{0}, g_equip_requests, g_motion_writes, g_input.presses[3], presentation_policy::describe() + presentation::describe() + visual_state::describe() + native_lily::describe() + ability::describe() + fx::describe() + describe_events() + adapters_text(),
                        guard::describe());
 }
 

@@ -12,6 +12,7 @@ headless HTTP service and requires an explicit database session argument.
 
 import argparse
 from collections import deque
+import ipaddress
 import json
 import math
 import queue
@@ -21,6 +22,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 from pathlib import Path
 
 import devconfig
@@ -41,6 +43,17 @@ class Client:
         self.messages = queue.Queue()
         self.errors = deque(maxlen=30)
         self.readers = []
+        self.http_opener = None
+        if "command" not in config:
+            host = (urlsplit(config["url"]).hostname or "").lower()
+            try:
+                local = ipaddress.ip_address(host).is_loopback
+            except ValueError:
+                local = host == "localhost"
+            # Local research services must not pass through HTTP_PROXY, including
+            # when NO_PROXY is unset. Preserve normal proxy discovery elsewhere.
+            handlers = [urllib.request.ProxyHandler({})] if local else []
+            self.http_opener = urllib.request.build_opener(*handlers)
 
     def __enter__(self):
         try:
@@ -144,7 +157,7 @@ class Client:
                 headers["Mcp-Session-Id"] = self.session
             req = urllib.request.Request(self.config["url"], json.dumps(body).encode("utf-8"), headers)
             try:
-                with urllib.request.urlopen(req, timeout=self.timeout) as reply:
+                with self.http_opener.open(req, timeout=self.timeout) as reply:
                     self.session = reply.headers.get("Mcp-Session-Id", self.session)
                     if notification:
                         reply.read()

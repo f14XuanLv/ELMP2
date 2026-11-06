@@ -117,7 +117,14 @@ void __fastcall d_save_async(UObject* self, void* widget, void* result) {
 void __fastcall d_ai_activate(UObject* controller) {
     // Armed = guest process: no local AI at all (every enemy is host-owned; activation happens at spawn,
     // before takeover could mark it — engine-facts「敌人激活入口重新定位」).
-    if (g_armed) return void(++g_c.ai_activate_blocked);
+    if (g_armed) {
+        // Native equipment owns Companion AIs; their leader-following graph is part of presentation.
+        // Enemy AI subclasses retain the unconditional authority gate.
+        static ObjHandle companion;
+        if (!companion.valid()) companion = ObjHandle::of(RC::Unreal::UObjectGlobals::StaticFindObject<RC::Unreal::UClass*>(nullptr, nullptr, STR("/Script/Zenith.ZenithAICompanionController")));
+        auto* cls = static_cast<RC::Unreal::UClass*>(companion.get());
+        if (!controller || !cls || !controller->IsA(cls)) return void(++g_c.ai_activate_blocked);
+    }
     o_ai_activate(controller);
 }
 

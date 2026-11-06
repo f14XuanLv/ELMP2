@@ -147,15 +147,17 @@ def start_service(cfg: dict, timeout: float) -> tuple[Client, bool]:
         return client, False
     except (McpError, OSError, ValueError) as unavailable:
         # An occupied port with an unhealthy or unrelated service is not ours to replace.
+        # Windows can delay connection refusal past a short TCP timeout. Probe
+        # bindability instead; exclusive mode also detects wildcard listeners.
+        family = socket.AF_INET6 if ":" in cfg["host"] else socket.AF_INET
         try:
-            with socket.create_connection((cfg["host"], cfg["port"]), timeout=2):
-                pass
-        except ConnectionRefusedError:
-            pass
+            with socket.socket(family, socket.SOCK_STREAM) as probe:
+                if os.name == "nt":
+                    probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                probe.bind((cfg["host"], cfg["port"]))
         except OSError as exc:
-            raise McpError(f"Cannot safely determine whether the IDA port is free: {exc}") from exc
-        else:
-            raise McpError(f"IDA endpoint is occupied but did not initialize: {unavailable}") from unavailable
+            raise McpError(f"IDA endpoint did not initialize ({unavailable}); "
+                           f"port cannot be bound safely: {exc}") from exc
     if not cfg["python"].is_file() or not cfg["cwd"].is_dir():
         raise FileNotFoundError("Configured IDA Python executable or MCP source directory is missing")
     cfg["output"].mkdir(parents=True, exist_ok=True)

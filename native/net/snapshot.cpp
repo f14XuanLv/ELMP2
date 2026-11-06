@@ -20,7 +20,7 @@ bool valid_pose(const Pose& p) noexcept {
 
 namespace {
 
-enum Tag : std::uint8_t { T_END = 0, T_L = 1, T_E = 2, T_ED = 3, T_W = 4, T_PK = 5, T_SP = 6, T_CP = 7 };
+enum Tag : std::uint8_t { T_END = 0, T_L = 1, T_E = 2, T_ED = 3, T_W = 4, T_PK = 5 };
 
 template <class T>
 void put(Writer& w, T v) {
@@ -188,8 +188,6 @@ std::size_t encode(const Frame& cur, const Frame* base, std::uint32_t base_seq, 
     enc_section(w, T_ED, cur.ed, base ? &base->ed : nullptr);
     enc_section(w, T_W, cur.w, base ? &base->w : nullptr);
     enc_section(w, T_PK, cur.pk, base ? &base->pk : nullptr);
-    enc_section(w, T_SP, cur.sp, base ? &base->sp : nullptr);
-    enc_section(w, T_CP, cur.cp, base ? &base->cp : nullptr);
     w.u8(T_END);
     return w.ok() ? w.size() : 0;
 }
@@ -220,7 +218,7 @@ bool decode(std::span<const std::uint8_t> in, const Frame* base, Frame& out) {
     while (r.ok()) {
         const auto tag = r.u8();
         if (tag == T_END) break;
-        if (tag <= last || tag > T_CP) return false; // each section at most once, in order
+        if (tag <= last || tag > T_PK) return false; // each section at most once, in order
         last = tag;
         bool ok = false;
         switch (tag) {
@@ -229,8 +227,6 @@ bool decode(std::span<const std::uint8_t> in, const Frame* base, Frame& out) {
         case T_ED: ok = dec_section(r, out.ed); break;
         case T_W: ok = dec_section(r, out.w); break;
         case T_PK: ok = dec_section(r, out.pk); break;
-        case T_SP: ok = dec_section(r, out.sp); break;
-        case T_CP: ok = dec_section(r, out.cp); break;
         }
         if (!ok) return false;
     }

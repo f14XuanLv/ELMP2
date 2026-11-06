@@ -5,6 +5,7 @@
 #include "engine/reflect.h"
 
 #include "base/log.h"
+#include <Unreal/Engine/UDataTable.hpp>
 
 #include <cmath>
 #include <cstring>
@@ -12,45 +13,28 @@
 
 namespace elmp::core::skin {
 
-namespace {
-
-std::wstring base_name(int n) { return std::format(L"p{:04}_Lily", n); }
-
-constexpr const wchar_t* kNotify = L"/Game/_Zenith/Characters/p0001_Lily/p0001_Lily-notify.p0001_Lily-notify";
-
-} // namespace
-
 std::string apply(ue::UObject* pawn, int n) {
     if (!valid(n)) return std::format("skin must be 1..{}", kCount);
     const auto* s = schema::script();
     const auto* bp = schema::blueprint();
     if (!s || !bp) return "core schema unresolved";
-    auto* spine = pawn ? bp->lily_spine.object(pawn) : nullptr;
-    if (!spine) return "pawn has no Spine component";
-    const auto name = base_name(n);
-    const auto dir = std::format(L"/Game/_Zenith/Characters/{0}/{0}", name);
-    auto* atlas = reflect::load_object(std::format(L"{}.{}-atlas", dir, name));
-    auto* data = reflect::load_object(std::format(L"{}.{}-data", dir, name));
-    auto* notify = reflect::load_object(kNotify);
-    if (!atlas || !data || !notify) return std::format("skin {} assets not found", n);
-
-    reflect::Frame replace(s->sp_replace);
-    replace.arg(0, atlas).arg(1, data).arg(2, notify);
-    if (!replace.invoke(spine)) return "ReplaceSpineData failed";
-    reflect::Frame(s->sp_setup_pose).invoke(spine);
-    reflect::Frame(s->sp_slots_setup).invoke(spine);
-    reflect::Frame(s->sp_update_world).invoke(spine);
-    if (s->sp_force_tick.ok()) reflect::Frame(s->sp_force_tick).arg(0, 0.016f).invoke(spine);
-    reflect::Frame anim(s->sp_set_animation);
-    anim.arg(0, 0).arg_string(1, L"idle").arg_bool(2, true);
-    anim.invoke(spine);
-
-    // Vanilla BP_p0000_Lily.SetSpineData also sets the FakeLight material (optional component).
-    if (auto* light = bp->lily_fake_light.ok() ? bp->lily_fake_light.object(pawn) : nullptr) {
-        if (auto* mi = reflect::load_object(std::format(L"/Game/_Zenith/Characters/p0000_Lily/MI_LilyLight{0}.MI_LilyLight{0}", n)))
-            reflect::Frame(s->prim_set_material).arg(0, 0).arg(1, mi).invoke(light);
+    if (!pawn) return "pawn missing";
+    reflect::Resolver r("Lily SetSpineData", pawn->GetClassPrivate());
+    const auto table_prop = r.prop(L"SpineDataDatatable", reflect::Kind::Object);
+    const auto set = r.func(L"SetSpineData", 1);
+    if (!r.ok()) return r.failure();
+    auto* table = static_cast<RC::Unreal::UDataTable*>(table_prop.object(pawn));
+    if (!table || !table->GetRowStruct() || set.parms[0].kind != reflect::Kind::Struct ||
+        set.parms[0].size != reflect::properties_size(table->GetRowStruct())) return "skin DataTable/parameter struct mismatch";
+    constexpr int levels[] = {1, 2, 5, 7, 9, 11}; // first table level of each of the six vanilla looks
+    const auto row_name = std::to_string(levels[n - 1]);
+    for (const auto& row : table->GetRowMap()) {
+        if (ue::utf8(row.Key) != row_name) continue;
+        reflect::Frame call(set);
+        set.parms[0].prop->CopyCompleteValue(call.raw(0), row.Value);
+        return call.invoke(pawn) ? std::string{} : "original SetSpineData failed";
     }
-    return {};
+    return std::format("skin table has no row {}", n);
 }
 
 int current(ue::UObject* pawn) {    const auto* s = schema::script();
