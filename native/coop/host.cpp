@@ -994,7 +994,7 @@ void spirit_frame(proto::SpiritFrame& f) {
 void flush_native(std::int64_t now) {
     auto facts=causality::take();static std::vector<std::uint8_t> bytes(net::Link::kMaxMessage);
     // host_tick can create a terminal Spirit frame after the outer Tick's timestamp.
-    // Seal after all capture, including that final frame; an ended stream has no later fence.
+    // Seal after all capture, including that final frame.
     const auto sealed=static_cast<std::uint32_t>(clock::now_us()/1000);
     for(auto& [id,p]:g_peers){
         if(!p.slot||!p.native_map||p.map_ready!=p.native_map||p.map_sent!=p.native_map)continue;
@@ -1011,10 +1011,9 @@ void flush_native(std::int64_t now) {
             if(f.kind==proto::CauseKind::Root)p.native_roots.insert(f.root);
             if(p.native_roots.contains(f.root))batch.facts.push_back(f);
         }
-        // A fence also advances a live skill after this Lily temporarily stopped consuming input.
-        if(!batch.facts.empty()||!p.native_frames.empty()||!p.native_roots.empty()||!g_spirit_frames.empty()){
-            const auto n=proto::encode(batch,bytes);if(!n)return lifecycle_fault("causal batch encoding/capacity");coop::send_reliable(id,std::span(bytes.data(),n));
-        }
+        // The last frame's playback interval can extend past its capture timestamp.
+        // Keep sealing even when idle/paused: this grants no extra game delta or input.
+        const auto n=proto::encode(batch,bytes);if(!n)return lifecycle_fault("causal batch encoding/capacity");coop::send_reliable(id,std::span(bytes.data(),n));
         for(const auto& f:p.native_frames){const auto n=proto::encode(f,bytes);if(!n)return lifecycle_fault("native Lily frame encoding");coop::send_reliable(id,std::span(bytes.data(),n));}p.native_frames.clear();
         for(auto f:g_spirit_frames)if(f.context.map==p.native_map&&maps::slot_of_seat(f.context.seat)==maps::slot_of_seat(p.slot)){f.context.epoch=p.epoch;f.context.view=p.native_view;const auto n=proto::encode(f,bytes);if(!n)return lifecycle_fault("autonomous frame encoding");coop::send_reliable(id,std::span(bytes.data(),n));}
         std::erase_if(p.native_roots,[&](auto root){if(causality::root_active(root)){p.native_retired.erase(root);return false;}const auto [it,fresh]=p.native_retired.try_emplace(root,now);if(now-it->second<2'000'000)return false;p.native_retired.erase(it);return true;});

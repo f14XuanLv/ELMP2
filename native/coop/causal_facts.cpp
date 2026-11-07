@@ -29,7 +29,9 @@ std::uint64_t g_batch = 0;
 std::uint32_t g_fence = 0;
 double g_time = 0;
 float g_rate = 1;
-std::int64_t g_wait = 0;
+std::int64_t g_target_wait = 0, g_fence_received = 0;
+std::uint64_t g_fence_waits = 0;
+double g_fence_ahead_max = 0;
 RC::Unreal::Hook::GlobalCallbackId g_post{};
 bool g_post_live = false;
 UObject* g_setting_target = nullptr;
@@ -179,15 +181,20 @@ bool receive(const p::LilyCauses& b) {
         else if(f.kind==p::CauseKind::Target){auto& q=g_samples[child_key(f.root,f.path)];if(q.size()==128)q.pop_front();q.push_back(f);}
         else {g_records.push_back({f});if(f.kind==p::CauseKind::Query&&f.component){auto seed=f;seed.kind=p::CauseKind::Target;seed.min=seed.range=0;auto& q=g_samples[child_key(f.root,f.path)];if(q.size()==128)q.pop_front();q.push_back(seed);}}
     }
-    g_fence=b.fence_ms;return true;
+    g_fence=b.fence_ms;g_fence_received=clock::now_us();return true;
 }
 bool ready(double time) {
     if(!g_client.text)return true;
-    bool ok=g_fence&&time<=g_fence+1;
+    if(!g_fence||time>g_fence+1){
+        ++g_fence_waits;if(g_fence)g_fence_ahead_max=std::max(g_fence_ahead_max,time-g_fence);
+        // No promise has arrived for this time yet. Freeze consumers, but leave
+        // connection failure detection to the transport's liveness/progress timeout.
+        g_target_wait=0;return false;
+    }
     const p::Cause* missing=nullptr;
-    for(const auto& e:g_records)if(!e.used&&e.fact.kind==p::CauseKind::Query&&e.fact.ref_kind&&e.fact.t_ms<=time+1&&!resolve(e.fact)&&!(e.fact.domain==1&&e.fact.component)){ok=false;missing=&e.fact;break;}
-    if(ok){g_wait=0;return true;}
-    if(!g_wait)g_wait=clock::now_us();else if(clock::now_us()-g_wait>1'000'000)fail(std::format("causal {} not ready: playback={:.3f} fence={} root={} target={}:{} generation={} domain={}",missing?"target":"fence",time,g_fence,missing?missing->root:0,missing?missing->ref_kind:0,missing?missing->ref_id:0,missing?missing->ref_generation:0,missing?missing->domain:0));return false;
+    for(const auto& e:g_records)if(!e.used&&e.fact.kind==p::CauseKind::Query&&e.fact.ref_kind&&e.fact.t_ms<=time+1&&!resolve(e.fact)&&!(e.fact.domain==1&&e.fact.component)){missing=&e.fact;break;}
+    if(!missing){g_target_wait=0;return true;}
+    if(!g_target_wait)g_target_wait=clock::now_us();else if(clock::now_us()-g_target_wait>1'000'000)fail(std::format("causal target not ready: playback={:.3f} fence={} root={} target={}:{} generation={} domain={}",time,g_fence,missing->root,missing->ref_kind,missing->ref_id,missing->ref_generation,missing->domain));return false;
 }
 void advance(double time,float rate){g_time=time;g_rate=rate;if(g_client.motion)g_client.motion(time);for(auto& [_,n]:g_nodes)if(auto* r=root(n.id);r&&r->homing&&n.id.active)if(auto* a=n.actor.get();a&&ability::activation(a)==n.id.token){p::Cause f;if(sample(n,*r,f))n.actor_scale=f.actor_scale;*prop_dilation.at<float>(a)=g_rate*n.actor_scale;n.scaled=true;}}
 double playback_ms(){return g_time;}
@@ -225,7 +232,7 @@ bool install(){
     return true;
 }
 void clear(){for(auto& [_,n]:g_nodes){scene_context::destroy(n.target_context);if(n.scaled)if(auto* a=n.actor.get();a&&ability::activation(a)==n.id.token)*prop_dilation.at<float>(a)=n.original_scale;}
-    if(g_post_live){RC::Unreal::Hook::UnregisterCallback(g_post);g_post_live=false;}g_host={};g_client={};g_fault.clear();g_out.clear();++g_batch;g_roots.clear();g_nodes.clear();g_declarations.clear();g_records.clear();g_samples.clear();g_ordinals={};g_fence=0;g_time=0;g_wait=0;g_rate=1;}
+    if(g_post_live){RC::Unreal::Hook::UnregisterCallback(g_post);g_post_live=false;}g_host={};g_client={};g_fault.clear();g_out.clear();++g_batch;g_roots.clear();g_nodes.clear();g_declarations.clear();g_records.clear();g_samples.clear();g_ordinals={};g_fence=0;g_time=0;g_target_wait=0;g_fence_received=0;g_fence_waits=0;g_fence_ahead_max=0;g_rate=1;}
 void launch(UObject* a,UObject* inv,const ability::Identity& id,native_lily::Source src){
     if(!g_host.name&&!g_client.text)return;
     const bool is_root=id.token==id.root;
@@ -295,6 +302,6 @@ void stopping(const ability::Identity& id,std::uint8_t reason){if(auto* n=node(i
 void end(const ability::Identity& id){auto* n=node(id);auto* r=root(id);if(!n||!r||!n->id.active)return;if(host()){
     auto f=base(p::CauseKind::End,*n,*r);f.reason=n->reason;emit(f);
 }else {if(auto* e=expected_end(*n,*r))e->used=true;if(n->scaled)if(auto* a=n->actor.get()){*prop_dilation.at<float>(a)=n->original_scale;n->scaled=false;}}n->id.active=false;n->target={};n->target_actor={};scene_context::destroy(n->target_context);}
-std::string describe(){return std::format("  facts: roots={} nodes={} ordinals={} declarations={} records={} samples={} bound={} queryOverrides={} explicitNull={} stopDeferred={} stopAuthorized={} stopForced={} contexts={} retired={} fence={} playback={:.3f} fault='{}'\n",g_roots.size(),g_nodes.size(),g_ordinals.size(),g_declarations.size(),g_records.size(),g_samples.size(),g_bound,g_overridden,g_nulls,g_deferred,g_authorized,g_forced,g_contexts,g_retired,g_fence,g_time,g_fault)+scene_context::describe();}
+std::string describe(){const auto now=clock::now_us();return std::format("  facts: roots={} nodes={} ordinals={} declarations={} records={} samples={} bound={} queryOverrides={} explicitNull={} stopDeferred={} stopAuthorized={} stopForced={} contexts={} retired={} fence={} playback={:.3f} fault='{}'\n  fence: waits={} aheadMax_ms={:.3f} age_ms={:.1f} targetWait_ms={:.1f}\n",g_roots.size(),g_nodes.size(),g_ordinals.size(),g_declarations.size(),g_records.size(),g_samples.size(),g_bound,g_overridden,g_nulls,g_deferred,g_authorized,g_forced,g_contexts,g_retired,g_fence,g_time,g_fault,g_fence_waits,g_fence_ahead_max,g_fence_received?(now-g_fence_received)/1000.0:-1.0,g_target_wait?(now-g_target_wait)/1000.0:0.0)+scene_context::describe();}
 }
 }
