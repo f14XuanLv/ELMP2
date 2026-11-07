@@ -13,7 +13,9 @@ bool source(ue::UObject*, native_lily::Source&);
 bool owns(ue::UObject*);
 ue::UObject* summoner(ue::UObject*);
 bool eligible(ue::UObject*);
+bool defer_start(ue::UObject*); // Client AI Spirit lifecycle has one Host-authorized writer
 void reset();
 std::string fault();
 std::string describe();
+std::string trace(std::string_view action);
 }

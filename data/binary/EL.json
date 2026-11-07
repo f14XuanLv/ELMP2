@@ -430,6 +430,27 @@
       "owner": "coop/autonomous",
       "source": "[E-IDA] ELMP v2 2026-11-07 CF2F84 FWeakObjectPtr::operator=(Spirit+1440,source)"
     },
+    "SpiritSetActiveNative": {
+      "rva": "0x00CEFAE0",
+      "prefix": "48895C240848896C24104889742418574883EC30488B010FB6EA8891B9050000",
+      "signature": "void ZenithSpirit::SetActive(this,bool)",
+      "owner": "coop/autonomous",
+      "source": "[E-IDA] ELMP v2 2026-11-08 component-start-tick reset; Dev lifecycle audit"
+    },
+    "SpiritSoftDisappearNative": {
+      "rva": "0x00CF7B40",
+      "prefix": "80B9B805000002750CC681B805000003E97BA00A00C3CCCCCCCCCCCCCCCCCCCC",
+      "signature": "uintptr_t ZenithSpirit::SoftDisappear(this)",
+      "owner": "coop/autonomous",
+      "source": "[E-IDA] ELMP v2 2026-11-08 state2->3 and OnSoftDisappear; clears Appeared/playing FadeIn in native BP"
+    },
+    "SpiritForceDisappearNative": {
+      "rva": "0x00CDD890",
+      "prefix": "40534883EC20488BD9C681B805000001E85B420C00488D8B0005000048895C24",
+      "signature": "void ZenithSpirit::ForceDisappear(this)",
+      "owner": "coop/autonomous",
+      "source": "[E-IDA] ELMP v2 2026-11-08 OnDisappear+clear/deactivate, skips OnSoftDisappear cleanup"
+    },
     "SummonerGetSpiritNative": {
       "rva": "0x00CE1920",
       "prefix": "48895C2408574883EC20488D99B8000000488BFA488BCBE8C4183F0084C0741D",

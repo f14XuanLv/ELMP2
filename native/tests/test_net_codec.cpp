@@ -21,7 +21,7 @@ TEST_MAIN({
         a.role=8;a.episode=9;a.cls=10;a.summon=11;a.edges.push_back({12,13,0,8,9,0});a.edges.push_back({12,13,1,0,0,6});
         a.layer=3;a.animation={14,15,1,.2f,0,0,.1f};
         a.has_follow=true;a.follow_position={1,-200,500};a.follow_rotation={0,90,0};a.follow_velocity={0,-300,20};a.decision_only=true;c.dt=0;
-        a.follow_scale={1,2,3};a.follow_history={1,-200,3,.5f,1,2,0,-300,20,0,-301,19};
+        a.follow_scale={1,2,3};a.follow_history={1,-200,3,.5f,1,2,0,-300,20,0,-301,19};a.soft_ending=true;
         std::array<std::uint8_t,1024> wire{};auto n=encode(a,wire);CHECK(n&&decode(std::span(wire.data(),n),b)&&a==b);
         for(std::size_t cut=0;cut<n;++cut)CHECK(!decode(std::span(wire.data(),cut),b));
         CHECK(!decode(std::span(wire.data(),n+1),b));CHECK(!encode(a,std::span(wire.data(),n-1)));

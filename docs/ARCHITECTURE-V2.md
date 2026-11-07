@@ -445,6 +445,8 @@ Companion `cp` 基线包含 Actor 世界位置及 pitch/yaw/roll；世界旋转�
 
 冷加入时 CAS.GetSpirit 的弱缓存可能尚未建立，按原版 CAS.OnStart 的同一 SummonerComponent 取实例入口绑定当前装备池对象，避免重跑莉莉召唤时间线。封口时间取本批采集完成之后的单调时刻，覆盖 Tick 内新产生的最终退场帧。受击 Effect 广播间接触发的 UMG.Widget 提示音保留本机 UI 所有权；世界反馈的来源、挂点、结算检查保持原有约束。
 
+2026-11-08 协议14按 [ADR0014](adr/0014-native-presentation-handoff.md)统一 Client 自主 Spirit 的生命周期写者：Start/Commands、主动 Soft/Force 请求只能在 Host 回放作用域执行，原版工厂对未活动对象的初始化保留。Host 原生 SoftDisappear 记录即时软退场沿及连续阶段，Client 经同一原版入口执行，禁止用 ForceDisappear 代替正常软退场清理；已接受软退场后不得被缓冲中较旧的活动帧复活。本机莉莉仍预测输入/动作，自主召唤物等 Host 确认后出现，表现遵守与远端相同契约。具体因果与验收见 [记录](kb/spirit-lifecycle-parity-2026-11-08.md)。
+
 协议12补齐环境感知、Pawn能力通知、原生命令StateTimeline所有权、朝向、独立Spirit/Companion时钟及有限持续命令基线。远端仍关闭目标权限和结算，保留环境传感器；不能以“Host权威”为由关闭全部overlap，也不能提前写入命令运行才应产生的状态。网络消费使用单调墙钟，原版Pawn/World delta单独传递。
 
 CommandQueue之外的DEATH与EVENT逻辑层经`lily_events`传递实际原版定义/代次/相位，由`PlayAnimationDefinition`接入；不复制完成委托、root motion或运动模式副作用，不触发Client死亡结算。敌人继续输出呈现，`spine_root`补通用根骨局部镜像上下文，在原版Skeleton世界变换入口消费，避免current-track数据不足导致持续反向。边界与实测见[本轮记录](kb/wallgrab-native-pipeline-2026-11-07.md)。
@@ -471,6 +473,7 @@ CommandQueue之外的DEATH与EVENT逻辑层经`lily_events`传递实际原版定
 | 自主 Spirit / 跟随分步 | weak Actor/caster/source/queue、单调角色ID与召唤代次；对象失效、退场、重绑、地图/会话撤销；128角色、每角色120帧/64跟随步，类缓存512、peer命令索引4096/10秒 | autonomous roles/waiting/queued/commands/bindings/anchors/follow/unexpectedStarts/fault |
 | 数值 Scene 上下文载体 | World 持有 Actor，模块保存 weak Actor/root/aim；跟随退役恢复旧目标，Homing End/复用/退役/地图/会话销毁；弱失效清除，上限1024 | scene contexts live/created/destroyed/expired/failed |
 | UI 音效类型边界 | UMG.Widget 类弱句柄；失效时按反射类名重新解析，不保存 Widget 实例 | feedback uiLocal、带确切 source/context/event 的失败诊断 |
+| Dev 自主生命周期审计 | 按需开启，最多256条数值/名字记录，不保留Actor指针；on清空，地图/会话reset清空并关闭；Timeline schema用类/函数弱句柄重解析 | `elmp autonomous trace on|off|read`，active前后/调用点/Timeline播放与Tick，lifecycleDeferred/softPlayed |
 
 ## 17. 风险与对策
 

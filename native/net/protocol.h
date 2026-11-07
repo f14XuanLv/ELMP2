@@ -204,6 +204,7 @@ struct SpiritFrame {
     float actor_scale = 1;
     bool active = true;
     bool decision_only = false; // native command boundary, not another World/Actor tick
+    bool soft_ending = false; // authoritative original soft-disappearance phase, including its entry edge
     bool has_follow = false;
     std::array<float,3> follow_position{}, follow_rotation{}, follow_velocity{};
     std::array<float,3> follow_scale{1,1,1};

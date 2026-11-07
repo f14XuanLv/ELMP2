@@ -15,6 +15,8 @@
 #include "base/clock.h"
 #include "base/log.h"
 #include "base/metrics.h"
+#include "base/json.h"
+#include <intrin.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -47,7 +49,7 @@ struct Role {
  std::vector<p::SpiritEdge> edges;
  std::int64_t seen=0,last=0;
  float original=1;
- bool bound=false,started=false,updating=false;
+ bool bound=false,started=false,updating=false,soft_ending=false;
  std::deque<p::SpiritFrame> frames;
  std::deque<FollowStep> follow_steps;
  float elapsed=0,rate=1,world_rate=1;
@@ -68,6 +70,11 @@ using Update=void(__fastcall*)(O*,float);Update original_update=nullptr;
 using FollowTick=void(__fastcall*)(O*,float,std::int32_t,void*);FollowTick original_follow=nullptr;
 using SpiritStart=std::uintptr_t(__fastcall*)(O*,O*);
 bool replaying=false;
+unsigned lifecycle_depth=0;
+std::uint64_t starts_deferred=0,soft_deferred=0,force_deferred=0,soft_played=0;
+using Soft=std::uintptr_t(__fastcall*)(O*);Soft original_soft=nullptr;
+using Force=void(__fastcall*)(O*);Force original_force=nullptr;
+struct LifecycleScope {bool previous;LifecycleScope():previous(replaying){++lifecycle_depth;replaying=true;}~LifecycleScope(){replaying=previous;--lifecycle_depth;}};
 auto& buffer=metrics::histogram("autonomous.buffer_ms");
 auto& corrections=metrics::histogram("autonomous.correction_uu");
 void fail(std::string s){if(failure.empty())failure=std::move(s);}
@@ -81,6 +88,28 @@ O* load(std::uint16_t id){if(classes.size()>=512&&!classes.contains(id)){fail("a
 float world_dt(O* a){reflect::Frame f(g.world_delta);return f.arg(0,a).invoke(g.statics.get())?f.ret<float>():0;}
 void pause(O* a){const auto* s=core::schema::script();auto* c=s?s->pawn_controller.object(a):nullptr;auto* brain=c?g.brain.object(c):nullptr;if(!brain)return;reflect::Frame running(g.running);if(running.invoke(brain)&&running.ret<bool>()){if(!reflect::Frame(g.stop_logic).arg_string(0,L"ELMP Host autonomous decisions").invoke(brain))fail("Spirit brain could not stop");else ++paused_brains;}}
 bool eligible_impl(O* a){if(!a||!g.ready()||!a->IsA(static_cast<ue::UClass*>(g.spirit.get())))return false;auto* cls=g.ai_class.object(a);return cls&&static_cast<ue::UClass*>(cls)->IsChildOf(static_cast<ue::UClass*>(g.ai.get()));}
+#if ELMP_DEV
+bool tracing=false;
+std::deque<json::Value> lifecycle;
+using Active=void(__fastcall*)(O*,bool);Active original_active=nullptr;
+void audit(std::string_view phase,O* actor,bool desired=false,std::uintptr_t caller=0){
+ if(!tracing||!eligible_impl(actor))return;
+ static ObjHandle timeline_class;static reflect::FuncRef components,playing,ticking,position;
+ if(!timeline_class.valid()||!components.handle.valid()){
+  auto* cls=reflect::find_class(L"/Script/Engine.TimelineComponent");timeline_class=ObjHandle::of(cls);
+  reflect::Resolver t("autonomous timeline audit",cls);playing=t.func(L"IsPlaying",0);position=t.func(L"GetPlaybackPosition",0);
+  ticking=reflect::Resolver("autonomous component audit",reflect::find_class(L"/Script/Engine.ActorComponent")).func(L"IsComponentTickEnabled",0);
+  components=reflect::Resolver("autonomous actor audit",reflect::find_class(L"/Script/Engine.Actor")).func(L"K2_GetComponentsByClass",1);
+ }
+ auto j=json::Value::object();j.set("phase",std::string(phase));j.set("actor",log::utf8(actor->GetFullName()));j.set("t_us",clock::now_us());j.set("desired",desired);j.set("caller",static_cast<std::int64_t>(caller));j.set("own",get_summoner(actor)==world::p1_pawn());
+ auto tracks=json::Value::array();reflect::Frame q(components);
+ if(q.arg(0,timeline_class.get()).invoke(actor)){const auto ar=q.ret<reflect::RawArray>();if(ar.num>=0&&ar.num<=32&&(!ar.num||ar.data))for(int i=0;i<ar.num;++i){auto* c=reinterpret_cast<O**>(ar.data)[i];if(!ue::alive(c))continue;reflect::Frame p(playing),t(ticking),at(position);if(!p.invoke(c)||!t.invoke(c)||!at.invoke(c))continue;auto v=json::Value::object();v.set("name",log::utf8(c->GetName()));v.set("playing",p.ret_bool());v.set("tick",t.ret_bool());v.set("position",at.ret<float>());tracks.push(std::move(v));}}
+ j.set("timelines",std::move(tracks));if(lifecycle.size()>=256)lifecycle.pop_front();lifecycle.push_back(std::move(j));
+}
+void __fastcall set_active(O* actor,bool on){const auto address=reinterpret_cast<std::uintptr_t>(_ReturnAddress());const auto base=preflight::current().image_base;const auto caller=address>=base&&address-base<0x10000000?address-base:0;audit("active.pre",actor,on,caller);original_active(actor,on);audit("active.post",actor,on,caller);}
+#else
+void audit(std::string_view,O*,bool=false,std::uintptr_t=0){}
+#endif
 void release(Role& r){
  r.follow_steps.clear();
  if(auto* anchor=r.anchor.get()){
@@ -95,7 +124,7 @@ Role* register_host(O* actor,O* command,bool fresh){
  if(!eligible_impl(actor)||!command)return nullptr;if(!command->IsA(static_cast<ue::UClass*>(g.summon_class.get()))){fail("autonomous source is not a native summon command");return nullptr;}auto* pawn=g.command_pawn.object(command);const auto seat=seat_of(pawn);if(!seat)return nullptr;
  auto* r=role_of(actor);
  if(!r){if(roles.size()>=128||next_role==UINT32_MAX){fail("autonomous role capacity/identity exhausted");return nullptr;}Role v;v.id=++next_role;v.actor=ObjHandle::of(actor);v.original=g.scale.read<float>(actor);v.episode=1;roles[v.id]=v;actors[v.actor]=v.id;r=&roles[v.id];}
- else if(fresh){++r->episode;r->sequence=0;r->command={};r->edges.clear();}
+ else if(fresh){++r->episode;r->sequence=0;r->command={};r->edges.clear();r->soft_ending=false;}
  r->seat=seat;r->caster=ObjHandle::of(pawn);r->generation=static_cast<std::uint32_t>(r->caster.serial);r->source=ObjHandle::of(command);r->queue=ObjHandle::of(g.spirit_queue.object(actor));r->seen=clock::now_us();
  r->class_id=name(log::utf8(actor->GetClassPrivate()->GetPathName()));r->summon_id=name(log::utf8(command->GetClassPrivate()->GetPathName()));
  if(fresh){native_lily::Source origin;if(native_lily::source(pawn,origin))r->summon_input=origin.seq;}return r;
@@ -103,7 +132,7 @@ Role* register_host(O* actor,O* command,bool fresh){
 void capture(Role& r,float dt,bool active,bool decision=false){
  auto* a=r.actor.get();auto* command=r.source.get();const auto* s=core::schema::script();if(!a||!command||!s||!sink||!name)return;
  const auto now=clock::now_us();p::SpiritFrame f;auto& c=f.context;c.seat=r.seat;c.generation=r.generation;c.seq=++r.frame;c.t_ms=static_cast<std::uint32_t>(now/1000);
- c.dt=std::clamp(dt,0.0f,60.0f);c.step=decision?.000001f:(r.last?std::clamp(static_cast<float>(now-r.last)/1e6f,0.001f,.05f):1/60.f);if(!decision)r.last=now;c.world_dt=std::clamp(world_dt(a),.000001f,60.f);f.decision_only=decision;
+ c.dt=std::clamp(dt,0.0f,60.0f);c.step=decision?.000001f:(r.last?std::clamp(static_cast<float>(now-r.last)/1e6f,0.001f,.05f):1/60.f);if(!decision)r.last=now;c.world_dt=std::clamp(world_dt(a),.000001f,60.f);f.decision_only=decision;f.soft_ending=r.soft_ending;
  if(auto at=core::location(a))c.position={at->x,at->y,at->z};else return;
  auto* move=s->char_movement.object(a);if(move){c.velocity=g.velocity.read<V>(move);c.mode=s->cm_mode.read<std::uint8_t>(move);}
  auto* loco=g.spirit_locomotion.object(a);reflect::Frame facing(s->loco_facing_right);c.facing=loco&&facing.invoke(loco)&&facing.ret<bool>()?2:1;
@@ -118,6 +147,22 @@ void capture(Role& r,float dt,bool active,bool decision=false){
  if(active)for(unsigned layer:{3u,2u}){net::snap::EventAnimation event;if(lily_events::capture_layer(a,layer,name,event)&&event.generation){f.layer=static_cast<std::uint8_t>(layer);f.animation=event;break;}}
  sink(f);++captured;
 }
+bool deferred(O* actor){return own_seat&&!sink&&!lifecycle_depth&&eligible_impl(actor);}
+std::uintptr_t __fastcall soft_disappear(O* actor){
+ if(!ue::on_game_thread())return original_soft(actor);
+ if(deferred(actor)){++soft_deferred;audit("soft.deferred",actor);return 0;}
+ auto* r=sink?role_of(actor):nullptr;const bool first=r&&!r->soft_ending&&is_active(actor);
+ if(first)r->soft_ending=true;
+ const auto result=original_soft(actor);
+ if(first)capture(*r,0,true,true);
+ audit("soft.accepted",actor);return result;
+}
+void __fastcall force_disappear(O* actor){
+ if(!ue::on_game_thread())return original_force(actor);
+ if(deferred(actor)&&is_active(actor)){++force_deferred;audit("force.deferred",actor);return;}
+ original_force(actor);
+}
+void retire(O* actor){if(actor){LifecycleScope scope;reflect::Frame(g.disappear).invoke(actor);}}
 bool bind(Role& r,const p::SpiritFrame& f){
  auto* pawn=caster(f.context.seat);const auto* s=core::schema::script();r.waiting_for="caster";if(!pawn||!s)return false;
  if(f.context.seat!=own_seat&&f.summon_input){native_lily::Source cursor;if(!native_lily::source(pawn,cursor)||cursor.generation!=f.context.generation||cursor.seq<f.summon_input){r.waiting_for=std::format("summon cursor {}/{} generation {}/{}",cursor.seq,f.summon_input,cursor.generation,f.context.generation);return false;}}
@@ -140,10 +185,10 @@ bool bind(Role& r,const p::SpiritFrame& f){
  release(r);r.actor=ObjHandle::of(a);r.caster=ObjHandle::of(pawn);r.source=ObjHandle::of(source);r.queue=ObjHandle::of(g.spirit_queue.object(a));r.original=g.scale.read<float>(a);
  if(auto w=waiting.find(r.actor);w!=waiting.end()){r.original=w->second.scale;waiting.erase(w);}
  r.seat=f.context.seat;r.generation=f.context.generation;r.episode=f.episode;r.bound=true;r.sequence=0;r.command={};actors[r.actor]=r.id;
- r.elapsed=0;r.started=false;r.last=0;r.world_rate=1;
- pause(a);reflect::Frame(g.clear).invoke(r.queue.get());
- if(restore){auto fn=reinterpret_cast<SpiritStart>(preflight::address("SpiritStartNative"));if(!fn){fail("original Spirit Start unavailable");return false;}replaying=true;fn(a,source);replaying=false;pause(a);}
- r.waiting_for.clear();++bindings;return true;
+ r.elapsed=0;r.started=false;r.last=0;r.world_rate=1;r.soft_ending=false;
+ audit("bind.pre",a,restore);pause(a);reflect::Frame(g.clear).invoke(r.queue.get());
+ if(restore){auto fn=reinterpret_cast<SpiritStart>(preflight::address("SpiritStartNative"));if(!fn){fail("original Spirit Start unavailable");return false;}LifecycleScope scope;fn(a,source);pause(a);}
+ audit("bind.post",a,restore);r.waiting_for.clear();++bindings;return true;
 }
 O* follow_anchor(Role& r){
  if(auto* a=r.anchor.get())return a;
@@ -185,6 +230,7 @@ void context(Role& r,const p::SpiritFrame& f){
 }
 void begin(Role& r,const p::SpiritFrame& f){
  context(r,f);
+ if(f.soft_ending&&!r.soft_ending){r.soft_ending=true;LifecycleScope scope;original_soft(r.actor.get());++soft_played;}
  if(r.borrowed&&(f.layer!=r.borrowed||!f.edges.empty())){lily_events::apply_layer(r.actor.get(),r.borrowed,{},f.context.t_ms,text);r.borrowed=0;}
  for(const auto& e:f.edges){
   if(e.kind==0){
@@ -225,7 +271,7 @@ void __fastcall update(O* queue,float dt){
   const float local_delta=world_dt(pawn);const float world_rate=local_delta>0?c.world_dt/c.step*physical*r->rate/local_delta:0;
   if(!f.decision_only)r->world_rate=world_rate;
   causality::advance(time,r->world_rate);
-  if(r->elapsed==0){if(!f.active){reflect::Frame(g.disappear).invoke(pawn);r->frames.pop_front();r->bound=false;++removed;break;}begin(*r,f);}
+  if(r->elapsed==0){if(!f.active){retire(pawn);r->frames.pop_front();r->bound=false;++removed;break;}begin(*r,f);}
   if(f.decision_only){r->frames.pop_front();++played;continue;}
   const float span=std::min(budget,c.step-r->elapsed);if(span<=0)break;
   const bool first=r->elapsed==0;
@@ -266,10 +312,16 @@ bool install(){
  const auto offset=binary_checks::offset("ZenithSpirit.sourceCommand");if(!offset||*offset+8>reflect::properties_size(spirit)){fail("autonomous source layout unavailable");return false;}g.source_offset=static_cast<int>(*offset);
  if(!original_update&&!hook::install_address("CommandQueueUpdateNative",target,reinterpret_cast<void*>(&update),reinterpret_cast<void**>(&original_update),"reflect")){fail("autonomous CQ hook unavailable");return false;}
  if(!original_follow&&!hook::install_manifest("FollowTargetTickNative",reinterpret_cast<void*>(&follow_tick),reinterpret_cast<void**>(&original_follow))){fail("autonomous FollowTarget hook unavailable");return false;}
+ if(!original_soft&&!hook::install_manifest("SpiritSoftDisappearNative",reinterpret_cast<void*>(&soft_disappear),reinterpret_cast<void**>(&original_soft))){fail("autonomous soft lifecycle hook unavailable");return false;}
+ if(!original_force&&!hook::install_manifest("SpiritForceDisappearNative",reinterpret_cast<void*>(&force_disappear),reinterpret_cast<void**>(&original_force))){fail("autonomous force lifecycle hook unavailable");return false;}
+#if ELMP_DEV
+ if(!original_active&&!hook::install_manifest("SpiritSetActiveNative",reinterpret_cast<void*>(&set_active),reinterpret_cast<void**>(&original_active))){fail("autonomous lifecycle audit hook unavailable");return false;}
+#endif
  g.spirit=ObjHandle::of(spirit);g.ai=ObjHandle::of(reflect::find_class(L"/Script/Zenith.ZenithAIBaseController"));return g.ready();
 }
 }
 bool eligible(O* a){return g.ready()&&eligible_impl(a);}
+bool defer_start(O* a){if(!deferred(a))return false;++starts_deferred;audit("start.deferred",a);return true;}
 O* summoner(O* a){return g.ready()?get_summoner(a):nullptr;}
 bool source(O* a,native_lily::Source& out){if(auto* r=owner_role(a)){out={r->seat,r->generation,r->sequence,true,1};return true;}return false;}
 bool owns(O* a){return !sink&&own_seat&&owner_role(a)!=nullptr;}
@@ -293,21 +345,34 @@ void receive(const p::SpiritFrame& f){if(roles.size()>=128&&!roles.contains(f.ro
  if(r.frames.size()>=120){fail(std::format("autonomous playback capacity role={} bound={} active={} wait={} source={} frame={} elapsed={}",r.id,r.bound,is_active(r.actor.get()),r.waiting_for,f.summon_input,f.context.seq,r.elapsed));return;}r.frames.push_back(f);++received;
 }
 bool client_tick(std::uint16_t seat,std::uint16_t map,native_lily::Text t){own_seat=seat;current_map=map;text=t;sink=nullptr;if(!install())return false;
- for(auto& [_,r]:roles)if(r.bound&&(!r.actor.valid()||!r.caster.valid()||!r.source.valid()||r.caster.get()!=caster(r.seat))){if(auto* a=r.actor.get())reflect::Frame(g.disappear).invoke(a);release(r);r.frames.clear();}
+ for(auto& [_,r]:roles)if(r.bound&&(!r.actor.valid()||!r.caster.valid()||!r.source.valid()||r.caster.get()!=caster(r.seat))){retire(r.actor.get());release(r);r.frames.clear();}
  for(auto& [_,r]:roles)if(r.bound&&r.actor.valid()&&!is_active(r.actor.get())&&!r.frames.empty()&&!r.frames.back().active){release(r);r.frames.clear();++removed;}
  for(auto& [_,r]:roles)if(!r.frames.empty()){
   if(!r.bound&&!r.frames.back().active){r.frames.clear();continue;}
   const auto& f=r.frames.front();if((!r.bound||!r.actor.valid()||r.episode!=f.episode||r.generation!=f.context.generation||r.caster.get()!=caster(f.context.seat))&&f.active)bind(r,f);
-  if(r.bound){pause(r.actor.get());if(!is_active(r.actor.get())&&!r.frames.empty()&&r.frames.back().active){bind(r,f);}}
+  // A locally completed Host-approved soft ending must wait for the terminal seal,
+  // rather than being resurrected by an older active frame still in the buffer.
+  if(r.bound){pause(r.actor.get());if(!r.soft_ending&&!is_active(r.actor.get())&&!r.frames.empty()&&r.frames.back().active){bind(r,f);}}
  }
  for(const auto& e:registry::bucket(registry::Kind::Spirit))if(auto* a=e.handle.get();eligible_impl(a)&&is_active(a)&&!role_of(a)){
   if(!get_summoner(a))continue;pause(a);const auto h=ObjHandle::of(a);if(waiting.size()>=128&&!waiting.contains(h)){fail("autonomous pending role capacity");return false;}auto [i,fresh]=waiting.try_emplace(h,Waiting{g.scale.read<float>(a),clock::now_us()});*g.scale.at<float>(a)=0;
-  if(clock::now_us()-i->second.since>3'000'000){reflect::Frame(g.disappear).invoke(a);*g.scale.at<float>(a)=i->second.scale;waiting.erase(i);++removed;}
+  if(clock::now_us()-i->second.since>3'000'000){retire(a);*g.scale.at<float>(a)=i->second.scale;waiting.erase(i);++removed;}
  }
  std::erase_if(waiting,[](const auto& v){return !v.first.valid();});
  std::erase_if(roles,[](auto& v){auto& r=v.second;if(r.frames.empty()&&!r.bound){release(r);return true;}return false;});return failure.empty();
 }
-void reset(){for(auto& [_,r]:roles)release(r);for(const auto& [a,w]:waiting)if(auto* actor=a.get())*g.scale.at<float>(actor)=w.scale;roles.clear();actors.clear();waiting.clear();classes.clear();sink=nullptr;name=nullptr;text=nullptr;own_seat=0;current_map=0;g={};failure.clear();}
+void reset(){for(auto& [_,r]:roles)release(r);for(const auto& [a,w]:waiting)if(auto* actor=a.get())*g.scale.at<float>(actor)=w.scale;roles.clear();actors.clear();waiting.clear();classes.clear();sink=nullptr;name=nullptr;text=nullptr;own_seat=0;current_map=0;g={};failure.clear();
+#if ELMP_DEV
+ lifecycle.clear();tracing=false;
+#endif
+}
 std::string fault(){return failure;}
-std::string describe(){std::size_t queued=0,pending=0;for(const auto& [_,r]:roles){queued+=r.frames.size();pending+=r.follow_steps.size();}return std::format("autonomous: roles={} waiting={} captured={} received={} consumed={} queued={} commands={}/{} bindings={} brains={} removed={} starved={} anchors={}/{} follow={}/{} unexpectedStarts={} fault='{}'\n",roles.size(),waiting.size(),captured,received,played,queued,starts,ends,bindings,paused_brains,removed,starved,anchors_created,anchors_removed,follow_played,pending,unexpected_starts,failure);}
+std::string trace(std::string_view action){
+#if ELMP_DEV
+ if(action=="on"){lifecycle.clear();tracing=true;return "autonomous lifecycle trace enabled\n";}if(action=="off"){tracing=false;return "autonomous lifecycle trace disabled\n";}auto out=json::Value::array();for(const auto& row:lifecycle)out.push(row);return json::dump(out,0)+"\n";
+#else
+ return "autonomous lifecycle trace requires Dev\n";
+#endif
+}
+std::string describe(){std::size_t queued=0,pending=0;for(const auto& [_,r]:roles){queued+=r.frames.size();pending+=r.follow_steps.size();}return std::format("autonomous: roles={} waiting={} captured={} received={} consumed={} queued={} commands={}/{} bindings={} brains={} removed={} starved={} anchors={}/{} follow={}/{} unexpectedStarts={} lifecycleDeferred={}/{}/{} softPlayed={} fault='{}'\n",roles.size(),waiting.size(),captured,received,played,queued,starts,ends,bindings,paused_brains,removed,starved,anchors_created,anchors_removed,follow_played,pending,unexpected_starts,starts_deferred,soft_deferred,force_deferred,soft_played,failure);}
 }

@@ -61,11 +61,13 @@ void spirit_origin(ue::UObject* spirit, ue::UObject* command) {
     ++g_summons;
 }
 std::uintptr_t __fastcall spirit_start(ue::UObject* spirit, ue::UObject* command) {
+    if(autonomous::defer_start(spirit))return 0;
     autonomous::summoned(spirit, command);
     spirit_origin(spirit, command);
     return g_spirit_start(spirit, command);
 }
 std::uintptr_t __fastcall spirit_commands(ue::UObject* spirit, ue::UObject* command, void* commands) {
+    if(autonomous::defer_start(spirit))return 0;
     autonomous::summoned(spirit, command);
     spirit_origin(spirit, command);
     return g_spirit_commands(spirit, command, commands);

@@ -6,7 +6,7 @@ std::size_t encode(const SpiritFrame& m,std::span<std::uint8_t> out) {
     if(!m.role||!m.episode||!m.cls||!m.summon||m.edges.size()>16||m.layer>9||!std::isfinite(m.actor_scale)||m.actor_scale<0||m.actor_scale>1000)return 0;
     std::array<std::uint8_t,512> data{};const auto size=encode(m.context,data);if(!size)return 0;
     Writer w(out);w.u8(static_cast<std::uint8_t>(Msg::SpiritFrame));w.u16(static_cast<std::uint16_t>(size));w.bytes(std::span(data.data(),size));
-    w.u32(m.role);w.u32(m.episode);w.u32(m.summon_input);w.u32(m.command_sequence);w.u16(m.cls);w.u16(m.summon);w.f32(m.actor_scale);w.u8((m.active?1:0)|(m.decision_only?2:0));w.u8(static_cast<std::uint8_t>(m.edges.size()));
+    w.u32(m.role);w.u32(m.episode);w.u32(m.summon_input);w.u32(m.command_sequence);w.u16(m.cls);w.u16(m.summon);w.f32(m.actor_scale);w.u8((m.active?1:0)|(m.decision_only?2:0)|(m.soft_ending?4:0));w.u8(static_cast<std::uint8_t>(m.edges.size()));
     for(const auto& e:m.edges){if(!e.sequence||!e.cls||e.kind>1||e.direction>8||e.button>9||e.reason>6)return 0;w.u32(e.sequence);w.u16(e.cls);w.u8(e.kind);w.u8(e.direction);w.u8(e.button);w.u8(e.reason);}
     const auto& a=m.animation;
     if((a.generation==0)!=(a.animation==0)||a.flags>3)return 0;
@@ -19,7 +19,7 @@ std::size_t encode(const SpiritFrame& m,std::span<std::uint8_t> out) {
 bool decode(std::span<const std::uint8_t> in,SpiritFrame& m) {
     m={};Reader r(in);if(r.u8()!=static_cast<std::uint8_t>(Msg::SpiritFrame))return false;
     const auto size=r.u16();std::array<std::uint8_t,512> data{};if(size>data.size())return false;r.raw(data.data(),size);if(!r.ok()||!decode(std::span(data.data(),size),m.context))return false;
-    m.role=r.u32();m.episode=r.u32();m.summon_input=r.u32();m.command_sequence=r.u32();m.cls=r.u16();m.summon=r.u16();m.actor_scale=r.f32();auto active=r.u8();if(active>3)return false;m.active=(active&1)!=0;m.decision_only=(active&2)!=0;
+    m.role=r.u32();m.episode=r.u32();m.summon_input=r.u32();m.command_sequence=r.u32();m.cls=r.u16();m.summon=r.u16();m.actor_scale=r.f32();auto active=r.u8();if(active>7)return false;m.active=(active&1)!=0;m.decision_only=(active&2)!=0;m.soft_ending=(active&4)!=0;
     const auto count=r.u8();if(count>16)return false;m.edges.resize(count);for(auto& e:m.edges){e.sequence=r.u32();e.cls=r.u16();e.kind=r.u8();e.direction=r.u8();e.button=r.u8();e.reason=r.u8();}
     auto& a=m.animation;m.layer=r.u8();a.generation=r.u32();a.animation=r.u16();a.flags=r.u8();a.time=r.f32();a.start=r.f32();a.end=r.f32();a.blend=r.f32();
     const auto follow=r.u8();if(follow>1)return false;m.has_follow=follow!=0;for(auto* v:{&m.follow_position,&m.follow_rotation,&m.follow_velocity,&m.follow_scale})for(float& f:*v)f=r.f32();
