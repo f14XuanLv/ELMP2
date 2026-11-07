@@ -100,6 +100,8 @@ bool has_devices(std::int64_t slot) {
 
 bool has_pad(std::int64_t slot) {
     std::scoped_lock lock(g_mutex);
+    if (slot == kP1) for (int i = 0; i < kPads; ++i)
+        if (g_connected[i] && owner_locked("xinput:" + std::to_string(i)) == kP1) return true;
     return std::any_of(g_assign.begin(), g_assign.end(), [&](const auto& e) { return e.second == slot && pad_index(e.first); });
 }
 
@@ -183,13 +185,20 @@ std::map<std::int64_t, bindings::Bindings> all_bindings() {
 bindings::Actions seat_actions(std::int64_t slot, PadReader read, const bindings::Bindings* fixed) {
     // Whole computation under the lock (the pad read does not touch the router); no copies per frame.
     std::scoped_lock lock(g_mutex);
-    if (g_muted || slot == kP1 || !g_seats.contains(slot)) return {};
+    if (g_muted || (slot == kP1 ? !fixed : !g_seats.contains(slot))) return {};
     const bindings::Bindings* b = fixed;
     if (!b) {
         const auto it = g_bindings.find(slot);
         b = it == g_bindings.end() ? &bindings::defaults() : &it->second;
     }
     bindings::Actions out;
+    if (slot == kP1) { // fixed menu navigation only; normal P1 gameplay remains vanilla
+        for (int i = 0; i < kPads; ++i) if (g_connected[i] && owner_locked("xinput:" + std::to_string(i)) == kP1)
+            if (const auto s = read(i)) out = bindings::merge(out, bindings::from_pad(*b, *s));
+        for (const auto& [device, keys] : g_keys) if (owner_locked(device) == kP1)
+            out = bindings::merge(out, bindings::from_keyboard(*b, keys));
+        return out;
+    }
     for (const auto& [device, assigned] : g_assign) {
         if (assigned != slot) continue;
         if (const auto i = pad_index(device)) {

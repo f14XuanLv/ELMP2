@@ -325,6 +325,7 @@ void draw_window(const Manager& m, double now) {
                 static char code[32] = "", addr[64] = "127.0.0.1";
                 static int port = 7777;
                 ImGui::TextUnformatted(m.net_status.c_str());
+                if (m.net_role == 2 && ImGui::Button("Equipment")) send(Req::GuestEquipment);
                 if (!m.net_error.view().empty()) ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.4f, 1), "Last: %s", m.net_error.c_str());
                 ImGui::Separator();
                 ImGui::BeginDisabled(m.net_role != 0);

@@ -39,6 +39,7 @@
 #include "engine/world.h"
 
 #include "input/pad_state.h"
+#include "party/ui.h"
 
 #include "net/protocol.h"
 #include "net/snapshot.h"
@@ -169,11 +170,12 @@ void reindex() {
 }
 
 void send_input() {
+    g_input.x = g_input.y = 0; g_input.raw = 0;
     const auto* s = core::schema::script();
     auto* p1 = world::p1_pawn();
     const auto off = binary_checks::offset("ZenithInputComponent.InputSnapshot");
     auto* ic = s && p1 ? s->zc_input.object(p1) : nullptr;
-    if (ic && off) {
+    if (ic && off && !party::ui::gameplay_blocked()) {
         const auto& snapshot = *reinterpret_cast<const input::InputSnapshot*>(reinterpret_cast<const std::uint8_t*>(ic) + *off);
         g_input.x = static_cast<std::int8_t>(std::clamp(std::lround(snapshot.input_x * 100), -100l, 100l));
         g_input.y = static_cast<std::int8_t>(std::clamp(std::lround(snapshot.input_y * 100), -100l, 100l));
@@ -789,6 +791,7 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         proto::Welcome w;
         if (!proto::decode(msg, w)) return;
         g_seat = w.seat, g_epoch = w.epoch, g_host_map = w.map;
+        if (!party::ui::enable_client()) return void(coop::leave("Client menu/input boundary unavailable"));
         ability::reset_fault();
         g_seat_placed = false;
         if (!guard::arm()) return void(coop::leave("guard unavailable (fail closed)"));
@@ -1071,6 +1074,7 @@ void tick(std::int64_t now_us) {
 }
 
 void stop() {
+    party::ui::disable_client();
     const bool was_seated = g_seat != 0;
     reset_remote_world();
 
@@ -1259,7 +1263,7 @@ std::string adapters_text() {
 }
 
 std::string describe() {
-    return std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} copies={} reconciles={} kills={} actBad={} actAbsent={} rechecks={} aiLeaks={} world={} equipRequests={} motionWrites={} presses(attack)={}\n{}{}", g_seat,
+    return party::ui::client_status() + std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} copies={} reconciles={} kills={} actBad={} actAbsent={} rechecks={} aiLeaks={} world={} equipRequests={} motionWrites={} presses(attack)={}\n{}{}", g_seat,
                        g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, std::uint64_t{0}, g_equip_requests, g_motion_writes, g_input.presses[3], presentation_policy::describe() + presentation::describe() + visual_state::describe() + native_lily::describe() + ability::describe() + fx::describe() + describe_events() + adapters_text(),
                        guard::describe());
 }

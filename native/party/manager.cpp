@@ -180,6 +180,12 @@ void handle(const overlay::Request& r) {
         if (auto e = open(); !e.empty()) log::info("manager: {}", e);
         break;
     case Req::ManagerClose: close(); break;
+    case Req::GuestEquipment:
+        if (coop::role() == coop::Role::Client) {
+            close();
+            if (auto e = menu_ctrl::open(1); !e.empty()) log::info("Client equipment: {}", e);
+        }
+        break;
     case Req::AddPlayer: {
         std::int64_t slot = 0;
         if (auto e = party::join({}, &slot); !e.empty()) message("Cannot add a player: " + e);

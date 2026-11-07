@@ -1,6 +1,10 @@
 #include "party/ui.h"
 
 #include "party/seat.h"
+#include "coop/session.h"
+#include "input/virtual_pad.h"
+#include "base/hook.h"
+#include "base/preflight.h"
 
 #include "core/schema.h"
 
@@ -38,6 +42,14 @@ std::string g_failure;
 
 unsigned g_holders = 0;
 bool g_we_paused = false;
+using SetPaused = bool(__fastcall*)(ue::UObject*, bool);
+SetPaused g_original_paused = nullptr;
+std::uint64_t g_pause_denied = 0, g_input_blocked = 0;
+
+bool __fastcall set_game_paused(ue::UObject* context, bool on) {
+    if (on && coop::role() == coop::Role::Client) { ++g_pause_denied; return false; }
+    return g_original_paused(context, on);
+}
 
 bool g_menu_open = false, g_display = true;
 std::int64_t g_menu_at = 0, g_display_at = 0;
@@ -82,22 +94,43 @@ bool set_paused(bool on) {
     if (!s || !w) return false;
     reflect::Frame f(s->set_paused);
     f.arg(0, w).arg_bool(1, on);
-    return f.invoke(s->gs.get());
+    return f.invoke(s->gs.get()) && f.ret_bool();
+}
+
+void refresh_pause() {
+    const bool wanted = g_holders && coop::role() != coop::Role::Client;
+    if (!wanted && g_we_paused) { set_paused(false); g_we_paused = false; }
+    else if (wanted && !g_we_paused && !world::paused()) g_we_paused = set_paused(true);
 }
 
 } // namespace
 
 void hold_pause(Holder who, bool on) {
-    const unsigned before = g_holders;
     g_holders = on ? (g_holders | who) : (g_holders & ~static_cast<unsigned>(who));
-    if (!before && g_holders && !world::paused()) g_we_paused = set_paused(true);
-    else if (before && !g_holders && g_we_paused) {
-        set_paused(false);
-        g_we_paused = false;
-    }
+    refresh_pause();
 }
 
 unsigned pause_holders() { return g_holders; }
+
+bool gameplay_blocked() { return coop::role() == coop::Role::Client && (g_holders || vanilla_menu_open()); }
+bool enable_client() {
+    const auto* s = schema();
+    if (!s) return false;
+    if (!g_original_paused) {
+        const auto* exec = reinterpret_cast<const std::uint8_t*>(s->set_paused.fn->GetFuncPtr());
+        if (!exec || exec[0xB2] != 0xE8) return false;
+        std::int32_t relative = 0; std::memcpy(&relative, exec + 0xB3, 4);
+        auto* target = const_cast<std::uint8_t*>(exec + 0xB7 + relative);
+        if (target != preflight::address("SetGamePausedNative") || !hook::install_address("SetGamePausedNative",target,reinterpret_cast<void*>(&set_game_paused),reinterpret_cast<void**>(&g_original_paused),"reflect")) return false;
+    }
+    refresh_pause();
+    if (world::paused()) set_paused(false); // joining from an already-open local menu
+    return input::pad::filter([](ue::UObject* pawn, input::InputSnapshot& value) {
+        if (pawn == world::p1_pawn() && gameplay_blocked()) { value = {}; ++g_input_blocked; }
+    });
+}
+void disable_client() { input::pad::filter(nullptr); }
+std::string client_status() { return std::format("client UI: holders={} gameplayBlocked={} pauseDenied={} inputBlocked={} paused={}\n",g_holders,gameplay_blocked(),g_pause_denied,g_input_blocked,world::paused()); }
 
 bool vanilla_menu_open() {
     const auto now = clock::now_us();
@@ -256,9 +289,9 @@ void install() {
         g_settings.reset();
         g_cost = -1;
     });
-    // MenuOpenCache source: the registry keeps the Menu bucket only while seats exist (G0 without them).
-    frame::add_phase("party.ui.menuwatch", [](const frame::Tick&) { registry::want_menu(party::count() > 0); },
-                     [] { return (party::count() > 0) != registry::menu_wanted(); }, 0);
+    frame::add_phase("party.ui.pause", [](const frame::Tick&) { refresh_pause(); }, [] { return g_holders || g_we_paused; });
+    frame::add_phase("party.ui.menuwatch", [](const frame::Tick&) { registry::want_menu(party::count() > 0 || coop::role() == coop::Role::Client); },
+                     [] { return (party::count() > 0 || coop::role() == coop::Role::Client) != registry::menu_wanted(); }, 0);
 }
 
 } // namespace elmp::party::ui

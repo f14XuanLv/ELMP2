@@ -229,7 +229,7 @@ std::vector<Device> devices() {
 #ifdef ELMP_DEV
 std::string post_key(const std::string& keyboard, std::uint32_t vk, bool down) {
     if (!g_hwnd) return "window not subclassed";
-    if (router::active()) router::raw_key(keyboard, vk, down);
+    if (router::active() || g_observe) router::raw_key(keyboard, vk, down);
     const UINT scan = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
     const LPARAM lp = 1 | (static_cast<LPARAM>(scan) << 16) | (down ? 0 : (LPARAM(1) << 30) | (LPARAM(1) << 31));
     return PostMessageW(g_hwnd, down ? WM_KEYDOWN : WM_KEYUP, vk, lp) ? std::string{} : "PostMessage failed";

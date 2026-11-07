@@ -37,6 +37,8 @@ std::uint32_t take_presses(std::int64_t slot); // press edges since the last cal
 std::string snapshot(std::int64_t slot, const InputSnapshot& value);
 using ConsumeObserver = void (*)(ue::UObject* pawn, const InputSnapshot& value);
 bool observe(ConsumeObserver observer); // same native detour; no second hook on InputConsume
+using ConsumeFilter = void (*)(ue::UObject* pawn, InputSnapshot& value);
+bool filter(ConsumeFilter callback); // before observers and native gameplay read the consumed snapshot
 
 std::string allow_player1(bool on);
 bool player1_allowed();

@@ -17,6 +17,7 @@
 - **管理器**：屏幕右下角 “ELMP” 按钮 → 玩家（加入 / 设备 / 队伍）、规则（切图规则、PvP、镜头）、联机（主持 / 加入 / 离开 / 拒绝原因）、存储。
 - **本地多人**：每个座位一个手柄或键盘；PX 与 P1 共享进度，可各自配装（PX 菜单）、在椅子旁回满；过图跟随、死亡 1.5 s 后在 P1 旁复活。
 - **联机（Host 权威）**：Host `elmp lan host <配对码> [端口] [上限]`，客人 `elmp lan join <地址> <配对码> [端口]`；客人进程不结算任何伤害 / 存档，世界状态来自 Host；客人可进别的图（Host 后台加载该图），Boss 战只能在 Host P1 所在图发起。
+- **Client 换装**：右下角 ELMP → Online → Equipment。方向键选槽/精灵，Z 或 Enter 确认，Esc 返回/关闭，A/F 切技能/遗物页；默认在休息点旁更换。这里编辑自己的装备，经 Host 确认；Client 菜单期间世界继续运行，自己的游戏输入被屏蔽。
 - **猎人模式**：`elmp hunter start [kills N] [time S] [grace S] [respawn S] [target boss|<mapId>] [progress mirror|preset]`。
 - **SDK**：C ABI `elmp_sdk.h`（`ELMP_GetApi`）：Dev包在`ELMP/sdk/`，Shipping包在外层`sdk/`；Lua Mod 带 `elmp.json` 即获得 `ELMP_*` C 函数，示例见 `sdk/examples/`。
 

@@ -6,6 +6,13 @@
   "image_base_note": "0x140000000",
   "_comment": "运行时加载（Mods/ELMP/data/binary/EL.json）。只放没有反射入口的原生函数与无反射的原始结构偏移；适用的 EXE 由 elmp.json game.sha256 唯一给出（C1.5，本文件不重复哈希）。每个函数：预检通过（EXE SHA-256）且 rva 处字节与 prefix 逐字节一致才可武装（fail closed）。每个偏移：check 描述它与反射字段的关系（equals = 与该反射属性偏移相等；within = 落在 after 属性末尾与 before 属性起点之间，before 为 <end> 表示原生类 PropertiesSize；struct_size = 等于该结构体尺寸），世界就位后逐项校验，失败的项其依赖能力 fail closed。source 标注证据等级与出处。",
   "functions": {
+    "SetGamePausedNative": {
+      "rva": "0x02543DB0",
+      "prefix": "40534883EC300FB6DA41B801000000488BD1488B0D37DF10",
+      "signature": "bool UGameplayStatics::SetGamePaused(UObject*, bool)",
+      "owner": "party/ui",
+      "source": "[E-IDA][E-源码] ELMP v2 2026-11-08 exec 29DE9C0 +B2 E8 targets 2543DB0; native resolves local PC and calls vtable+A80; UE4.26 GameplayStatics.cpp"
+    },
     "CommandStartExec": {
       "rva": "0x00D4C370",
       "prefix": "488B42204533C04885C0410F95C04C03C04C894220488B0148FFA070020000",

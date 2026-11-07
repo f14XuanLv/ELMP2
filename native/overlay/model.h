@@ -70,6 +70,7 @@ struct MenuItem {
 inline constexpr int kMenuColumns = 6, kMaxSpirits = 32, kMaxPassives = 48;
 struct Menu {
     bool open = false;
+    bool online = false;
     std::int64_t slot = 0;
     int page = 0; // 0 spirits, 1 relics
     bool in_list = false;
@@ -128,6 +129,7 @@ enum class Req : std::uint8_t {
     ManagerOpen, ManagerClose, AddPlayer, RemovePlayer, Skin, Team, Assign, Mute, Capture, CancelCapture, ResetBindings, Rule,
     StorageNew, StorageReuse,
     NetHost, NetJoin, NetLeave, // text = "code|port|addr"
+    GuestEquipment,
 };
 struct Request {
     Req kind{};

@@ -45,6 +45,7 @@ reflect::PropRef g_pawn_controller, g_controller_pawn;
 using Consume = std::uintptr_t(__fastcall*)(ue::UObject*, void*);
 Consume g_original = nullptr;
 ConsumeObserver g_observer = nullptr;
+ConsumeFilter g_filter = nullptr;
 reflect::PropRef g_input_owner;
 
 metrics::Counter& c_dropped = metrics::counter("core.pad_dropped");
@@ -80,6 +81,10 @@ std::uintptr_t __fastcall consume(ue::UObject* component, void* parameter) {
         ++c_writes;
         break;
     }
+    if (g_filter && g_snapshot_offset >= 0 && g_input_owner.ok()) {
+        auto& snap = *reinterpret_cast<InputSnapshot*>(reinterpret_cast<std::uint8_t*>(component) + g_snapshot_offset);
+        g_filter(g_input_owner.object(component), snap);
+    }
     if (g_observer && g_snapshot_offset >= 0 && g_input_owner.ok()) {
         const auto snap = *reinterpret_cast<const InputSnapshot*>(reinterpret_cast<const std::uint8_t*>(component) + g_snapshot_offset);
         g_observer(g_input_owner.object(component), snap);
@@ -107,6 +112,16 @@ bool observe(ConsumeObserver observer) {
     g_snapshot_offset = s->zic_snapshot.offset;
     g_input_owner = s->zic_pawn_owner;
     g_observer = observer;
+    return true;
+}
+
+bool filter(ConsumeFilter callback) {
+    if (!callback) { g_filter = nullptr; return true; }
+    const auto* s = core::schema::script();
+    if (!s || (!g_original && !hook::install_manifest("InputConsume", reinterpret_cast<void*>(&consume), reinterpret_cast<void**>(&g_original)))) return false;
+    g_snapshot_offset = s->zic_snapshot.offset;
+    g_input_owner = s->zic_pawn_owner;
+    g_filter = callback;
     return true;
 }
 

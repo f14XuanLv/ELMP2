@@ -447,6 +447,8 @@ Companion `cp` 基线包含 Actor 世界位置及 pitch/yaw/roll；世界旋转�
 
 2026-11-08 按 [ADR0015](adr/0015-causal-fence-wait.md)区分未封口与已封口但依赖缺失：地图/视图已就绪时，即使本轮无事实/角色帧也发送封口；未覆盖请求时间则暂停消费者，不能仅因等待1秒主动离会。空封口不推进游戏时间，角色只消费真实 Host 帧；传输层保留8秒无响应/无进展超时，目标缺失及非法因果数据仍明确故障。封口等待次数、最大超前及接收年龄随事实账本清理并由状态命令审计。
 
+2026-11-08 按 [ADR0016](adr/0016-client-menu-clock.md)分离菜单与回放时钟：Client 的管理器/装备菜单只屏蔽本机游戏输入，继续原版远端回放；已核 GameplayStatics 暂停汇点按角色拒绝 Client 的暂停请求，不增大120帧队列或丢弃命令沿。Online 的 Equipment 复用现有菜单/本机P1与 Host 装备请求通路；单机/Host 的暂停保持原意。
+
 2026-11-08 协议14按 [ADR0014](adr/0014-native-presentation-handoff.md)统一 Client 自主 Spirit 的生命周期写者：Start/Commands、主动 Soft/Force 请求只能在 Host 回放作用域执行，原版工厂对未活动对象的初始化保留。Host 原生 SoftDisappear 记录即时软退场沿及连续阶段，Client 经同一原版入口执行，禁止用 ForceDisappear 代替正常软退场清理；已接受软退场后不得被缓冲中较旧的活动帧复活。本机莉莉仍预测输入/动作，自主召唤物等 Host 确认后出现，表现遵守与远端相同契约。具体因果与验收见 [记录](kb/spirit-lifecycle-parity-2026-11-08.md)。
 
 协议12补齐环境感知、Pawn能力通知、原生命令StateTimeline所有权、朝向、独立Spirit/Companion时钟及有限持续命令基线。远端仍关闭目标权限和结算，保留环境传感器；不能以“Host权威”为由关闭全部overlap，也不能提前写入命令运行才应产生的状态。网络消费使用单调墙钟，原版Pawn/World delta单独传递。

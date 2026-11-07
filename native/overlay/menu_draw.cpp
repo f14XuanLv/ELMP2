@@ -56,7 +56,7 @@ void draw_tabs(const P& p, const Menu& m, ImVec2 a, float w) {
         x += p.size(names[i], 20).x + p.px(24);
     }
     p.text(ImVec2(x - p.px(8), a.y + p.px(12)), m.next.c_str(), 12, text_dim);
-    const auto seat = std::format("P{}", m.slot);
+    const auto seat = m.online ? std::string("You") : std::format("P{}", m.slot);
     p.text(ImVec2(a.x + w - p.px(16) - p.size(seat.c_str(), 18).x, a.y + p.px(10)), seat.c_str(), 18, text_main);
 }
 
@@ -132,6 +132,7 @@ void draw_footer(const P& p, const Menu& m, ImVec2 a, float w, double now) {
                                                 : std::format("{} Select    {} Unequip    {} Close", m.confirm.c_str(), m.context.c_str(), m.back.c_str()))
                                    : std::format("{} Equip / Unequip    {} Close", m.confirm.c_str(), m.back.c_str());
     if (!m.can_change) hint += std::format("    ({})", m.reason.c_str());
+    if (m.online) hint += "    World keeps running online";
     p.text(ImVec2(a.x + p.px(16), a.y + p.px(8)), hint.c_str(), 14, m.can_change ? text_dim : warn);
     if (!m.message.empty() && now < m.message_until) {
         const auto sz = p.size(m.message.c_str(), 15);

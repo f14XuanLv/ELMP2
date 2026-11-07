@@ -6,6 +6,8 @@
 #include "party/storage.h"
 #include "party/transit.h"
 #include "party/ui.h"
+#include "coop/session.h"
+#include "input/rawinput.h"
 
 #include "core/catalog.h"
 #include "core/player.h"
@@ -45,6 +47,7 @@ constexpr const char* kOnlyAtRest = "Can only be changed at rest points";
 constexpr const char* kRefusals[] = {"", "Insufficient slot count", "Passive limit reached", "Cannot equip"};
 
 overlay::Menu g_m;
+ObjHandle g_guest_pawn;
 std::uint32_t g_prev = 0;
 int g_dir = -1;
 std::int64_t g_repeat_at = 0;
@@ -52,6 +55,8 @@ reflect::FuncRef g_used_slots;
 bool g_used_tried = false;
 
 void publish() { overlay::menu().store(g_m); }
+bool guest_slot(std::int64_t slot) { return slot == 1 && coop::role() == coop::Role::Client; }
+bool available(std::int64_t slot) { return party::seat(slot) || guest_slot(slot); }
 
 void message(std::string_view text) {
     g_m.message.set(text);
@@ -148,6 +153,30 @@ void equip_spirit(int set, int cell, std::string_view id) {
     std::string err;
     auto mine = pc ? core::profile::read(pc, &err) : std::nullopt;
     if (!mine || !mine->spirits) return message("Cannot equip");
+    if (guest_slot(g_m.slot)) {
+        // Only the guest's local equipment selection is editable. Keep the full
+        // profile API's P1 read-only boundary (inventory/stats/progress) intact.
+        const auto* s = core::schema::script();
+        auto* component = s ? s->zpc_spirit_equip.object(pc) : nullptr;
+        if (!component) return message("Cannot equip");
+        const auto group = static_cast<std::uint8_t>(set + 1);
+        const auto command = static_cast<std::uint8_t>(kCommands[cell]);
+        for (const auto& old : *mine->spirits)
+            if (old.set == set + 1 && old.id == id && old.command != command)
+                reflect::Frame(s->se_unequip).arg(0, group).arg(1, static_cast<std::uint8_t>(old.command)).invoke(component);
+        bool applied = false;
+        if (id.empty()) applied = reflect::Frame(s->se_unequip).arg(0, group).arg(1, command).invoke(component);
+        else {
+            const ue::FName name(log::wide(id).c_str(), RC::Unreal::FNAME_Add);
+            applied = reflect::Frame(s->se_equip).arg(0, group).arg_name(1, name).arg(2, command).invoke(component);
+        }
+        const auto after = core::profile::read(pc, &err);
+        std::string selected;
+        if (after && after->spirits) for (const auto& item : *after->spirits)
+            if (item.set == set + 1 && item.command == command) selected = item.id;
+        if (!applied || !after || selected != id) message("Cannot equip");
+        return;
+    }
     std::vector<core::profile::SpiritSlot> out;
     for (const auto& s : *mine->spirits)
         if (!(s.set == set + 1 && (s.command == kCommands[cell] || (!id.empty() && s.id == id)))) out.push_back(s);
@@ -275,7 +304,8 @@ void poll_devices(std::int64_t now) {
 }
 
 void step(const frame::Tick& t) {
-    if (!party::seat(g_m.slot) || !core::vitals::read(g_m.slot).alive || transit::active() || lifecycle::state() != lifecycle::State::Settled) return close();
+    if (g_m.slot == 1 && g_guest_pawn.get() != core::pawn(1)) return close();
+    if (!available(g_m.slot) || !core::vitals::read(g_m.slot).alive || transit::active() || lifecycle::state() != lifecycle::State::Settled) return close();
     if (const bool can = can_change(); can != g_m.can_change) {
         g_m.can_change = can;
         g_m.reason.set(can ? "" : kOnlyAtRest);
@@ -293,24 +323,26 @@ void set_keys() {
     g_m.context.set(label(fixed, b::Attack, pad));
     g_m.prev.set(label(fixed, b::Heal, pad));
     g_m.next.set(label(fixed, b::SummonSwitch, pad));
-    for (int i = 0; i < 3; ++i) g_m.cells[i].set(label(own, std::array{b::Attack, b::Summon1, b::Summon2}[i], pad));
+    for (int i = 0; i < 3; ++i) g_m.cells[i].set(g_m.online ? std::format("Slot {}",i+1) : label(own, std::array{b::Attack, b::Summon1, b::Summon2}[i], pad));
 }
 
 } // namespace
 
 std::string open(std::int64_t slot) {
     if (g_m.open) return std::format("the menu of P{} is open", g_m.slot);
-    if (!party::seat(slot)) return "not a local PX seat";
+    if (!available(slot)) return "not a local PX seat or Client's own P1";
     if (transit::active() || lifecycle::state() != lifecycle::State::Settled) return "world is loading";
     if (!core::vitals::read(slot).alive) return "player is down";
     if (ui::pause_holders() & ui::Manager) return "close the ELMP manager first";
-    if (auto e = progress::sync(slot); !e.empty()) {
+    if (auto e = guest_slot(slot) ? std::string{} : progress::sync(slot); !e.empty()) {
         log::warn("menu: P{} shared progress sync failed: {}", slot, e);
         return "Shared progress sync failed";
     }
     g_m = {};
     g_m.open = true;
     g_m.slot = slot;
+    g_m.online = guest_slot(slot);
+    g_guest_pawn = guest_slot(slot) ? ObjHandle::of(core::pawn(slot)) : ObjHandle{};
     set_keys();
     if (auto e = rebuild(); !e.empty()) {
         g_m = {};
@@ -319,6 +351,7 @@ std::string open(std::int64_t slot) {
     }
     g_prev = input::router::seat_actions(slot, &input::xinput::read, &b::menu_keys()).held; // the opening press does not count
     g_dir = -1;
+    if (guest_slot(slot)) input::rawinput::set_observe(true);
     ui::hold_pause(ui::Menu, true);
     publish();
     log::info("menu: P{} opened", slot);
@@ -328,6 +361,8 @@ std::string open(std::int64_t slot) {
 void close() {
     if (!g_m.open) return;
     const auto slot = g_m.slot;
+    if (slot == 1) input::rawinput::set_observe(false);
+    g_guest_pawn.reset();
     g_m = {};
     publish();
     ui::hold_pause(ui::Menu, false);
@@ -363,6 +398,8 @@ std::string describe() {
 void install() {
     frame::add_phase("party.menu", step, [] { return g_m.open; });
     lifecycle::on_teardown([] {
+        if (g_m.slot == 1) input::rawinput::set_observe(false);
+        g_guest_pawn.reset();
         g_m = {};
         publish(); // the new world starts unpaused (ui drops its holders)
     });
