@@ -4,6 +4,7 @@
 
 #include "camera/framing.h"
 #include "core/player.h"
+#include "coop/session.h"
 
 #include "engine/frame.h"
 #include "engine/handle.h"
@@ -27,7 +28,7 @@ using reflect::Kind;
 namespace {
 
 struct Schema {
-    reflect::PropRef pc_manager, registered_camera, allies;
+    reflect::PropRef pc_manager, registered_camera, players, allies, enemies, others;
     reflect::FuncRef reg, unreg;
     ObjHandle manager_class;
 };
@@ -41,6 +42,7 @@ bool g_framing = false;
 std::string g_note;
 metrics::Counter& c_register = metrics::counter("camera.register_calls");
 metrics::Counter& c_rebind = metrics::counter("camera.rebinds");
+metrics::Counter& c_cleaned = metrics::counter("camera.client_targets_removed");
 
 const Schema* schema() {
     if (g_schema || !g_schema_failure.empty()) return g_schema ? &*g_schema : nullptr;
@@ -53,6 +55,9 @@ const Schema* schema() {
     s.registered_camera = mgr.prop(L"RegisteredGameplayCamera", Kind::Weak, 8);
     reflect::Resolver cam("GameplayCamera", reflect::find_class(L"/Script/Zenith.GameplayCamera"));
     s.allies = cam.prop(L"AllyAIControllerTargets", Kind::Array, 16);
+    s.players = cam.prop(L"PlayerControllerTargets", Kind::Array, 16);
+    s.enemies = cam.prop(L"EnemyControllerTargets", Kind::Array, 16);
+    s.others = cam.prop(L"OtherTargets", Kind::Array, 16);
     s.reg = cam.func(L"RegisterAllyController", 1);
     s.unreg = cam.func(L"UnregisterAllyController", 1);
     for (const auto* r : {&pc, &mgr, &cam})
@@ -87,7 +92,11 @@ void call(const reflect::FuncRef& f, ue::UObject* cam, ue::UObject* pc) {
     ++c_register;
 }
 
-bool wanted() { return party::count() > 0 && settings::get_bool("cameraFraming"); }
+bool wanted() {
+    if (coop::role() == coop::Role::Client || !settings::get_bool("cameraFraming")) return false;
+    const auto seats = party::seats();
+    return std::any_of(seats.begin(), seats.end(), [](const auto& seat) { return seat.source != party::Source::Network; });
+}
 
 void push_framing(bool want) {
     const camera::Margins m{static_cast<float>(settings::get_number("cameraSideMargin")), static_cast<float>(settings::get_number("cameraTopMargin")),
@@ -122,6 +131,28 @@ void step(const frame::Tick&) {
     g_registered = std::move(want);
 }
 
+void client_step(const frame::Tick&) {
+    if (g_dirty || g_framing) push_framing(false);
+    const auto* s = schema();
+    auto* cam = s ? camera(*s) : nullptr;
+    auto* p1 = world::p1_controller();
+    if (!cam || !p1) return;
+    // These reflected arrays contain weak targets. Compact in place without reallocating engine memory.
+    // Keep only the real P1, once; vanilla owns its registration and single-player forward offset.
+    auto& players = *s->players.at<reflect::RawArray>(cam);
+    auto* items = reinterpret_cast<RC::Unreal::FWeakObjectPtr*>(players.data);
+    int kept = 0;
+    for (int i = 0; i < players.num; ++i)
+        if (!kept && items[i].Get() == p1) items[kept++] = items[i];
+    c_cleaned += players.num - kept;
+    players.num = kept;
+    for (const auto& prop : {s->allies, s->enemies, s->others}) {
+        auto& arr = *prop.at<reflect::RawArray>(cam);
+        c_cleaned += arr.num;
+        arr.num = 0;
+    }
+}
+
 } // namespace
 
 void left(std::int64_t slot) {
@@ -140,12 +171,15 @@ std::string describe() {
     const auto* s = schema();
     auto* cam = s ? camera(*s) : nullptr;
     int allies = cam ? reflect::array_at(cam, s->allies).num : -1;
-    return std::format("framing={} hooked={} widened={} camera={} allies={} registered={} register_calls={} rebinds={}{}\n", st.enabled, st.hooked, st.widened,
+    return std::format("framing={} hooked={} widened={} camera={} allies={} registered={} register_calls={} rebinds={}{}\nplayers={} enemies={} others={} client_solo={} client_targets_removed={}\n", st.enabled, st.hooked, st.widened,
                        cam ? ue::utf8_name(cam) : "-", allies, g_registered.size(), c_register.load(), c_rebind.load(),
-                       g_note.empty() ? (s ? "" : " schema: " + g_schema_failure) : " (" + g_note + ")");
+                       g_note.empty() ? (s ? "" : " schema: " + g_schema_failure) : " (" + g_note + ")",
+                       cam ? reflect::array_at(cam, s->players).num : -1, cam ? reflect::array_at(cam, s->enemies).num : -1,
+                       cam ? reflect::array_at(cam, s->others).num : -1, coop::role() == coop::Role::Client, c_cleaned.load());
 }
 
 void install() {
+    frame::add_phase("camera.client_solo", client_step, [] { return coop::role() == coop::Role::Client; });
     frame::add_phase("party.camera", step, [] { return party::count() > 0 || !g_registered.empty() || g_framing; }, 500);
     settings::on_change([](const std::string& key) {
         if (key.starts_with("camera")) g_dirty = true;

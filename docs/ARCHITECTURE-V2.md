@@ -223,7 +223,7 @@ template<class R, class... A> R call(UObject* o, FuncRef f, A... a);  // 栈上�
 - `respawn`：死亡计时、丢 Pawn 兜底、`respawnNear`、召回判定、摆位。
 - `transit`：过图状态机（UFunction post 钩子驱动）；冻结 = 每帧 `DisableMovement` 重压（直到 FadeIn）。
 - `bench`：椅子（近距判定 + 累计按下边沿 + 冷却句柄绑定）。
-- `camera_sync`：注册 / 注销 Ally 目标 + 放宽参数下发到 `camera` detour。
+- `camera_sync`：仅本地座位注册 / 注销 Ally 目标 + 放宽参数下发到 `camera` detour。Client 会话每帧按真实 P1 白名单压缩 PlayerControllerTargets，清空 Ally / Enemy / Other 目标，关闭共享放宽；远端 Lily 原版执行模块不拥有镜头注册。直接读当前 P1 的 RegisteredGameplayCamera，换图自动跟随新镜头；无 Client 会话时不运行清洗。`elmp camera` 审计四组目标数及清洗计数（2026-11-07，修复 0639996 回归，落实 F2.7 / C10）。
 - `team`：slot → team，推送 `pvp::bind`。
 - `persistence/save_scope`：C12（JSON 取代 `.profile.lua`；提供只读迁移器读取旧 `party_<saveId>.profile.lua`）。
 - `hud_feed`：每帧填 `HudModel`：头顶锚点（`ProjectWorldToScreen` 保留 1 次 / 座位 / 帧；或读 `PlayerCameraManager` 视图投影矩阵自算，二期）；技能格状态：**只在变化沿更新** —— 订阅 `SpiritEquipComponent.OnEquip/OnUnequip` 与 `SummonSet` 切换（UFunction post）重建 3 个 `CommandAction` 句柄；每帧只读 3 个动作的 `GetRemainingCastValue/GetCooldownTime/GetRecastTime`（直读属性优先，`[待 IDA]` `CommandAction` 内剩余值字段偏移；拿不到则 3 次 ProcessEvent）；菜单打开态由注册表 `Menu` 桶的 `IsInViewport && IsVisible` 低频判断。

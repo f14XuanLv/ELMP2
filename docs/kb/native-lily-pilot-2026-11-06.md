@@ -11,6 +11,8 @@
 - 新 `coop/native_lily`：经现有已 Possess 的 ELMP PC/Pawn、原版 profile 库存/装备入口，建立完整原版 Spirit/Companion；Host 在真实 InputConsume 后捕获完整输入、消费序号、Pawn serial、位置/速度/MovementMode、ActiveStates；Client 依可靠顺序调用原版 AZenithCharacter::Tick。每渲染帧最多4份，不丢输入，组件按总时长推进。
 - 原版 Ability 及其子时间线/私有粒子只保留一个本地写者，Lily/Spirit/Companion 普通 Act/Fx/Snd 复制停止投递；保留有来源证明的命中反馈。原版对象沿装备/PC 清理。
 - 原版 `SetSpineData(FSpineDataGroup)` 替换手工资产替换、SetupPose、强播 idle 与灯光材质设置；按表行1/2/5/7/9/11选择六种外观，FProperty深复制结构。共享镜头用 RegisterAllyController/UnregisterAllyController。
+
+2026-11-07 更正：上条将 Client 远端 Lily 注册进共享镜头违反 F2.7 / C10，是 `0639996` 引入的回归。已移除远端执行模块的镜头注册，恢复 Client P1 单目标及每帧目标表清洗；远近移动验证见 [Client 单人镜头回归修复](client-camera-regression-2026-11-07.md)。下文「已注册共享镜头」仅描述当时观测，不代表独立镜头验收通过。
 - Client 伤害、Effect Apply/Finalize、死亡结算、存档闸门继续生效；远端 Pawn 关闭 overlap、屏蔽交互输入，保留世界阻挡。只放行原版 Companion AI 的跟随，不放行敌人 AI。
 - 受击 Reaction 路由扩到包括 Host P1 的所有网络可见 Lily；按 seat 去重。此新增远端分支本轮未做自然受击验收。
 - 协议9，旧端拒绝。原版高层 CreatePlayer 会增加 LocalPlayer/本地输入/视口语义，本轮远端虚拟座位保留已证 PC/Possess 创建路径，不将它当成任意远端玩家的替换。

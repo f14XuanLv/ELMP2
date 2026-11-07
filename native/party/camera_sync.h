@@ -7,6 +7,8 @@
 // invalidated when the camera object changes (map switch / reload) and on world teardown.
 // Audit: every 500 ms the ally array is read back directly and missing seats are re-registered
 // (camera.register_calls counts every ProcessEvent).
+// Client sessions instead sanitize all four target arrays every frame, keeping only vanilla P1.
+// Audit: elmp camera reports all target counts and camera.client_targets_removed; no cached target data.
 
 #include <cstdint>
 #include <string>

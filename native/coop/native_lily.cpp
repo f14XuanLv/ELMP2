@@ -69,7 +69,7 @@ struct SourceCadence {
 std::array<SourceCadence, 9> g_source_cadence{};
 struct Replica {
     struct Step { proto::LilyFrame frame; bool begin = false, end = false; double host_ms = 0; };
-    ObjHandle pawn, controller, camera;
+    ObjHandle pawn, controller;
     std::int64_t slot = 0;
     std::uint32_t received = 0, consumed = 0, generation = 0;
     std::uint32_t playing = 0;
@@ -209,17 +209,7 @@ std::string bind(std::uint16_t seat, std::int64_t slot, ue::UObject* pawn) {
     const auto* s = core::schema::script();
     if (!s) return "native Lily core schema";
     r.controller = ObjHandle::of(s->pawn_controller.object(pawn));
-    reflect::Resolver pc_schema("native camera owner", reflect::find_class(L"/Script/Engine.PlayerController"));
-    reflect::Resolver manager_schema("native camera manager", reflect::find_class(L"/Script/Zenith.PlayerCameraManagerZenithBase"));
-    const auto manager_prop = pc_schema.prop(L"PlayerCameraManager", reflect::Kind::Object);
-    const auto registered = manager_schema.prop(L"RegisteredGameplayCamera", reflect::Kind::Weak, 8);
-    if (!pc_schema.ok() || !manager_schema.ok()) return "native Lily camera owner schema";
-    auto* manager = manager_prop.object(world::p1_controller());
-    auto* camera = manager ? registered.at<RC::Unreal::FWeakObjectPtr>(manager)->Get() : nullptr;
-    if (!ue::alive(camera)) return "native Lily original camera unavailable";
-    auto reg = reflect::Resolver("native camera", camera->GetClassPrivate()).func(L"RegisterAllyController", 1);
-    if (!reg.ok() || !reflect::Frame(reg).arg(0, r.controller.get()).invoke(camera)) return "native Lily original camera registration failed";
-    r.camera = ObjHandle::of(camera);
+    // Remote execution has no camera ownership: Client keeps vanilla P1-only framing (F2.7).
     // Keep world blocking for the original CharacterMovement, remove world-trigger/contact overlap.
     reflect::Frame parts(s->actor_components_by_class); parts.arg(0, s->primitive_class.get());
     if (!parts.invoke(pawn)) return "native Lily primitive enumeration";
@@ -416,14 +406,7 @@ void client_tick(std::uint16_t map, Text text) {
     }
 }
 void forget(std::uint16_t seat) {
-    if (auto it = g_replicas.find(seat); it != g_replicas.end()) {
-        auto* camera = it->second.camera.get(); auto* pc = it->second.controller.get();
-        if (camera && pc) {
-            const auto fn = reflect::Resolver("native camera", camera->GetClassPrivate()).func(L"UnregisterAllyController", 1);
-            if (fn.ok()) reflect::Frame(fn).arg(0, pc).invoke(camera);
-        }
-        g_replicas.erase(it);
-    }
+    g_replicas.erase(seat);
 }
 void reset() { g_replicas.clear(); g_state_classes.clear(); g_text = nullptr; g_fault.clear(); causality::reset(); }
 ue::UObject* actor(std::uint16_t seat) { const auto i = g_replicas.find(seat); return i == g_replicas.end() ? nullptr : i->second.pawn.get(); }
