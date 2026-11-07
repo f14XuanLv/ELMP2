@@ -415,6 +415,69 @@
       "signature": "SpineRootUpdate",
       "owner": "coop/spine_root",
       "source": "[E-IDA][E-实测] ELMP v2 2026-11-07; build/wallgrab-fix/ida-root{5,8,9}-result.json and native-root-layout.json"
+    },
+    "CommandQueueUpdateNative": {
+      "rva": "0x00CC3970",
+      "prefix": "48895C24084889742410574883EC70C6814401000001488BD9488BB918010000",
+      "signature": "void UCommandQueueComponent::UpdateCommands(this,float)",
+      "owner": "coop/autonomous",
+      "source": "[E-IDA] ELMP v2 2026-11-07 exec D513D0 calls CC3970; crow-sync/ida-update2-result.json"
+    },
+    "SpiritSourceLayout": {
+      "rva": "0x00CF2F7D",
+      "prefix": "488D8BA0050000E8573D3D00488D8BA0050000",
+      "signature": "read-only SourceCommandAction weak layout proof inside native Spirit Start; no hook",
+      "owner": "coop/autonomous",
+      "source": "[E-IDA] ELMP v2 2026-11-07 CF2F84 FWeakObjectPtr::operator=(Spirit+1440,source)"
+    },
+    "SummonerGetSpiritNative": {
+      "rva": "0x00CE1920",
+      "prefix": "48895C2408574883EC20488D99B8000000488BFA488BCBE8C4183F0084C0741D",
+      "signature": "ZenithSpirit* USummonerComponent::GetSpirit(this,TSubclassOf<ZenithSpirit> const&)",
+      "owner": "coop/autonomous",
+      "source": "[E-IDA] ELMP v2 2026-11-08 CAS OnStart D1D3BA -> CE1920 -> active SummonSetHold pool CE15B0"
+    },
+    "SummonCachedSpiritLayout": {
+      "rva": "0x00D1D3BD",
+      "prefix": "488DBB78030000",
+      "signature": "read-only CAS OnStart weak binding instruction proof; no hook",
+      "owner": "coop/autonomous",
+      "source": "[E-IDA] ELMP v2 2026-11-08 FWeakObjectPtr::operator=(CAS+888,actual pooled Spirit) D1D3CA"
+    },
+    "FollowTargetTickNative": {
+      "rva": "0x00CC0950",
+      "prefix": "40534881EC90000000440F29442460488BD9440F28C1E815407201488D8B1801",
+      "signature": "void UFollowTargetComponent::TickComponent(this,float,ELevelTick,FTickFunction*)",
+      "owner": "coop/autonomous",
+      "source": "[E-IDA] ELMP v2 2026-11-07 GetTargetLocation xrefs; ida-follow-tick-result.json"
+    },
+    "FollowBlendLayout": {
+      "rva": "0x00CC09E2",
+      "prefix": "F30F108300010000",
+      "signature": "instruction displacement proof inside UFollowTargetComponent::TickComponent",
+      "owner": "coop/autonomous",
+      "source": "[E-IDA] ELMP v2 2026-11-07 ida-follow-tick/bytes-result.json"
+    },
+    "FollowPhaseLayout": {
+      "rva": "0x00CC0A81",
+      "prefix": "488D930C010000",
+      "signature": "instruction displacement proof inside UFollowTargetComponent::TickComponent",
+      "owner": "coop/autonomous",
+      "source": "[E-IDA] ELMP v2 2026-11-07 ida-follow-tick/bytes-result.json"
+    },
+    "FollowTargetLayout": {
+      "rva": "0x00CC0982",
+      "prefix": "F20F108320010000",
+      "signature": "instruction displacement proof inside UFollowTargetComponent::TickComponent",
+      "owner": "coop/autonomous",
+      "source": "[E-IDA] ELMP v2 2026-11-07 ida-follow-tick/bytes-result.json"
+    },
+    "FollowPreviousLayout": {
+      "rva": "0x00CC099D",
+      "prefix": "F20F11832C010000",
+      "signature": "instruction displacement proof inside UFollowTargetComponent::TickComponent",
+      "owner": "coop/autonomous",
+      "source": "[E-IDA] ELMP v2 2026-11-07 ida-follow-tick/bytes-result.json"
     }
   },
   "offsets": {
@@ -598,6 +661,72 @@
         }
       },
       "source": "[E-IDA] ELMP v2 2026-11-07 verified Shipping instructions; scaleXY holds ScaleX/ScaleY pair"
+    },
+    "ZenithSpirit.sourceCommand": {
+      "value": 1440,
+      "size": 8,
+      "check": {
+        "native_offset": {
+          "function": "SpiritSourceLayout",
+          "byte": 3,
+          "width": 4
+        }
+      },
+      "source": "[E-IDA] ELMP v2 2026-11-07 native Start source weak; not guessed SDK private layout"
+    },
+    "CommandActionSummon.cachedSpirit": {
+      "value": 888,
+      "size": 8,
+      "check": {"native_offset": {"function": "SummonCachedSpiritLayout", "byte": 3, "width": 4}},
+      "source": "[E-IDA] ELMP v2 2026-11-08 CAS.GetSpirit D0F8A0 reads weak; OnStart D1D3BD binds original pool result"
+    },
+    "FollowTarget.blend": {
+      "value": 256,
+      "size": 12,
+      "check": {
+        "native_offset": {
+          "function": "FollowBlendLayout",
+          "byte": 4,
+          "width": 4
+        }
+      },
+      "source": "[E-IDA] ELMP v2 2026-11-07 blend/oscillator/current/previous numeric histories; no copied UObject pointers"
+    },
+    "FollowTarget.phase": {
+      "value": 268,
+      "size": 12,
+      "check": {
+        "native_offset": {
+          "function": "FollowPhaseLayout",
+          "byte": 3,
+          "width": 4
+        }
+      },
+      "source": "[E-IDA] ELMP v2 2026-11-07 blend/oscillator/current/previous numeric histories; no copied UObject pointers"
+    },
+    "FollowTarget.target": {
+      "value": 288,
+      "size": 12,
+      "check": {
+        "native_offset": {
+          "function": "FollowTargetLayout",
+          "byte": 4,
+          "width": 4
+        }
+      },
+      "source": "[E-IDA] ELMP v2 2026-11-07 blend/oscillator/current/previous numeric histories; no copied UObject pointers"
+    },
+    "FollowTarget.previous": {
+      "value": 300,
+      "size": 12,
+      "check": {
+        "native_offset": {
+          "function": "FollowPreviousLayout",
+          "byte": 4,
+          "width": 4
+        }
+      },
+      "source": "[E-IDA] ELMP v2 2026-11-07 blend/oscillator/current/previous numeric histories; no copied UObject pointers"
     }
   }
 }

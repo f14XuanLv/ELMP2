@@ -4,6 +4,7 @@
 #include "coop/causality.h"
 #include "coop/command_context.h"
 #include "coop/lily_events.h"
+#include "coop/autonomous.h"
 #include "core/permission.h"
 #include "core/player.h"
 #include "core/profile.h"
@@ -164,7 +165,7 @@ std::uint16_t seat_of(ue::UObject* pawn) {
 std::vector<ue::UObject*> owned_actors(std::uint16_t seat) {
     std::vector<ue::UObject*> out;
     for(auto kind:{registry::Kind::Spirit,registry::Kind::Companion}) for(const auto& entry:registry::bucket(kind))
-        if(auto* actor=entry.handle.get()){Source origin;if(source(actor,origin)&&origin.seat==seat)out.push_back(actor);}
+        if(auto* actor=entry.handle.get();actor&&!autonomous::eligible(actor)){Source origin;if(source(actor,origin)&&origin.seat==seat)out.push_back(actor);}
     return out;
 }
 void restore_clocks(ue::UObject* pawn = nullptr) {
@@ -542,14 +543,17 @@ void forget(std::uint16_t seat) {
 void reset() { restore_clocks();g_replicas.clear(); g_state_classes.clear(); g_text = nullptr; g_fault.clear(); command_context::reset(); causality::reset(); }
 ue::UObject* actor(std::uint16_t seat) { const auto i = g_replicas.find(seat); return i == g_replicas.end() ? nullptr : i->second.pawn.get(); }
 bool owns(ue::UObject* object) {
+    if (autonomous::owns(object)) return true;
     if (!object || g_replicas.empty() || !g_schema.ready()) return false;
     const auto* s = core::schema::script();
     for (int depth = 0; object && depth < 8; ++depth) {
+        if(autonomous::owns(object))return true;
         for (const auto& [seat, r] : g_replicas) {
             auto* pawn = r.pawn.get();
             auto* pc = pawn && s ? s->pawn_controller.object(pawn) : nullptr;
             if (object == pawn || (pc && object == pc)) return true;
         }
+        if(auto* pawn=autonomous::summoner(object)){object=pawn;continue;}
         auto* cls = static_cast<ue::UClass*>(g_schema.actor.get());
         if (cls && object->IsA(cls)) {
             if (auto* ai = static_cast<ue::UClass*>(g_schema.companion_ai.get()); ai && object->IsA(ai)) {
@@ -568,9 +572,11 @@ bool owns(ue::UObject* object) {
 std::string fault() { return g_fault.empty() ? command_context::fault() : g_fault; }
 bool source(ue::UObject* object, Source& out) {
     out = {};
+    if (autonomous::source(object,out)) return true;
     if (!object || !g_schema.ready()) return false;
     const auto* s = core::schema::script();
     for (int depth = 0; object && depth < 8; ++depth) {
+        if(autonomous::source(object,out))return true;
         if(g_restore_pawn.valid()&&object==g_restore_pawn.get()){out=g_restore_source;return true;}
         if (g_sink) {
             for (std::uint16_t seat = 1; seat <= 8; ++seat) {
@@ -581,6 +587,7 @@ bool source(ue::UObject* object, Source& out) {
         } else for (const auto& [seat, r] : g_replicas) {
             if (object == r.pawn.get() || object == r.controller.get()) { out = {seat, r.generation, r.playing,g_executing_pawn==r.pawn}; return true; }
         }
+        if(auto* pawn=autonomous::summoner(object)){object=pawn;continue;}
         if (auto* cls = static_cast<ue::UClass*>(g_schema.actor.get()); cls && object->IsA(cls)) {
             if (auto* ai = static_cast<ue::UClass*>(g_schema.companion_ai.get()); ai && object->IsA(ai)) {
                 reflect::Frame leader(g_schema.leader); object = leader.invoke(object) ? leader.ret<ue::UObject*>() : nullptr;
@@ -591,6 +598,6 @@ bool source(ue::UObject* object, Source& out) {
 }
 std::string describe() {
     std::size_t queued = 0; for (const auto& [seat, r] : g_replicas) queued += r.frames.size();
-    return std::format("native Lily: replicas={} captured={} received={} consumed={} queued={} profiles={} stateChanges={} edges={}/{} starved={} roleClocks={} clockWrites={} fault='{}'\n", g_replicas.size(), g_captured, g_received, g_consumed, queued, g_profiles, g_state_changes, g_edges_played, g_edges_received, g_starved, g_role_clocks.size(),g_clock_writes,g_fault)+lily_events::describe();
+    return std::format("native Lily: replicas={} captured={} received={} consumed={} queued={} profiles={} stateChanges={} edges={}/{} starved={} roleClocks={} clockWrites={} fault='{}'\n", g_replicas.size(), g_captured, g_received, g_consumed, queued, g_profiles, g_state_changes, g_edges_played, g_edges_received, g_starved, g_role_clocks.size(),g_clock_writes,g_fault)+lily_events::describe()+autonomous::describe();
 }
 }

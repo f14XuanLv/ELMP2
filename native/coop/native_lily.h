@@ -18,7 +18,7 @@ void forget(std::uint16_t seat);
 void reset();
 ue::UObject* actor(std::uint16_t seat);
 bool owns(ue::UObject* object); // native avatar or one of its original owned/possessed descendants
-struct Source { std::uint16_t seat = 0; std::uint32_t generation = 0, seq = 0; bool command_tick = false; };
+struct Source { std::uint16_t seat = 0; std::uint32_t generation = 0, seq = 0; bool command_tick = false; std::uint8_t domain = 0; };
 bool source(ue::UObject* object, Source& out);
 std::string fault();
 std::string describe();

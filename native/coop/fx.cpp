@@ -67,7 +67,9 @@ std::string g_attach_failure;
 std::string g_feedback_failure;
 std::uint64_t g_feedback_fx = 0, g_feedback_snd = 0, g_feedback_blocked = 0;
 std::uint64_t g_feedback_sound_instance = 0, g_feedback_sound_empty = 0;
-void feedback_fault(const char* why) { if (g_feedback_failure.empty()) g_feedback_failure = why; }
+ObjHandle g_widget_class;
+std::uint64_t g_ui_sound_local = 0;
+void feedback_fault(std::string why) { if (g_feedback_failure.empty()) g_feedback_failure = std::move(why); }
 // Identity of the last captured spawn, not a whitelist of particle assets or all Ability actors.
 // Keep the PSC's provenance through native Stop tails; overwrite it on every captured pool reuse.
 std::unordered_map<UObject*, ObjHandle> g_native_ability_psc;
@@ -487,12 +489,16 @@ UObject* sound_owner(UObject* ctx) {
 
 std::uint64_t __fastcall d_sound(UObject* ctx, UObject* ev, const std::uint8_t* xf, bool autoplay) {
     if (ev && ue::on_game_thread()) {
+        // A gameplay delegate may synchronously refresh UI (e.g. RestoreMP -> gauge full).
+        // Its Widget-owned sound remains local UI, regardless of an enclosing Effect scope.
+        if(g_host||g_client){if(!g_widget_class.valid())g_widget_class=ObjHandle::of(reflect::find_class(L"/Script/UMG.Widget"));if(auto* widget=g_widget_class.get();ctx&&widget&&ctx->IsA(static_cast<ue::UClass*>(widget))){++g_ui_sound_local;return o_sound(ctx,ev,xf,autoplay);}}
         auto* target = feedback_context::sound_target(ctx);
         const bool feedback = target != nullptr;
         // Contact -> Knockback can synchronously cancel a native Ability. Its private OnStop
         // sounds retain their existing writer; an enclosing Contact alone proves no sound source.
         if ((!target && feedback_context::effect_scope()) || (feedback && (!xf || !autoplay))) {
-            feedback_fault("feedback sound has unsupported context/transform/autoplay");
+            const auto label=[](UObject* o){return o?log::utf8(o->GetFullName()):std::string{"null"};};
+            feedback_fault(std::format("feedback sound context: source={} context={} event={} target={} transform={} autoplay={}",label(feedback_context::effect_source()),label(ctx),label(ev),label(target),xf!=nullptr,autoplay));
             if (g_client && !g_replaying) return ++g_feedback_blocked, 0;
             return o_sound(ctx, ev, xf, autoplay);
         }
@@ -806,7 +812,7 @@ std::string describe() {
                                   g_cap_emitter, g_rep_spawn, g_rep_fail, g_rep_deact, g_rep_sound, g_rep_stop, g_rep_emitter, g_local_blocked, g_local_sound_blocked, g_local_emitter, g_attached);
     out += std::format("  early persistent fx: {} overflow={}\n", g_early.size(), g_early_overflow);
     out += std::format("  emitter attachmentRejected={} inactiveAtSpawn={} last={}\n", g_attach_failed, g_emitter_inactive, g_attach_failure);
-    out += std::format("  feedback fx={} sounds={} localSuppressed={} fault={}\n", g_feedback_fx, g_feedback_snd, g_feedback_blocked, fault());
+    out += std::format("  feedback fx={} sounds={} localSuppressed={} uiLocal={} fault={}\n", g_feedback_fx, g_feedback_snd, g_feedback_blocked,g_ui_sound_local, fault());
     out += std::format("  feedback FMOD replay instanceCreated={} nativeEmpty={}\n", g_feedback_sound_instance, g_feedback_sound_empty);
     out += feedback_context::describe();
     out += std::format("  native ability FX kept={} exactPSC={} capacityRejected={}\n", g_native_ability_fx, g_native_ability_psc.size(), g_native_psc_overflow);

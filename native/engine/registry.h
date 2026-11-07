@@ -34,7 +34,7 @@ enum class Kind : std::uint8_t {
     TravelVolume,
     ActivationVolume,
     Menu, // non-actor (UserWidgetNavigable); maintained only while wanted
-    Spirit, // AZenithSpirit (pooled per equipped spirit, Owner = the summoner's controller)
+    Spirit, // AZenithSpirit; GetSummoner identifies its caster even when autonomous AI owns it
     Companion, // AZenithCompanionCharacter (own AIC -> LeaderPawn -> player PC; Owner changes on possess)
     Count
 };

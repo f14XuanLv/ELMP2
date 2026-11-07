@@ -15,6 +15,21 @@
 using namespace elmp::net;
 
 TEST_MAIN({
+    { // Autonomous command frames: bounded nested context, command edges, and original turn definition.
+        using namespace elmp::net::proto;
+        SpiritFrame a,b;auto& c=a.context;c.seat=2;c.map=3;c.epoch=4;c.view=5;c.generation=6;c.seq=7;c.facing=1;c.dt=c.step=c.world_dt=1.f/60;
+        a.role=8;a.episode=9;a.cls=10;a.summon=11;a.edges.push_back({12,13,0,8,9,0});a.edges.push_back({12,13,1,0,0,6});
+        a.layer=3;a.animation={14,15,1,.2f,0,0,.1f};
+        a.has_follow=true;a.follow_position={1,-200,500};a.follow_rotation={0,90,0};a.follow_velocity={0,-300,20};a.decision_only=true;c.dt=0;
+        a.follow_scale={1,2,3};a.follow_history={1,-200,3,.5f,1,2,0,-300,20,0,-301,19};
+        std::array<std::uint8_t,1024> wire{};auto n=encode(a,wire);CHECK(n&&decode(std::span(wire.data(),n),b)&&a==b);
+        for(std::size_t cut=0;cut<n;++cut)CHECK(!decode(std::span(wire.data(),cut),b));
+        CHECK(!decode(std::span(wire.data(),n+1),b));CHECK(!encode(a,std::span(wire.data(),n-1)));
+        auto bad=a;bad.edges.resize(17);CHECK(!encode(bad,wire));bad=a;bad.edges[0].sequence=0;CHECK(!encode(bad,wire));
+        bad=a;bad.actor_scale=std::numeric_limits<float>::quiet_NaN();CHECK(!encode(bad,wire));bad=a;bad.animation.time=std::numeric_limits<float>::infinity();CHECK(!encode(bad,wire));
+        bad=a;bad.follow_history[4]=std::numeric_limits<float>::quiet_NaN();CHECK(!encode(bad,wire));
+        bad=a;bad.episode=0;CHECK(!encode(bad,wire));bad=a;bad.edges[0].reason=7;CHECK(!encode(bad,wire));
+    }
     { // Reliable original input history: bounded states, complete frames, no NaN or trailing bytes.
         using namespace elmp::net::proto;
         LilyFrame a, b;
@@ -56,6 +71,7 @@ TEST_MAIN({
         LilyCauses a,b;a.epoch=2;a.map=3;a.view=4;a.fence_ms=100;
         Cause root;root.seat=1;root.map=3;root.generation=10;root.input=99;root.root=42;root.ordinal=1;root.cls=5;root.invoker=6;root.t_ms=90;
         a.facts.push_back(root);
+        a.facts[0].domain=1;a.facts[0].actor_rotation={0,-90,0};
         auto q=root;q.kind=CauseKind::Query;q.cls=7;q.query=1;q.path.depth=1;q.path.entries[0]=0;q.path.occurrences[0]=1;q.ref_kind=1;q.ref_id=8;q.ref_generation=123;q.component=9;q.range=2000;q.flags=3;q.channel=3;
         a.facts.push_back(q);q.kind=CauseKind::Target;a.facts.push_back(q);q.kind=CauseKind::End;q.reason=2;a.facts.push_back(q);
         std::vector<std::uint8_t> wire(128*1024);const auto n=encode(a,wire);

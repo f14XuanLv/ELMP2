@@ -96,7 +96,7 @@ void register_coop_commands() {
     add("commandctx", "status | trace on|off|read", [](Args a, std::string& out) {
         out += a.size()>0&&a[0]=="trace" ? coop::command_context::trace(a.size()>1?a[1]:"read") : coop::command_context::describe();
     });
-    add("causal", "status | trace on|off|read", [](Args a, std::string& out) {
+    add("causal", "status | trace on|dense|off|read", [](Args a, std::string& out) {
         out += a.size() > 0 && a[0] == "trace" ? coop::causality::trace(a.size() > 1 ? a[1] : "read") : coop::causality::describe();
     });
     add("lan", "host <code> [port] [max] | join <addr> <code> [port] | leave | status | bg load|unload|boss", lan_cmd);

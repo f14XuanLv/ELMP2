@@ -437,6 +437,14 @@ Companion `cp` 基线包含 Actor 世界位置及 pitch/yaw/roll；世界旋转�
 
 2026-11-07 环境动作与命令状态所有权修正按[ADR0012](adr/0012-environment-command-context.md)实施，抓墙与抓钩作为真实验收入口。
 
+2026-11-07 自主 Spirit 按[ADR0013](adr/0013-autonomous-spirit-decisions.md)扩展：协议13为实际 Spirit/召唤代次建立独立可靠决定流；Host 原生 CommandAction Start/End 与 CommandQueue.UpdateCommands 是采集接缝，Client 仅暂停该 Spirit 的 Brain，继续原版命令、跟随、动画和 Ability 时间线。source domain 区分莉莉输入与自主命令，Root/Query/End 向所属客人的预测端也投递。绑定使用原版召唤命令 GetSpirit，等待对应莉莉召唤输入完成，防止重复切换。原版立即入队会同步重入 UpdateCommands(0)，重入只运行原版内部更新，不能再次消费网络 Start。
+
+自主角色/待绑定各≤128，单角色队列≤120帧、单帧命令沿≤16、Host发送暂存≤2048帧；角色以 weak Actor/caster/source/queue 失效、召唤代次、地图视图与会话撤销。精确池对象重新绑定先退役旧流，未绑定即已收回的流直接退役；时钟恢复原值。类加载缓存使用 weak class，并在地图/会话清理。审计为 `autonomous` 状态、命令/因果 trace、`autonomous.buffer_ms/correction_uu`。进行中有限命令只恢复当前视觉定义，不制造历史弹体；仅消费实际交付过 Start 的后续激活事实。
+
+2026-11-08：FollowTarget 的实际目标 Scene 变换、速度与原生积分历史也属于上下文。经指令位移校验的混合位置、三轴摆动相位、当前/前次目标位置随帧传递，在组件原生 Tick 接缝按同一分步 delta 消费；不复制 Owner/目标弱指针。无碰撞 Engine.TargetPoint 承载权威跟随输入，避免追随本机预测莉莉导致双重纠偏。自主 Homing 已有 Host 目标组件事实但 Client 历史实体缺失时，可用独立 Scene 输入载体继续原版追踪；没有该事实的依赖仍拒绝，实体受击/结算不由载体代替。见 [实测记录](kb/autonomous-spirit-2026-11-08.md)。
+
+冷加入时 CAS.GetSpirit 的弱缓存可能尚未建立，按原版 CAS.OnStart 的同一 SummonerComponent 取实例入口绑定当前装备池对象，避免重跑莉莉召唤时间线。封口时间取本批采集完成之后的单调时刻，覆盖 Tick 内新产生的最终退场帧。受击 Effect 广播间接触发的 UMG.Widget 提示音保留本机 UI 所有权；世界反馈的来源、挂点、结算检查保持原有约束。
+
 协议12补齐环境感知、Pawn能力通知、原生命令StateTimeline所有权、朝向、独立Spirit/Companion时钟及有限持续命令基线。远端仍关闭目标权限和结算，保留环境传感器；不能以“Host权威”为由关闭全部overlap，也不能提前写入命令运行才应产生的状态。网络消费使用单调墙钟，原版Pawn/World delta单独传递。
 
 CommandQueue之外的DEATH与EVENT逻辑层经`lily_events`传递实际原版定义/代次/相位，由`PlayAnimationDefinition`接入；不复制完成委托、root motion或运动模式副作用，不触发Client死亡结算。敌人继续输出呈现，`spine_root`补通用根骨局部镜像上下文，在原版Skeleton世界变换入口消费，避免current-track数据不足导致持续反向。边界与实测见[本轮记录](kb/wallgrab-native-pipeline-2026-11-07.md)。
@@ -460,6 +468,9 @@ CommandQueue之外的DEATH与EVENT逻辑层经`lily_events`传递实际原版定
 | 独立角色时钟 | 实际Owner/LeaderPawn链；弱失效、归属改变、角色替换、地图/会话恢复原倍率；每帧表≤32类 | native Lily roleClocks/clockWrites |
 | 外部动画逻辑层 | Pawn/组件弱句柄、Host TrackEntry代次；当前层缺失、组件重建、角色失效、地图/会话清理；每Pawn固定4层，离会停止借用层 | Lily external layers cached/played/stopped/phase/failed |
 | Spine根镜像上下文 | Skeleton指针必须仍属于同一弱组件/Actor；每次重新取根骨；重建/失效/forget/reset撤销并恢复；512个呈现绑定 | Spine root context bound/updates/expired/restored/failed |
+| 自主 Spirit / 跟随分步 | weak Actor/caster/source/queue、单调角色ID与召唤代次；对象失效、退场、重绑、地图/会话撤销；128角色、每角色120帧/64跟随步，类缓存512、peer命令索引4096/10秒 | autonomous roles/waiting/queued/commands/bindings/anchors/follow/unexpectedStarts/fault |
+| 数值 Scene 上下文载体 | World 持有 Actor，模块保存 weak Actor/root/aim；跟随退役恢复旧目标，Homing End/复用/退役/地图/会话销毁；弱失效清除，上限1024 | scene contexts live/created/destroyed/expired/failed |
+| UI 音效类型边界 | UMG.Widget 类弱句柄；失效时按反射类名重新解析，不保存 Widget 实例 | feedback uiLocal、带确切 source/context/event 的失败诊断 |
 
 ## 17. 风险与对策
 

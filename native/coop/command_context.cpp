@@ -1,5 +1,6 @@
 #include "coop/command_context.h"
 #include "coop/native_lily.h"
+#include "coop/autonomous.h"
 #include "core/schema.h"
 #include "core/player.h"
 #include "engine/reflect.h"
@@ -109,6 +110,7 @@ void record(std::string_view event, ue::UObject* command, const Active& a, int r
     j.set("token", static_cast<std::int64_t>(a.token));
     j.set("seat", a.source.seat); j.set("input", static_cast<std::int64_t>(a.source.seq));
     j.set("generation", static_cast<std::int64_t>(a.source.generation));
+    j.set("domain", a.source.domain);
     j.set("pawn", a.pawn.valid() ? log::utf8(a.pawn.get()->GetFullName()) : "expired");
     j.set("command", ue::alive(command) ? log::utf8(command->GetClassPrivate()->GetPathName()) : "expired");
     j.set("reason", reason);
@@ -139,6 +141,7 @@ bool insert(ue::UObject* command, Active& a) {
 }
 void __fastcall start(ue::UObject* command) {
     if (!g_enabled || !ue::on_game_thread()) return g_start(command);
+    autonomous::command_started(command, g_schema.pawn.object(command));
     Active a;
     const bool tracked = insert(command, a);
     g_start(command);
@@ -154,6 +157,7 @@ void __fastcall end(ue::UObject* command, std::uint8_t reason) {
     const auto i = g_active.find(h);
     const bool tracked = i != g_active.end();
     const auto before = tracked ? i->second : Active{};
+    autonomous::command_ended(command, g_schema.pawn.object(command), reason);
     g_end(command, reason);
     if (tracked) {
         ++g_ends; record("end", command, before, reason);

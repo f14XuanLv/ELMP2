@@ -5,6 +5,7 @@
 // Reliable: first byte = Msg type; strings are bounded; every decoder rejects trailing / short input.
 
 #include "net/codec.h"
+#include "net/lily_events.h"
 
 #include <array>
 #include <cstdint>
@@ -50,6 +51,7 @@ enum class Msg : std::uint8_t {
     LilyFrame = 17, // original consumed input and required movement/state context
     LilyBuild = 18, // authoritative per-seat profile baseline/change
     LilyCauses = 19, // sealed original activation / query / target / completion facts
+    SpiritFrame = 20, // Host decisions of an autonomous, player-owned original Spirit
 };
 
 // Owner of a replicated event (P6): which presented actor on the client it belongs to.
@@ -188,9 +190,35 @@ struct LilyFrame {
 };
 std::size_t encode(const LilyFrame& m, std::span<std::uint8_t> out);
 bool decode(std::span<const std::uint8_t> in, LilyFrame& m);
+
+struct SpiritEdge {
+    std::uint32_t sequence = 0;
+    std::uint16_t cls = 0;
+    std::uint8_t kind = 0, direction = 0, button = 0, reason = 0; // 0 start, 1 end
+    bool operator==(const SpiritEdge&) const = default;
+};
+struct SpiritFrame {
+    LilyFrame context;
+    std::uint32_t role = 0, episode = 0, summon_input = 0, command_sequence = 0;
+    std::uint16_t cls = 0, summon = 0;
+    float actor_scale = 1;
+    bool active = true;
+    bool decision_only = false; // native command boundary, not another World/Actor tick
+    bool has_follow = false;
+    std::array<float,3> follow_position{}, follow_rotation{}, follow_velocity{};
+    std::array<float,3> follow_scale{1,1,1};
+    std::array<float,12> follow_history{}; // blend position, oscillator phases, current/previous target positions
+    std::vector<SpiritEdge> edges;
+    std::uint8_t layer = 0;
+    snap::EventAnimation animation;
+    bool operator==(const SpiritFrame&) const = default;
+};
+std::size_t encode(const SpiritFrame&, std::span<std::uint8_t>);
+bool decode(std::span<const std::uint8_t>, SpiritFrame&);
 enum class CauseKind : std::uint8_t { Root, Query, Target, End };
 struct Cause {
     CauseKind kind = CauseKind::Root;
+    std::uint8_t domain = 0; // 0 Lily consumed input, 1 autonomous Spirit accepted command
     std::uint16_t seat = 0, map = 0;
     std::uint32_t generation = 0, input = 0, t_ms = 0;
     std::uint64_t root = 0;
@@ -201,7 +229,7 @@ struct Cause {
     std::uint32_t ref_generation = 0;
     float min = 0, range = 0;
     float actor_scale = 1;
-    std::array<float, 3> actor_position{}, target_position{}, target_velocity{};
+    std::array<float, 3> actor_position{}, target_position{}, target_velocity{}, actor_rotation{};
     bool operator==(const Cause&) const = default;
 };
 inline constexpr std::size_t kCauses = 256;

@@ -6,6 +6,7 @@
 
 #include "coop/client.h"
 #include "coop/native_lily.h"
+#include "coop/autonomous.h"
 #include "coop/lily_events.h"
 #include "coop/causality.h"
 
@@ -759,6 +760,10 @@ void on_connected(std::uint32_t) {
 
 void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
     switch (proto::type_of(msg)) {
+    case proto::Msg::SpiritFrame: {
+        proto::SpiritFrame f;if(!proto::decode(msg,f))return coop::leave("invalid autonomous frame");
+        if(f.context.epoch==g_epoch&&f.context.map==g_host_map&&f.context.view==g_host_view)autonomous::receive(f);return;
+    }
     case proto::Msg::LilyCauses: {
         proto::LilyCauses batch;if(!proto::decode(msg,batch))return coop::leave("invalid causal batch");
         if(batch.epoch==g_epoch&&batch.map==g_host_map&&batch.view==g_host_view){causal_api();if(!causality::receive(batch))coop::leave("causal facts invalid or conflicting");}return;
@@ -1052,6 +1057,7 @@ void tick(std::int64_t now_us) {
     auto t2 = clock::now_us();
     send_input();
     follow(now_us);
+    if(!autonomous::client_tick(g_seat,g_host_map,[](std::uint16_t id){return g_names.text(id);}))return coop::leave(autonomous::fault());
     native_lily::client_tick(g_host_map, [](std::uint16_t id) { return g_names.text(id); });
     if (const auto why = native_lily::fault(); !why.empty()) return coop::leave(why);
     auto t3 = clock::now_us();

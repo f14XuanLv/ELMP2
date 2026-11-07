@@ -84,6 +84,8 @@ set(ELMP_MOD_SOURCES
     modes/hunter.cpp
     sdk/sdk.cpp
     coop/client.cpp
+    engine/scene_context.cpp
+    coop/autonomous.cpp
     coop/native_lily.cpp
     coop/command_context.cpp
     coop/lily_events.cpp

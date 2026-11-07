@@ -6,6 +6,7 @@
 
 #include "coop/host.h"
 #include "coop/native_lily.h"
+#include "coop/autonomous.h"
 #include "coop/lily_events.h"
 #include "coop/causality.h"
 #include <unordered_set>
@@ -80,6 +81,7 @@ struct Peer {
     std::uint32_t native_view = 0;
     std::deque<proto::LilyFrame> native_frames;
     std::unordered_set<std::uint64_t> native_roots;
+    std::unordered_map<std::uint32_t,std::int64_t> native_spirit_commands;
     std::unordered_map<std::uint64_t,std::int64_t> native_retired;
 };
 
@@ -845,7 +847,7 @@ void send_snapshots() {
             p.map_sent = v.map;
             p.map_ready = 0;
             ++p.native_view;
-            p.native_frames.clear(); p.native_roots.clear(); p.native_retired.clear(); p.native_map = 0; p.native_builds.fill({});
+            p.native_frames.clear(); p.native_roots.clear(); p.native_retired.clear(); p.native_spirit_commands.clear(); p.native_map = 0; p.native_builds.fill({});
             std::string tag = slot == 0 ? std::string{} : maps::tag_of_seat(p.slot);
             if (slot == 0)
                 if (auto* wl = world::world_loader())
@@ -984,22 +986,40 @@ bool causal_reference(ue::UObject* actor, proto::Cause& fact, std::uint16_t map)
     const auto actual=name(ref->slot?maps::map_id(ref->slot):ue::utf8(world::current_map_id()));if(actual!=map)return false;
     fact.ref_kind=static_cast<std::uint8_t>(ref->kind);fact.ref_id=ref->id;fact.ref_generation=static_cast<std::uint32_t>(ObjHandle::of(actor).serial);return true;
 }
+std::vector<proto::SpiritFrame> g_spirit_frames;
+void spirit_frame(proto::SpiritFrame& f) {
+    std::uint16_t map=0;float offset=0;if(!causal_place(f.context.seat,map,offset))return;f.context.map=map;f.context.position[1]-=offset;if(f.has_follow){f.follow_position[1]-=offset;for(auto i:{1u,7u,10u})f.follow_history[i]-=offset;}
+    if(g_spirit_frames.size()>=2048)return lifecycle_fault("autonomous source frame capacity");g_spirit_frames.push_back(f);
+}
 void flush_native(std::int64_t now) {
     auto facts=causality::take();static std::vector<std::uint8_t> bytes(net::Link::kMaxMessage);
+    // host_tick can create a terminal Spirit frame after the outer Tick's timestamp.
+    // Seal after all capture, including that final frame; an ended stream has no later fence.
+    const auto sealed=static_cast<std::uint32_t>(clock::now_us()/1000);
     for(auto& [id,p]:g_peers){
         if(!p.slot||!p.native_map||p.map_ready!=p.native_map||p.map_sent!=p.native_map)continue;
-        proto::LilyCauses batch;batch.epoch=p.epoch;batch.map=p.native_map;batch.view=p.native_view;batch.fence_ms=static_cast<std::uint32_t>(now/1000);
-        for(const auto& f:facts){if(f.map!=p.native_map||f.seat==p.slot||p.native_builds[f.seat].empty())continue;
+        proto::LilyCauses batch;batch.epoch=p.epoch;batch.map=p.native_map;batch.view=p.native_view;batch.fence_ms=sealed;
+        for(const auto& f:g_spirit_frames)if(f.context.map==p.native_map&&maps::slot_of_seat(f.context.seat)==maps::slot_of_seat(p.slot)){
+            for(const auto& e:f.edges)if(e.kind==0)p.native_spirit_commands[e.sequence]=now;
+            if(p.native_spirit_commands.contains(f.command_sequence))p.native_spirit_commands[f.command_sequence]=now;
+        }
+        std::erase_if(p.native_spirit_commands,[&](const auto& e){return now-e.second>10'000'000;});
+        if(p.native_spirit_commands.size()>4096)return lifecycle_fault("peer autonomous command capacity");
+        for(const auto& f:facts){if(f.map!=p.native_map||(f.domain==0&&(f.seat==p.slot||p.native_builds[f.seat].empty())))continue;
+            if(f.domain==1&&maps::slot_of_seat(f.seat)!=maps::slot_of_seat(p.slot))continue;
+            if(f.domain==1&&f.kind==proto::CauseKind::Root&&!p.native_spirit_commands.contains(f.input))continue;
             if(f.kind==proto::CauseKind::Root)p.native_roots.insert(f.root);
             if(p.native_roots.contains(f.root))batch.facts.push_back(f);
         }
         // A fence also advances a live skill after this Lily temporarily stopped consuming input.
-        if(!batch.facts.empty()||!p.native_frames.empty()||!p.native_roots.empty()){
+        if(!batch.facts.empty()||!p.native_frames.empty()||!p.native_roots.empty()||!g_spirit_frames.empty()){
             const auto n=proto::encode(batch,bytes);if(!n)return lifecycle_fault("causal batch encoding/capacity");coop::send_reliable(id,std::span(bytes.data(),n));
         }
         for(const auto& f:p.native_frames){const auto n=proto::encode(f,bytes);if(!n)return lifecycle_fault("native Lily frame encoding");coop::send_reliable(id,std::span(bytes.data(),n));}p.native_frames.clear();
+        for(auto f:g_spirit_frames)if(f.context.map==p.native_map&&maps::slot_of_seat(f.context.seat)==maps::slot_of_seat(p.slot)){f.context.epoch=p.epoch;f.context.view=p.native_view;const auto n=proto::encode(f,bytes);if(!n)return lifecycle_fault("autonomous frame encoding");coop::send_reliable(id,std::span(bytes.data(),n));}
         std::erase_if(p.native_roots,[&](auto root){if(causality::root_active(root)){p.native_retired.erase(root);return false;}const auto [it,fresh]=p.native_retired.try_emplace(root,now);if(now-it->second<2'000'000)return false;p.native_retired.erase(it);return true;});
     }
+    g_spirit_frames.clear();
 }
 
 void send_native_builds(std::int64_t now_us) {
@@ -1035,6 +1055,7 @@ void send_native_builds(std::int64_t now_us) {
 void tick(std::int64_t now_us) {
     causality::host_api({name,causal_place,causal_reference});
     if(const auto why=causality::fault();!why.empty())return coop::leave(why);
+    if(!autonomous::host_tick(spirit_frame,name))return coop::leave(autonomous::fault());
     flush_native(now_us);
     if (const auto fault = fx::fault(); !fault.empty()) lifecycle_fault(fault.c_str());
     if (const auto fault = ability::fault(); !fault.empty()) lifecycle_fault(fault.c_str());
@@ -1074,6 +1095,7 @@ void stop() {
     for (auto& [id, p] : g_peers)
         if (p.slot) party::leave(p.slot);
     for (auto& [k, slot] : g_parked) party::leave(slot);
+    g_spirit_frames.clear();autonomous::reset();
     native_lily::host_disable();
 
     presentation::reset();
