@@ -449,6 +449,10 @@ Companion `cp` 基线包含 Actor 世界位置及 pitch/yaw/roll；世界旋转�
 
 2026-11-08 按 [ADR0016](adr/0016-client-menu-clock.md)分离菜单与回放时钟：Client 的管理器/装备菜单只屏蔽本机游戏输入，继续原版远端回放；已核 GameplayStatics 暂停汇点按角色拒绝 Client 的暂停请求，不增大120帧队列或丢弃命令沿。Online 的 Equipment 复用现有菜单/本机P1与 Host 装备请求通路；单机/Host 的暂停保持原意。
 
+2026-11-08 按 [ADR0017](adr/0017-contact-and-spirit-state.md)将自主角色帧推进从CQ局部接缝移至整段原版Spirit.Tick。原版顺序是CQ更新后才消费Actor移动输入、Sample Locomotion及维护寿命；CQ输入与Actor输入不能合并。协议15补独立Actor InputSnapshot与ForcedWalkMode，在原版InputConsume接缝恢复后让原Tick选择移动动画。原CQ hook只保留执行权限，不再维护另一套回放循环。
+
+2026-11-08 按 [ADR0018](adr/0018-persistent-baseline-handoff.md)将持续命令上下文改为按Host激活代次消费：新代次最多接入一次原版开始，匹配已有自然激活时仅建立对应；相同代次不逐帧重启。Host结束仅RequestEnd仍属于该次显式恢复的精确本机激活。恢复成功以原生Start实际接受的token判定，避免将同步开始后正常结束误作从未开始；环境触发的接受决定仍保留，不能仅靠输入重演的假定删除。
+
 2026-11-08 协议14按 [ADR0014](adr/0014-native-presentation-handoff.md)统一 Client 自主 Spirit 的生命周期写者：Start/Commands、主动 Soft/Force 请求只能在 Host 回放作用域执行，原版工厂对未活动对象的初始化保留。Host 原生 SoftDisappear 记录即时软退场沿及连续阶段，Client 经同一原版入口执行，禁止用 ForceDisappear 代替正常软退场清理；已接受软退场后不得被缓冲中较旧的活动帧复活。本机莉莉仍预测输入/动作，自主召唤物等 Host 确认后出现，表现遵守与远端相同契约。具体因果与验收见 [记录](kb/spirit-lifecycle-parity-2026-11-08.md)。
 
 协议12补齐环境感知、Pawn能力通知、原生命令StateTimeline所有权、朝向、独立Spirit/Companion时钟及有限持续命令基线。远端仍关闭目标权限和结算，保留环境传感器；不能以“Host权威”为由关闭全部overlap，也不能提前写入命令运行才应产生的状态。网络消费使用单调墙钟，原版Pawn/World delta单独传递。

@@ -440,6 +440,17 @@ bool feedback_message(std::span<const std::uint8_t> bytes) {
     return false;
 }
 
+bool world_ready();
+std::string feedback_pending(std::span<const std::uint8_t> bytes) {
+    proto::Fx fx; proto::Snd sound;
+    const bool particle = proto::type_of(bytes) == proto::Msg::Fx;
+    if (particle ? !proto::decode(bytes,fx) : !proto::decode(bytes,sound)) return "invalid message";
+    const auto kind=particle?fx.kind:sound.kind;const auto id=particle?fx.net_id:sound.net_id;
+    const auto root=particle?fx.causal_root:sound.causal_root;const auto time=particle?fx.t_ms:sound.t_ms;
+    const auto asset=particle?fx.ps:sound.event;const auto* path=g_names.text(asset);
+    return std::format("{} ref={}:{} asset={} '{}' root={} host_ms={} playback={:.3f} due={} owner={} worldReady={}",particle?"FX":"sound",kind,id,asset,path?*path:"<undefined>",root,time,causality::playback_ms(),!root||causality::event_due(root,time),actor_of(kind,id,true,true)!=nullptr,world_ready());
+}
+
 void clear_events() {
     g_ev_retry.clear();
     for (auto& [id, e] : g_fx_live) fx::retire(e.psc.get());
@@ -715,13 +726,13 @@ void retry_events(std::int64_t now_us) {
             g_ev_retry.push_back(std::move(e));
             continue;
         }
+        // A deadline bounds an unresolved dependency, not a message that is ready now.
+        // Resolve every event after a long frame, including feedback and FX stops.
+        if (handle_event(e.msg) == EvResult::Done) {
+            ++g_ev_retried;
+            continue;
+        }
         if (now_us > e.deadline) {
-            // A long frame can carry us past the deadline after the original family has already
-            // ended, or after the exact child became available. Resolve that fact before failing.
-            if (proto::type_of(e.msg) == proto::Msg::ChildStop && handle_event(e.msg) == EvResult::Done) {
-                ++g_ev_retried;
-                continue;
-            }
             ++g_ev_absent;
             if (is_reaction) {
                 ++g_reaction_failed, g_reaction_failure = "authoritative reaction context timed out";
@@ -731,15 +742,15 @@ void retry_events(std::int64_t now_us) {
                 ++g_child_failed, g_event_failure = "authoritative child stop context timed out";
             if (proto::type_of(e.msg) == proto::Msg::Act)
                 g_event_failure = "authoritative ability launch context timed out";
-            if (feedback_message(e.msg)) g_event_failure = "authoritative feedback context timed out";
-            if (proto::type_of(e.msg) == proto::Msg::FxStop) g_event_failure = "authoritative FX stop context timed out";
+            if (feedback_message(e.msg)) g_event_failure = "authoritative feedback context timed out: " + feedback_pending(e.msg);
+            if (proto::type_of(e.msg) == proto::Msg::FxStop) {
+                proto::FxStop stop;proto::decode(e.msg,stop);
+                g_event_failure=std::format("authoritative FX stop context timed out: seq={} host_ms={} playback={:.3f} live={}",stop.seq,stop.t_ms,causality::playback_ms(),g_fx_live.contains(stop.seq));
+            }
             continue;
         }
-        if (handle_event(e.msg) == EvResult::Retry) {
-            reaction_waiting |= is_reaction;
-            g_ev_retry.push_back(std::move(e));
-        }
-        else ++g_ev_retried;
+        reaction_waiting |= is_reaction;
+        g_ev_retry.push_back(std::move(e));
     }
 }
 
@@ -754,7 +765,9 @@ void on_connected(std::uint32_t) {
         b.spirits = prof->spirits;
         b.summon_set = prof->summon_set;
         if (prof->passives && prof->passives->equipped) b.passives = core::profile::Passives{prof->passives->equipped, std::nullopt, std::nullopt};
-        root.set("build", core::profile::to_json(b));
+        auto build = core::profile::to_json(b);
+        g_equip_sent = json::dump(build, 0);
+        root.set("build", std::move(build));
     }
     std::vector<std::uint8_t> big(proto::kMaxJson + 64);
     if (const auto n = proto::encode(proto::Msg::Build, proto::Json{json::dump(root, 0)}, big)) coop::send_reliable(0, std::span(big.data(), n));
@@ -963,7 +976,6 @@ void equip_poll(std::int64_t now_us) {
     if (!every.due(now_us)) return;
     auto cur = equipment_json();
     if (cur.empty()) return;
-    if (g_equip_sent.empty()) return void(g_equip_sent = cur); // the Build already carried this one
     if (cur == g_equip_sent) return;
     g_equip_sent = cur;
     std::vector<std::uint8_t> big(proto::kMaxJson + 64);

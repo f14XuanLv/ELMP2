@@ -46,6 +46,8 @@ bool g_enabled = false, g_tracing = false;
 std::string g_fault;
 std::uint64_t g_next = 0, g_starts = 0, g_ends = 0, g_baselines = 0, g_expired = 0;
 std::uint64_t g_restored = 0, g_restore_ends = 0;
+struct RestoreAttempt { ObjHandle pawn, cls; std::uint64_t token=0; };
+RestoreAttempt* g_restore_attempt=nullptr; // synchronous game-thread scope; never retained after restore
 RC::Unreal::Hook::GlobalCallbackId g_post{};
 bool g_post_live = false;
 using Start = void(__fastcall*)(ue::UObject*);
@@ -144,6 +146,8 @@ void __fastcall start(ue::UObject* command) {
     autonomous::command_started(command, g_schema.pawn.object(command));
     Active a;
     const bool tracked = insert(command, a);
+    if(tracked&&g_restore_attempt&&g_restore_attempt->pawn==a.pawn&&g_restore_attempt->cls.get()==command->GetClassPrivate())
+        g_restore_attempt->token=a.token;
     g_start(command);
     if (tracked) {
         const auto i = g_active.find(ObjHandle::of(command));
@@ -256,8 +260,16 @@ std::uint64_t restore(ue::UObject* pawn,ue::UObject* type,std::uint8_t direction
     if(!eligible(cdo)){fail("Host persistent command is not restorable from its native data");return 0;}
     const auto* s=core::schema::script();auto* queue=s&&pawn?s->zc_command_queue.object(pawn):nullptr;
     if(!queue||!reflect::Frame(g_schema.clear).invoke(queue)){fail("persistent command queue unavailable");return 0;}
+    RestoreAttempt attempt{ObjHandle::of(pawn),ObjHandle::of(type)};
+    struct Scope {RestoreAttempt* previous=g_restore_attempt;Scope(RestoreAttempt& a){g_restore_attempt=&a;}~Scope(){g_restore_attempt=previous;}} scope(attempt);
+    const auto before_starts=g_starts,before_ends=g_ends;
     reflect::Frame add(g_schema.add);if(!add.arg(0,direction).arg(1,button).arg(2,type).invoke(queue)||add.ret<std::int32_t>()<0){fail("persistent command could not enter native queue");return 0;}
-    auto result=persistent(pawn);if(result.cls!=type){fail("native persistent command did not start");return 0;}++g_restored;return result.token;
+    if(!attempt.token){
+        reflect::Frame current(g_schema.current);auto* cmd=current.invoke(queue)?current.ret<ue::UObject*>():nullptr;
+        auto* action=cmd?g_schema.action.object(cmd):nullptr;
+        fail(std::format("native persistent command did not start: requested={} pawn={} id={} current={} result={} starts={} ends={}",log::utf8(type->GetPathName()),log::utf8(pawn->GetFullName()),add.ret<std::int32_t>(),action?log::utf8(action->GetClassPrivate()->GetPathName()):"<none>",cmd?g_schema.result.read<std::uint8_t>(cmd):0,g_starts-before_starts,g_ends-before_ends));return 0;
+    }
+    ++g_restored;return attempt.token; // the original zero-delta update may already have ended it
 }
 void end_restored(ue::UObject* pawn,std::uint64_t token) {
     auto* command=current_action(pawn);auto it=g_active.find(ObjHandle::of(command));

@@ -31,7 +31,9 @@ namespace p=net::proto;
 using O=ue::UObject;using V=std::array<float,3>;
 struct Schema {
  ObjHandle spirit,ai,follow_class,anchor_class,summoner_class,summon_class;
- reflect::PropRef ai_class,queue_pawn,command_pawn,snapshot,brain,scale,velocity,spirit_queue,spirit_locomotion,spirit_class;
+ reflect::PropRef ai_class,queue_pawn,command_pawn,snapshot,brain,scale,velocity,spirit_queue,spirit_locomotion,spirit_class,spirit_input,actor_snapshot,forced_walk;
+ reflect::FuncRef set_forced_walk;
+ reflect::FuncRef pending_input,consume_move,add_move;
  reflect::FuncRef summoner,active,get_spirit,get_command,add,clear,request_end,stop_logic,running,disappear,face,loc,rotation,set_loc,set_rotation,world_delta,direction,button;
  ObjHandle statics;
  reflect::FuncRef component,follow_get,follow_set,follow_clear,follow_enabled,scene_position,scene_rotation,scene_scale,set_scale,hidden,collision,tick;
@@ -53,6 +55,7 @@ struct Role {
  std::deque<p::SpiritFrame> frames;
  std::deque<FollowStep> follow_steps;
  float elapsed=0,rate=1,world_rate=1;
+ input::InputSnapshot actor_input;
  unsigned borrowed=0;
  std::string waiting_for;
 };
@@ -67,6 +70,7 @@ std::uint32_t next_role=0,next_sequence=0;
 std::uint64_t captured=0,received=0,played=0,starts=0,ends=0,bindings=0,paused_brains=0,removed=0,starved=0,anchors_created=0,anchors_removed=0,follow_played=0,unexpected_starts=0;
 std::string failure;
 using Update=void(__fastcall*)(O*,float);Update original_update=nullptr;
+using SpiritTick=void(__fastcall*)(O*,float);SpiritTick original_tick=nullptr;
 using FollowTick=void(__fastcall*)(O*,float,std::int32_t,void*);FollowTick original_follow=nullptr;
 using SpiritStart=std::uintptr_t(__fastcall*)(O*,O*);
 bool replaying=false;
@@ -141,6 +145,9 @@ void capture(Role& r,float dt,bool active,bool decision=false){
  reflect::Frame enabled(g.follow_enabled);
  if(scene&&enabled.invoke(follow)&&enabled.ret<bool>()){reflect::Frame pos(g.scene_position),rot(g.scene_rotation),scale(g.scene_scale);if(pos.invoke(scene)&&rot.invoke(scene)&&scale.invoke(scene)){f.has_follow=true;f.follow_position=pos.ret<V>();f.follow_rotation=rot.ret<V>();f.follow_scale=scale.ret<V>();f.follow_velocity=g.scene_velocity.read<V>(scene);for(unsigned i=0;i<4;++i)std::memcpy(f.follow_history.data()+3*i,reinterpret_cast<std::uint8_t*>(follow)+g.history[i],12);}}
  if(auto* queue=r.queue.get()){auto in=g.snapshot.read<input::InputSnapshot>(queue);c.input={in.input_x,in.input_y,in.right_x,in.right_y,in.move_x,in.move_y,in.move_z};c.direction=in.direction;c.flags=static_cast<std::uint16_t>(in.flags&input::kCommandMask);c.raw=static_cast<std::uint16_t>(in.raw&input::kCommandMask);}
+ if(auto* component=g.spirit_input.object(a)){auto in=g.actor_snapshot.read<input::InputSnapshot>(component);f.actor_input={in.input_x,in.input_y,in.right_x,in.right_y,in.move_x,in.move_y,in.move_z};f.actor_direction=in.direction;f.actor_flags=static_cast<std::uint16_t>(in.flags&input::kCommandMask);f.actor_raw=static_cast<std::uint16_t>(in.raw&input::kCommandMask);}
+ if(loco)f.forced_walk=g.forced_walk.read<std::uint8_t>(loco);
+ {reflect::Frame pending(g.pending_input);if(!pending.invoke(a)){fail("autonomous Pawn movement input unavailable");return;}f.movement_input=pending.ret<V>();}
  f.role=r.id;f.episode=r.episode;f.summon_input=r.summon_input;f.cls=r.class_id;f.summon=r.summon_id;f.active=active;f.actor_scale=g.scale.read<float>(a);f.edges=std::move(r.edges);r.edges.clear();
  // A late join borrows only current visual definition; it must not re-launch past projectiles.
  f.command_sequence=r.command.valid()?r.sequence:0;
@@ -224,7 +231,8 @@ void context(Role& r,const p::SpiritFrame& f){
  auto* a=r.actor.get();const auto* s=core::schema::script();if(!a||!s)return;
  if(auto at=core::location(a)){const float error=std::hypot(at->y-f.context.position[1],at->z-f.context.position[2]);corrections.add(error);if(error>.05f)reflect::Frame(g.set_loc).arg(0,f.context.position).arg_bool(1,false).arg_bool(3,false).invoke(a);}
  auto* move=s->char_movement.object(a);if(move){*g.velocity.at<V>(move)=f.context.velocity;if(s->cm_mode.read<std::uint8_t>(move)!=f.context.mode)reflect::Frame(s->cm_set_mode).arg(0,f.context.mode).arg(1,f.context.custom_mode).invoke(move);}
- auto* loco=g.spirit_locomotion.object(a);if(loco)reflect::Frame(g.face).arg_bool(0,f.context.facing==2).invoke(loco);
+ auto* loco=g.spirit_locomotion.object(a);if(loco){reflect::Frame(g.face).arg_bool(0,f.context.facing==2).invoke(loco);reflect::Frame(g.set_forced_walk).arg(0,f.forced_walk).invoke(loco);}
+ const auto& in=f.actor_input;r.actor_input={};r.actor_input.input_x=in[0];r.actor_input.input_y=in[1];r.actor_input.right_x=in[2];r.actor_input.right_y=in[3];r.actor_input.move_x=in[4];r.actor_input.move_y=in[5];r.actor_input.move_z=in[6];r.actor_input.direction=f.actor_direction;r.actor_input.flags=f.actor_flags;r.actor_input.raw=f.actor_raw;
  follow_context(r,f);
  auto* q=r.queue.get();if(q){input::InputSnapshot in;const auto& v=f.context.input;in.input_x=v[0];in.input_y=v[1];in.right_x=v[2];in.right_y=v[3];in.move_x=v[4];in.move_y=v[5];in.move_z=v[6];in.direction=f.context.direction;in.flags=f.context.flags;in.raw=f.context.raw;*g.snapshot.at<input::InputSnapshot>(q)=in;}
 }
@@ -253,10 +261,16 @@ void __fastcall update(O* queue,float dt){
  // the original enqueue, not another consumption of the still-current network frame.
  if(replaying)return original_update(queue,dt);
  auto* pawn=g.queue_pawn.object(queue);auto* r=role_of(pawn);
- if(sink){if(r&&is_active(pawn)&&(dt>0||world_dt(pawn)*g.scale.read<float>(pawn)<.000001f))capture(*r,dt,true);return original_update(queue,dt);}
+ if(sink)return original_update(queue,dt);
  if(!own_seat||!eligible_impl(pawn))return original_update(queue,dt);
- if(!r||!r->bound)return; // a local summon has not been accepted by Host yet
- if(r->updating)return original_update(queue,dt);
+ if(r&&r->bound&&r->updating)original_update(queue,dt);
+}
+void __fastcall spirit_tick(O* pawn,float dt){
+ if(!ue::on_game_thread()||!g.ready())return original_tick(pawn,dt);
+ if(sink){original_tick(pawn,dt);if(auto* r=role_of(pawn);r&&is_active(pawn)&&(dt>0||world_dt(pawn)*g.scale.read<float>(pawn)<.000001f))capture(*r,dt,true);return;}
+ if(!own_seat||!eligible_impl(pawn))return original_tick(pawn,dt);
+ auto* r=role_of(pawn);if(!r||!r->bound)return;
+ if(r->updating)return;
  struct Updating { bool& flag;explicit Updating(bool& f):flag(f){flag=true;}~Updating(){flag=false;} } scope(r->updating);
  if(r->frames.empty()){*g.scale.at<float>(pawn)=0;++starved;return;}
  float queued=-r->elapsed;for(const auto& f:r->frames)queued+=f.context.step;buffer.add(queued*1000);
@@ -275,7 +289,9 @@ void __fastcall update(O* queue,float dt){
   if(f.decision_only){r->frames.pop_front();++played;continue;}
   const float span=std::min(budget,c.step-r->elapsed);if(span<=0)break;
   const bool first=r->elapsed==0;
-  original_update(queue,c.dt*(span/c.step));const float component_delta=c.world_dt*(span/c.step)*f.actor_scale;total_world+=component_delta;
+  reflect::Frame(g.consume_move).invoke(pawn);
+  reflect::Frame(g.add_move).arg(0,f.movement_input).arg(1,1.0f).arg_bool(2,true).invoke(pawn);
+  original_tick(pawn,c.dt*(span/c.step));const float component_delta=c.world_dt*(span/c.step)*f.actor_scale;total_world+=component_delta;
   if(f.has_follow){if(r->follow_steps.size()>=64){fail("autonomous FollowTarget step capacity");break;}r->follow_steps.push_back({f,component_delta,first});}
   r->elapsed+=span;budget-=span;
   if(r->elapsed>=c.step-.000001f){r->frames.pop_front();r->elapsed=0;++played;}
@@ -286,7 +302,10 @@ bool install(){
  if(g.ready())return true;
  auto* spirit=reflect::find_class(L"/Script/Zenith.ZenithSpirit");reflect::Resolver sp("autonomous Spirit",spirit);g.summoner=sp.func(L"GetSummoner",0);g.active=sp.func(L"IsActive",0);g.disappear=sp.func(L"ForceDisappear",0);
  g.spirit_queue=sp.prop(L"CommandQueueComponent",reflect::Kind::Object);g.spirit_locomotion=sp.prop(L"LocomotionComponent",reflect::Kind::Object);
+ g.spirit_input=sp.prop(L"ZenithInputComponent",reflect::Kind::Object);
+ reflect::Resolver input("autonomous actor input",reflect::find_class(L"/Script/Zenith.ZenithInputComponent"));g.actor_snapshot=input.prop(L"InputSnapshot",reflect::Kind::Struct,40);
  reflect::Resolver pawn("autonomous Pawn",reflect::find_class(L"/Script/Engine.Pawn"));g.ai_class=pawn.prop(L"AIControllerClass",reflect::Kind::Class);
+ g.pending_input=pawn.func(L"GetPendingMovementInputVector",0);g.consume_move=pawn.func(L"ConsumeMovementInputVector",0);g.add_move=pawn.func(L"AddMovementInput",3);
  reflect::Resolver cq("autonomous queue",reflect::find_class(L"/Script/Zenith.CommandQueueComponent"));g.queue_pawn=cq.prop(L"Pawn",reflect::Kind::Object);g.snapshot=cq.prop(L"CurrentInputSnapshot",reflect::Kind::Struct,40);g.get_command=cq.func(L"GetOrCreateCommandAction",1);g.add=cq.func(L"AddNewImmediateCommand",3);g.clear=cq.func(L"ClearCommandBuffer",0);auto tick=cq.func(L"UpdateCommands",1);
  reflect::Resolver ca("autonomous command",reflect::find_class(L"/Script/Zenith.CommandAction"));g.command_pawn=ca.prop(L"Pawn",reflect::Kind::Object);g.direction=ca.func(L"GetInvokedByDirectionInputType",0);g.button=ca.func(L"GetInvokedByInputType",0);
  g.request_end=ca.func(L"RequestEnd",1);
@@ -305,12 +324,14 @@ bool install(){
  g.scene_scale=scene.func(L"K2_GetComponentScale",0);
  reflect::Resolver m("autonomous motion",reflect::find_class(L"/Script/Engine.CharacterMovementComponent"));g.velocity=m.prop(L"Velocity",reflect::Kind::Struct,12);
  reflect::Resolver l("autonomous facing",reflect::find_class(L"/Script/Zenith.LocomotionComponent"));g.face=l.func(L"SetFacing",1);
+ g.forced_walk=l.prop(L"ForcedWalkMode",reflect::Kind::Any,1);g.set_forced_walk=l.func(L"SetForcedWalkMode",1);
  reflect::Resolver gs("autonomous world delta",reflect::find_class(L"/Script/Engine.GameplayStatics"));g.world_delta=gs.func(L"GetWorldDeltaSeconds",1);g.statics=ObjHandle::of(reflect::find_object(L"/Script/Engine.Default__GameplayStatics"));
- for(auto* v:{&sp,&pawn,&cq,&ca,&summon,&ai,&brain,&a,&m,&l,&gs,&follow,&scene,&comp})if(!v->ok()){fail(v->failure());return false;}
+ for(auto* v:{&sp,&pawn,&cq,&ca,&summon,&ai,&brain,&a,&m,&l,&gs,&follow,&scene,&comp,&input})if(!v->ok()){fail(v->failure());return false;}
  auto* exec=reinterpret_cast<const std::uint8_t*>(tick.fn->GetFuncPtr());if(!exec||exec[0x70]!=0xE8){fail("autonomous CQ exec call shape");return false;}std::int32_t rel=0;std::memcpy(&rel,exec+0x71,4);auto* target=const_cast<std::uint8_t*>(exec+0x75+rel);
  if(target!=preflight::address("CommandQueueUpdateNative")){fail("autonomous CQ target identity");return false;}
  const auto offset=binary_checks::offset("ZenithSpirit.sourceCommand");if(!offset||*offset+8>reflect::properties_size(spirit)){fail("autonomous source layout unavailable");return false;}g.source_offset=static_cast<int>(*offset);
  if(!original_update&&!hook::install_address("CommandQueueUpdateNative",target,reinterpret_cast<void*>(&update),reinterpret_cast<void**>(&original_update),"reflect")){fail("autonomous CQ hook unavailable");return false;}
+ if(!original_tick&&!hook::install_manifest("SpiritCharacterTick",reinterpret_cast<void*>(&spirit_tick),reinterpret_cast<void**>(&original_tick))){fail("autonomous Spirit Tick hook unavailable");return false;}
  if(!original_follow&&!hook::install_manifest("FollowTargetTickNative",reinterpret_cast<void*>(&follow_tick),reinterpret_cast<void**>(&original_follow))){fail("autonomous FollowTarget hook unavailable");return false;}
  if(!original_soft&&!hook::install_manifest("SpiritSoftDisappearNative",reinterpret_cast<void*>(&soft_disappear),reinterpret_cast<void**>(&original_soft))){fail("autonomous soft lifecycle hook unavailable");return false;}
  if(!original_force&&!hook::install_manifest("SpiritForceDisappearNative",reinterpret_cast<void*>(&force_disappear),reinterpret_cast<void**>(&original_force))){fail("autonomous force lifecycle hook unavailable");return false;}
@@ -321,6 +342,13 @@ bool install(){
 }
 }
 bool eligible(O* a){return g.ready()&&eligible_impl(a);}
+bool consume_input(O* a){
+ if(sink||!own_seat)return false;
+ auto* r=role_of(a);if(!r||!r->bound||!r->updating)return false;
+ if(auto* component=g.spirit_input.object(a))*g.actor_snapshot.at<input::InputSnapshot>(component)=r->actor_input;
+ else fail("autonomous original input component unavailable");
+ return true;
+}
 bool defer_start(O* a){if(!deferred(a))return false;++starts_deferred;audit("start.deferred",a);return true;}
 O* summoner(O* a){return g.ready()?get_summoner(a):nullptr;}
 bool source(O* a,native_lily::Source& out){if(auto* r=owner_role(a)){out={r->seat,r->generation,r->sequence,true,1};return true;}return false;}

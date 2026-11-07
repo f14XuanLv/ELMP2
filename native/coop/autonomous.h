@@ -14,6 +14,7 @@ bool owns(ue::UObject*);
 ue::UObject* summoner(ue::UObject*);
 bool eligible(ue::UObject*);
 bool defer_start(ue::UObject*); // Client AI Spirit lifecycle has one Host-authorized writer
+bool consume_input(ue::UObject*); // restores the Actor input at its original native consumption boundary
 void reset();
 std::string fault();
 std::string describe();

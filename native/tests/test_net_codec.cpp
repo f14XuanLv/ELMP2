@@ -22,6 +22,7 @@ TEST_MAIN({
         a.layer=3;a.animation={14,15,1,.2f,0,0,.1f};
         a.has_follow=true;a.follow_position={1,-200,500};a.follow_rotation={0,90,0};a.follow_velocity={0,-300,20};a.decision_only=true;c.dt=0;
         a.follow_scale={1,2,3};a.follow_history={1,-200,3,.5f,1,2,0,-300,20,0,-301,19};a.soft_ending=true;
+        a.actor_input={1,0,1,0,0,1,0};a.movement_input={0,2,0};a.actor_direction=4;a.actor_flags=a.actor_raw=1<<3;a.forced_walk=2;
         std::array<std::uint8_t,1024> wire{};auto n=encode(a,wire);CHECK(n&&decode(std::span(wire.data(),n),b)&&a==b);
         for(std::size_t cut=0;cut<n;++cut)CHECK(!decode(std::span(wire.data(),cut),b));
         CHECK(!decode(std::span(wire.data(),n+1),b));CHECK(!encode(a,std::span(wire.data(),n-1)));
@@ -29,6 +30,11 @@ TEST_MAIN({
         bad=a;bad.actor_scale=std::numeric_limits<float>::quiet_NaN();CHECK(!encode(bad,wire));bad=a;bad.animation.time=std::numeric_limits<float>::infinity();CHECK(!encode(bad,wire));
         bad=a;bad.follow_history[4]=std::numeric_limits<float>::quiet_NaN();CHECK(!encode(bad,wire));
         bad=a;bad.episode=0;CHECK(!encode(bad,wire));bad=a;bad.edges[0].reason=7;CHECK(!encode(bad,wire));
+        bad=a;bad.actor_input[0]=std::numeric_limits<float>::quiet_NaN();CHECK(!encode(bad,wire));
+        bad=a;bad.movement_input[1]=std::numeric_limits<float>::infinity();CHECK(!encode(bad,wire));
+        bad=a;bad.actor_raw=1;CHECK(!encode(bad,wire));bad=a;bad.actor_direction=9;CHECK(!encode(bad,wire));bad=a;bad.forced_walk=4;CHECK(!encode(bad,wire));
+        n=encode(a,wire);wire[n-1]=4;CHECK(!decode(std::span(wire.data(),n),b));
+        n=encode(a,wire);Writer input_patch(std::span(wire).subspan(n-34));input_patch.f32(std::numeric_limits<float>::infinity());CHECK(!decode(std::span(wire.data(),n),b));
     }
     { // Reliable original input history: bounded states, complete frames, no NaN or trailing bytes.
         using namespace elmp::net::proto;

@@ -14,6 +14,10 @@ std::size_t encode(const SpiritFrame& m,std::span<std::uint8_t> out) {
     for(float f:{a.time,a.start,a.end,a.blend}){if(!std::isfinite(f)||f<0)return 0;w.f32(f);}
     w.u8(m.has_follow?1:0);for(auto* v:{&m.follow_position,&m.follow_rotation,&m.follow_velocity,&m.follow_scale})for(float f:*v){if(!std::isfinite(f))return 0;w.f32(f);}
     for(float f:m.follow_history){if(!std::isfinite(f))return 0;w.f32(f);}
+    for(float f:m.movement_input){if(!std::isfinite(f)||std::abs(f)>1e6f)return 0;w.f32(f);}
+    if(m.actor_direction>8||m.forced_walk>3||(m.actor_flags&~0x3FEu)||(m.actor_raw&~0x3FEu))return 0;
+    for(float f:m.actor_input){if(!std::isfinite(f)||f<-1.01f||f>1.01f)return 0;w.f32(f);}
+    w.u16(m.actor_flags);w.u16(m.actor_raw);w.u8(m.actor_direction);w.u8(m.forced_walk);
     return w.ok()?w.size():0;
 }
 bool decode(std::span<const std::uint8_t> in,SpiritFrame& m) {
@@ -24,6 +28,7 @@ bool decode(std::span<const std::uint8_t> in,SpiritFrame& m) {
     auto& a=m.animation;m.layer=r.u8();a.generation=r.u32();a.animation=r.u16();a.flags=r.u8();a.time=r.f32();a.start=r.f32();a.end=r.f32();a.blend=r.f32();
     const auto follow=r.u8();if(follow>1)return false;m.has_follow=follow!=0;for(auto* v:{&m.follow_position,&m.follow_rotation,&m.follow_velocity,&m.follow_scale})for(float& f:*v)f=r.f32();
     for(float& f:m.follow_history)f=r.f32();
+    for(float& f:m.movement_input)f=r.f32();for(float& f:m.actor_input)f=r.f32();m.actor_flags=r.u16();m.actor_raw=r.u16();m.actor_direction=r.u8();m.forced_walk=r.u8();
     std::array<std::uint8_t,1024> scratch{};return r.done()&&encode(m,scratch)!=0;
 }
 namespace {

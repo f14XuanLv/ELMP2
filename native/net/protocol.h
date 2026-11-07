@@ -199,6 +199,10 @@ struct SpiritEdge {
 };
 struct SpiritFrame {
     LilyFrame context;
+    std::array<float,7> actor_input{}; // InputComponent, distinct from CommandQueue input in context
+    std::array<float,3> movement_input{}; // pending Pawn input consumed separately by CharacterMovement
+    std::uint16_t actor_flags = 0, actor_raw = 0;
+    std::uint8_t actor_direction = 0, forced_walk = 0;
     std::uint32_t role = 0, episode = 0, summon_input = 0, command_sequence = 0;
     std::uint16_t cls = 0, summon = 0;
     float actor_scale = 1;

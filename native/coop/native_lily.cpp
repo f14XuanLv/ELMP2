@@ -93,6 +93,7 @@ struct Replica {
     std::uint32_t received = 0, consumed = 0, generation = 0;
     std::uint32_t playing = 0;
     std::uint64_t persistent_host = 0, persistent_local = 0;
+    bool persistent_restored = false;
     std::int64_t tick_us = 0;
     proto::LilyFrame last;
     std::string build, applied;
@@ -202,6 +203,7 @@ void apply_clocks(Replica& r,const proto::LilyFrame& f) {
     });
 }
 void consumed(ue::UObject* pawn, const input::InputSnapshot& value) {
+    if (autonomous::consume_input(pawn)) return;
     if (!g_sink || !g_name || !g_fault.empty()) return;
     const auto seat = seat_of(pawn);
     const auto* s = core::schema::script();
@@ -301,14 +303,15 @@ void host_disable() { input::pad::observe(nullptr); g_sink = nullptr; g_name = n
 namespace { bool install_tick(); }
 std::string bind(std::uint16_t seat, std::int64_t slot, ue::UObject* pawn) {
     if (!pawn || !resolve()) return g_fault.empty() ? "native Lily pawn missing" : g_fault;
-    if (!install_tick()) return "native Lily original Tick preflight failed";
+    if (!install_tick() || !input::pad::observe(consumed)) return "native Lily original Tick/input preflight failed";
     if (!ability::client_native_enable()) return "native Lily ability lifecycle hooks unavailable";
     if (!causality::enable()) return "native Lily causality hooks unavailable";
     if (!command_context::enable()) return "native command ownership hooks unavailable";
     auto& r = g_replicas[seat];
     const auto h = ObjHandle::of(pawn);
     if (r.pawn == h) return {};
-    r.pawn = h; r.slot = slot; r.applied.clear(); r.started = false; r.ready = false; r.elapsed = 0; r.rate = 1; r.pending.clear();
+    r.pawn = h; r.slot = slot; r.applied.clear(); r.started = false; r.ready = false; r.elapsed = 0; r.rate = 1; r.playing = 0; r.pending.clear();
+    r.persistent_host=r.persistent_local=0;r.persistent_restored=false;
     const auto* s = core::schema::script();
     if (!s) return "native Lily core schema";
     r.controller = ObjHandle::of(s->pawn_controller.object(pawn));
@@ -396,23 +399,25 @@ void execute_frame(Replica& r, const Replica::Step& step) {
     if (!g_fault.empty()) return;
     r.playing = f.seq;
     ExecutionScope source_scope(pawn);
+    // Host acceptance is an activation edge, not a per-frame survival condition.
+    // A native zero-delta update can already complete that same activation.
     if(step.begin){
-        if(f.persistent_class){
+        if(f.persistent_class&&r.persistent_host!=f.persistent_token){
             auto& weak=g_state_classes[f.persistent_class];auto* cls=weak.get();
             if(!cls){const auto* name=g_text(f.persistent_class);if(name)cls=reflect::load_object(log::wide(*name));if(cls)weak=ObjHandle::of(cls);}
             if(!cls)return fail("persistent command class unavailable");
+            if(r.persistent_restored)command_context::end_restored(pawn,r.persistent_local);
             const auto local=command_context::persistent(pawn);
-            const bool same_host=r.persistent_host==f.persistent_token;
-            const bool running=local.cls==cls&&local.token&&(same_host?local.token==r.persistent_local:local.token!=r.persistent_local);
-            if(running)r.persistent_local=local.token;
-            else {
+            r.persistent_restored=local.cls!=cls||!local.token||local.token==r.persistent_local;
+            if(r.persistent_restored){
                 RestoreScope origin(pawn,{f.seat,f.generation,f.persistent_input,true});
                 r.persistent_local=command_context::restore(pawn,cls,f.persistent_direction,f.persistent_button);
                 if(!r.persistent_local)return;
-            }
+            }else r.persistent_local=local.token;
             r.persistent_host=f.persistent_token;
-        } else if(r.persistent_host){
-            command_context::end_restored(pawn,r.persistent_local);r.persistent_host=r.persistent_local=0;
+        }else if(!f.persistent_class&&r.persistent_host){
+            if(r.persistent_restored)command_context::end_restored(pawn,r.persistent_local);
+            r.persistent_host=0;r.persistent_restored=false;
         }
     }
     g_original_tick(pawn, f.dt);
