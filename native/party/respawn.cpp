@@ -121,7 +121,6 @@ void patrol(std::int64_t now_us) {
     if (lifecycle::state() != lifecycle::State::Settled || transit::active()) return;
     auto* p1 = world::p1_pawn();
     if (!p1) return;
-    core::permission::tick();
     rules::tick();
     const auto p1_pos = core::location(p1);
     const bool p1_alive = [&] {

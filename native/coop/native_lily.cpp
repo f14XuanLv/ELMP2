@@ -583,6 +583,7 @@ bool source(ue::UObject* object, Source& out) {
     for (int depth = 0; object && depth < 8; ++depth) {
         if(autonomous::source(object,out))return true;
         if(g_restore_pawn.valid()&&object==g_restore_pawn.get()){out=g_restore_source;return true;}
+        if(command_context::source(object,out))return true;
         if (g_sink) {
             for (std::uint16_t seat = 1; seat <= 8; ++seat) {
                 auto* pawn = seat == 1 ? world::p1_pawn() : core::pawn(seat);

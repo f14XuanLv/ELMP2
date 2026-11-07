@@ -31,6 +31,7 @@ double playback_ms();
 bool target_owned(ue::UObject* actor);
 bool allow_stop(ue::UObject* actor, const ability::Identity& id, std::uint8_t reason);
 bool event_due(std::uint64_t root, std::uint32_t host_ms);
+std::string pending_root(std::uint64_t root);
 std::uint64_t current_root();
 std::uint16_t source_seat(std::uint64_t root);
 std::uint64_t wire_root(std::uint64_t local_root);

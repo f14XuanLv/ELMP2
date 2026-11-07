@@ -5,10 +5,14 @@
 #include <string_view>
 #include <vector>
 
+namespace elmp::coop::native_lily { struct Source; }
+
 namespace elmp::coop::command_context {
 bool enable();
 void reset();
 void forget(ue::UObject* pawn);
+bool source(ue::UObject* pawn, native_lily::Source& out); // synchronous original command execution
+bool retained_source(const native_lily::Source&);
 std::vector<ue::UObject*> owned_states(ue::UObject* pawn);
 struct Persistent {
     ue::UObject* cls = nullptr;

@@ -5,11 +5,12 @@
 // `UpdateOverlapsImpl` adds MoveIgnoreActors to the sweep params, so no overlap starts and the vanilla
 // door / bench never sees the seat (v1 party-facts「切图门」, engine PrimitiveComponent.cpp).
 // Defaults for non-P1 seats (§3 C5): travel off, rest off, trigger.story off, trigger.world on,
-// pickup on, interact on, save off. P1 is not managed — except the explicit map-rule-2 door hold.
+// pickup on, interact on, save off. Host/offline P1 is only gated for map rule 2;
+// Client's physical P1 has no local world authority and is maintained independently of party seats.
 //
 // GateCache (§16.1): per slot {pawn, primitive components, target → ignored}. Invalidation: pawn change
 // (respawn), flag change, registry bucket version (new door / bench streamed in), teardown. Audit: the
-// 500 ms tick compares versions; `elmp gates` lists applied counts.
+// independent core phase compares cached versions; `elmp gates` lists applied counts and Client boundary counters.
 // Targets (registry buckets): travel = BP_WorldTravelVolume_C, rest = BP_Interactable_RestingPoint_C,
 // interact = AInteractable, trigger.story / trigger.world = ATrigger by class
 // (data/gates.json; unlisted = story, reported once). An object in several buckets (a bench is also an
@@ -43,14 +44,17 @@ void hold_p1_doors(bool hold, std::int32_t open_door_index = 0);
 // Guest process (FR-NET-3d): P1 is the presentation of its host seat — it ignores every gate target (doors,
 // benches, interactables, all triggers) and its collect sphere is off, so the local world never runs a
 // vanilla door / bench / trigger / pickup for it; the host does, and the client presents the result.
-void p1_presentation(bool on);
+bool p1_presentation(bool on); // enabling requires the verified native world-interaction boundary
 // party installs "is this slot a remote (network) seat" (core does not know seat sources)
 void set_network_predicate(bool (*is_network)(std::int64_t slot));
 
 void track(std::int64_t slot);  // a seat to manage (join / respawn)
 void forget(std::int64_t slot); // seat left (revokes nothing: the pawn is gone or leaving)
-void tick();                    // 500 ms: re-apply on version / pawn / flag changes
+void tick();                    // owned by core phase, including Clients with no local party seats
 std::string describe();
+#if ELMP_DEV
+std::string probe_local_press(); // call the verified native entry; succeeds only if Client refuses it
+#endif
 
 std::string load(const std::filesystem::path& gates_json); // defaults + trigger class policy; empty = ok
 void install(); // teardown subscription

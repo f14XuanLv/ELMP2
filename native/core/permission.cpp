@@ -4,6 +4,9 @@
 #include "core/schema.h"
 
 #include "engine/lifecycle.h"
+#include "engine/frame.h"
+#include "base/hook.h"
+#include "base/preflight.h"
 #include "engine/reflect.h"
 #include "engine/registry.h"
 #include "engine/world.h"
@@ -88,6 +91,13 @@ bool (*g_network_seat)(std::int64_t) = nullptr;
 bool g_p1_presentation = false; // guest process: P1 is a presentation of the host seat (FR-NET-3d)
 std::int32_t g_p1_open = 0;
 metrics::Counter& c_ignore_calls = metrics::counter("gates.ignore_calls");
+std::uint64_t g_ticks=0,g_p1_rebuilds=0,g_presses_blocked=0;
+using Press=void(__fastcall*)(ue::UObject*);
+Press g_original_press=nullptr;
+void __fastcall press(ue::UObject* actor){
+    if(ue::on_game_thread()&&g_p1_presentation){++g_presses_blocked;return;}
+    g_original_press(actor);
+}
 
 std::vector<ObjHandle> primitives(const schema::Script& s, ue::UObject* pawn) {
     std::vector<ObjHandle> out;
@@ -215,7 +225,7 @@ void set(std::int64_t slot, Gate g, bool allowed) {
 }
 
 bool allows(std::int64_t slot, Gate g) {
-    if (slot == 1) return true;
+    if (slot == 1) return !g_p1_presentation;
     if (g_grant && g_grant(slot, g)) return true;
     const auto it = g_recs.find(slot);
     return it == g_recs.end() ? kDefaults[static_cast<std::size_t>(g)] : it->second.allowed[static_cast<std::size_t>(g)];
@@ -231,7 +241,7 @@ void hold_p1_doors(bool hold, std::int32_t open_door) {
     g_p1_hold = hold;
     g_p1_open = open_door;
     auto& r = g_recs[1];
-    r.managed = hold || !r.applied.empty();
+    r.managed = g_p1_presentation || hold || !r.applied.empty();
     r.dirty = true;
     apply(1, r);
 }
@@ -241,14 +251,16 @@ void set_network_predicate(bool (*is_network)(std::int64_t slot)) {
     for (auto& [slot, r] : g_recs) r.dirty = true;
 }
 
-void p1_presentation(bool on) {
-    if (on == g_p1_presentation) return;
+bool p1_presentation(bool on) {
+    if(on&&!g_original_press&&!hook::install_manifest("InteractablePressInteract",reinterpret_cast<void*>(&press),reinterpret_cast<void**>(&g_original_press)))return false;
+    if (on == g_p1_presentation && (!on || (g_recs.contains(1)&&g_recs[1].managed))) return true;
     g_p1_presentation = on;
     auto& r = g_recs[1];
     r.managed = on || g_p1_hold || !r.applied.empty();
     r.pawn.reset(); // re-resolve the sphere for the new mode
     r.dirty = true;
     apply(1, r);
+    return true;
 }
 
 void track(std::int64_t slot) {
@@ -261,9 +273,22 @@ void track(std::int64_t slot) {
 void forget(std::int64_t slot) { g_recs.erase(slot); }
 
 void tick() {
+    ++g_ticks;
+    if(g_p1_presentation||g_p1_hold){auto& r=g_recs[1];if(!r.managed){r.managed=true;r.dirty=true;++g_p1_rebuilds;}}
     for (auto& [slot, r] : g_recs)
         if (r.managed) apply(slot, r);
 }
+
+#if ELMP_DEV
+std::string probe_local_press(){
+    if(!g_p1_presentation||!g_original_press)return "Client presentation boundary is not armed";
+    for(const auto& e:registry::bucket(registry::Kind::RestingPoint))if(auto* actor=e.handle.get()){
+        auto* entry=preflight::address("InteractablePressInteract");if(!entry)return "native interaction entry not verified";
+        const auto before=g_presses_blocked;reinterpret_cast<Press>(entry)(actor);
+        return g_presses_blocked==before+1?std::string{}:"native interaction boundary did not refuse";
+    }return "no resting point in the loaded world";
+}
+#endif
 
 std::string load(const std::filesystem::path& file) {
     std::string err;
@@ -288,6 +313,7 @@ std::string load(const std::filesystem::path& file) {
 
 std::string describe() {
     std::string out = g_gates_status + "\n";
+    out+=std::format("client presentation={} maintenance={} rebuilt={} localPressBlocked={}\n",g_p1_presentation,g_ticks,g_p1_rebuilds,g_presses_blocked);
     if (!g_unlisted.empty()) {
         out += "unlisted trigger classes (treated as story):";
         for (const auto& c : g_unlisted) out += " " + c;
@@ -305,6 +331,13 @@ std::string describe() {
     return g_recs.empty() ? out + "no gated seats\n" : out;
 }
 
-void install() { lifecycle::on_teardown(on_teardown); }
+void install() {
+    lifecycle::on_teardown(on_teardown);
+    frame::add_phase("core.permission",[](const frame::Tick&){tick();},[]{
+        if(lifecycle::state()!=lifecycle::State::Settled)return false;
+        if(g_p1_presentation||g_p1_hold)return true;
+        return std::any_of(g_recs.begin(),g_recs.end(),[](const auto& e){return e.second.managed;});
+    });
+}
 
 } // namespace elmp::core::permission

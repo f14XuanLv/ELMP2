@@ -448,7 +448,7 @@ std::string feedback_pending(std::span<const std::uint8_t> bytes) {
     const auto kind=particle?fx.kind:sound.kind;const auto id=particle?fx.net_id:sound.net_id;
     const auto root=particle?fx.causal_root:sound.causal_root;const auto time=particle?fx.t_ms:sound.t_ms;
     const auto asset=particle?fx.ps:sound.event;const auto* path=g_names.text(asset);
-    return std::format("{} ref={}:{} asset={} '{}' root={} host_ms={} playback={:.3f} due={} owner={} worldReady={}",particle?"FX":"sound",kind,id,asset,path?*path:"<undefined>",root,time,causality::playback_ms(),!root||causality::event_due(root,time),actor_of(kind,id,true,true)!=nullptr,world_ready());
+    return std::format("{} ref={}:{} asset={} '{}' root={} host_ms={} playback={:.3f} due={} owner={} worldReady={} {}",particle?"FX":"sound",kind,id,asset,path?*path:"<undefined>",root,time,causality::playback_ms(),!root||causality::event_due(root,time),actor_of(kind,id,true,true)!=nullptr,world_ready(),causality::pending_root(root));
 }
 
 void clear_events() {
@@ -812,7 +812,7 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
         g_reaction_last = g_reaction_time = 0;
         g_reaction_anchor = false;
         g_reaction_failure.clear();
-        core::permission::p1_presentation(true);
+        if(!core::permission::p1_presentation(true))return void(coop::leave("Client world-interaction boundary unavailable"));
         if (!fx::client_enable()) return void(coop::leave("native feedback capture/suppression unavailable"));
         log::info("coop: seated as P{} on the host (epoch {})", g_seat, g_epoch);
         break;

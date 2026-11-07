@@ -1,4 +1,5 @@
 #include "coop/causality.h"
+#include "coop/command_context.h"
 #include "coop/ability.h"
 #include "coop/feedback_context.h"
 #include "coop/native_lily.h"
@@ -203,6 +204,7 @@ void ended(ue::UObject*, const ability::Identity& id) {
     }
 }
 bool retained_source(const native_lily::Source& source) {
+    if(command_context::retained_source(source))return true;
     prune_origins();
     return std::any_of(g_spirits.begin(), g_spirits.end(), [&](const auto& p) { const auto& s=p.second.source; return s.seat==source.seat && s.generation==source.generation && s.seq==source.seq && s.domain==source.domain; });
 }

@@ -175,12 +175,14 @@ void client_api(ClientApi a){g_client=a;g_host={};}
 std::vector<p::Cause> take(){auto out=std::move(g_out);g_out.clear();++g_batch;return out;}
 bool root_active(std::uint64_t wire){return ability::has_active_family(wire);}
 bool receive(const p::LilyCauses& b) {
+    bool roots_added=false;
     for(const auto& f:b.facts){
         if(!g_client.text||!g_client.text(f.cls)){fail("causal class name not defined");return false;}
-        if(f.kind==p::CauseKind::Root){const auto* inv=g_client.text(f.invoker);if(!inv)return false;const native_lily::Source s{f.seat,f.generation,f.input,false,f.domain};const auto key=root_key(s,*g_client.text(f.cls),*inv,f.ordinal);if(g_declarations.contains(key))return false;g_declarations[key]=f;}
+        if(f.kind==p::CauseKind::Root){const auto* inv=g_client.text(f.invoker);if(!inv)return false;const native_lily::Source s{f.seat,f.generation,f.input,false,f.domain};const auto key=root_key(s,*g_client.text(f.cls),*inv,f.ordinal);if(g_declarations.contains(key))return false;g_declarations[key]=f;roots_added=true;}
         else if(f.kind==p::CauseKind::Target){auto& q=g_samples[child_key(f.root,f.path)];if(q.size()==128)q.pop_front();q.push_back(f);}
         else {g_records.push_back({f});if(f.kind==p::CauseKind::Query&&f.component){auto seed=f;seed.kind=p::CauseKind::Target;seed.min=seed.range=0;auto& q=g_samples[child_key(f.root,f.path)];if(q.size()==128)q.pop_front();q.push_back(seed);}}
     }
+    if(roots_added)for(auto& [_,r]:g_roots)bind(r);
     g_fence=b.fence_ms;g_fence_received=clock::now_us();return true;
 }
 bool ready(double time) {
@@ -208,6 +210,16 @@ bool allow_stop(UObject*,const ability::Identity& id,std::uint8_t reason){
     }++g_deferred;return false;
 }
 bool event_due(std::uint64_t wire,std::uint32_t time){if(!wire)return true;for(const auto& [_,r]:g_roots)if(r.wire==wire)return time<=g_time;return false;}
+std::string pending_root(std::uint64_t wire){
+    if(!wire)return "no root dependency";
+    for(const auto& [local,r]:g_roots)if(r.wire==wire)return std::format("bound local={} source={}:{}:{} input={} class={} ordinal={}",local,r.source.domain,r.source.seat,r.source.generation,r.source.seq,r.cls,r.ordinal);
+    for(const auto& [_,f]:g_declarations)if(f.root==wire){
+        const auto* cls=g_client.text?g_client.text(f.cls):nullptr;
+        std::string out=std::format("unbound source={}:{}:{} input={} class={} ordinal={}",f.domain,f.seat,f.generation,f.input,cls?*cls:"<undefined>",f.ordinal);unsigned n=0;
+        for(const auto& [local,r]:g_roots)if(!r.wire&&r.source.seat==f.seat&&r.source.generation==f.generation&&cls&&r.cls==*cls&&n++<4)out+=std::format(" candidate(local={},input={},domain={},ordinal={})",local,r.source.seq,r.source.domain,r.ordinal);
+        return out;
+    }return "unknown/retired root";
+}
 std::uint64_t current_root(){
     ability::Identity id;
     if(feedback_context::effect_scope()){

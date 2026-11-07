@@ -187,7 +187,10 @@ void mute_cmd(Args a, std::string& out) {
 
 void progress_cmd(Args, std::string& out) { out += party::progress::describe(); }
 
-void gates_cmd(Args, std::string& out) {
+void gates_cmd(Args a, std::string& out) {
+#if ELMP_DEV
+    if(!a.empty()&&a[0]=="probe-press"){must(core::permission::probe_local_press());line(out,"native Client world interaction refused");}
+#endif
     out += core::permission::describe();
     out += party::rules::describe();
     line(out, party::interact::status());

@@ -20,8 +20,8 @@
 namespace elmp::coop::command_context {
 namespace {
 struct Schema {
-    ObjHandle command_class, timeline_class, entry_class;
-    reflect::PropRef pawn, timeline, entries, state, action, result;
+    ObjHandle command_class, timeline_class, entry_class, queue_class;
+    reflect::PropRef pawn, timeline, entries, state, action, result, command_id, queue_pawn, queued;
     reflect::FuncRef current;
     ObjHandle gameplay_class;
     ObjHandle summon_class;
@@ -32,15 +32,26 @@ struct Schema {
     reflect::FuncRef invoked_direction, invoked_button, elapsed, clear, add, request_end;
     int animation_stride = 0;
     int stride = 0;
-    bool live() const { return command_class.valid() && timeline_class.valid() && entry_class.valid() && current.handle.valid(); }
+    bool live() const { return command_class.valid() && timeline_class.valid() && entry_class.valid() && queue_class.valid() && current.handle.valid(); }
 } g_schema;
 struct Active {
     ObjHandle pawn;
     native_lily::Source source;
     std::uint64_t token = 0;
+    std::uint64_t parent = 0;
     std::vector<ObjHandle> states;
 };
 std::unordered_map<ObjHandle, Active> g_active;
+struct Execution { ObjHandle pawn; native_lily::Source source; std::uint64_t token=0; };
+const Execution* g_execution=nullptr;
+struct ActionScope {
+    Execution value;const Execution* previous=g_execution;
+    explicit ActionScope(const Active& a):value{a.pawn,a.source,a.token}{value.source.command_tick=true;g_execution=&value;}
+    ~ActionScope(){g_execution=previous;}
+};
+struct Pending { ObjHandle queue,pawn,action;std::int32_t id=0;native_lily::Source source;std::uint64_t parent=0; };
+std::unordered_map<ObjHandle,Pending> g_pending;
+std::uint64_t g_derived_queued=0,g_inherited=0,g_pending_pruned=0;
 std::deque<json::Value> g_trace;
 bool g_enabled = false, g_tracing = false;
 std::string g_fault;
@@ -54,8 +65,19 @@ using Start = void(__fastcall*)(ue::UObject*);
 using End = void(__fastcall*)(ue::UObject*, std::uint8_t);
 Start g_start = nullptr;
 End g_end = nullptr;
+using Sample=std::uint8_t(__fastcall*)(ue::UObject*,float);
+using Add=std::int32_t(__fastcall*)(ue::UObject*,std::uint8_t,std::uint8_t,const void*,std::int32_t,bool);
+Sample g_sample=nullptr;Add g_add=nullptr;
+void prune();
+ue::UObject* queue_of(ue::UObject* pawn){
+    const auto* s=core::schema::script();if(!s||!pawn)return nullptr;
+    if(pawn->IsA(static_cast<ue::UClass*>(s->zenith_character_class.get())))return s->zc_command_queue.object(pawn);
+    // ZenithSpirit derives from ACharacter, not ZenithCharacter. Its component layout is different.
+    reflect::Frame component(s->actor_component_by_class);
+    return component.arg(0,g_schema.queue_class.get()).invoke(pawn)?component.ret<ue::UObject*>():nullptr;
+}
 ue::UObject* current_action(ue::UObject* pawn) {
-    const auto* s=core::schema::script();auto* queue=s&&pawn?s->zc_command_queue.object(pawn):nullptr;
+    auto* queue=queue_of(pawn);
     reflect::Frame f(g_schema.current);
     auto* command=queue&&f.invoke(queue)?f.ret<ue::UObject*>():nullptr;
     return command&&g_schema.result.read<std::uint8_t>(command)==1?g_schema.action.object(command):nullptr;
@@ -81,7 +103,7 @@ bool eligible(ue::UObject* action,unsigned depth=0) {
     return true;
 }
 void sample() {
-    if(!g_enabled||!g_tracing)return;
+    if(!g_enabled)return;prune();if(!g_tracing)return;
     const auto* s=core::schema::script();if(!s)return;
     for(const auto& [weak,a]:g_active)if(auto* command=weak.get();command&&a.pawn.valid()) {
         auto* anim=g_schema.cached_anim.object(command);auto* skeleton=anim?g_schema.skeleton.object(anim):nullptr;
@@ -104,12 +126,19 @@ void prune() {
         if (e.first.valid() && e.second.pawn.valid()) return false;
         ++g_expired; return true;
     });
+    std::erase_if(g_pending,[](const auto& e){
+        auto* cmd=e.first.get();auto* queue=e.second.queue.get();
+        bool keep=cmd&&queue&&e.second.pawn.valid()&&e.second.action.valid()&&g_schema.command_id.read<std::int32_t>(cmd)==e.second.id&&g_schema.action.object(cmd)==e.second.action.get();
+        if(keep){const auto ar=reflect::array_at(queue,g_schema.queued);keep=ar.num>=0&&ar.num<=4096&&(!ar.num||ar.data);if(keep){auto** p=reinterpret_cast<ue::UObject**>(ar.data);keep=ar.num&&std::find(p,p+ar.num,cmd)!=p+ar.num;}}
+        if(!keep)++g_pending_pruned;return !keep;
+    });
 }
 void record(std::string_view event, ue::UObject* command, const Active& a, int reason = -1) {
     if (!g_tracing) return;
     auto j = json::Value::object();
     j.set("type", std::string(event)); j.set("t_us", clock::now_us());
     j.set("token", static_cast<std::int64_t>(a.token));
+    j.set("parent",static_cast<std::int64_t>(a.parent));
     j.set("seat", a.source.seat); j.set("input", static_cast<std::int64_t>(a.source.seq));
     j.set("generation", static_cast<std::int64_t>(a.source.generation));
     j.set("domain", a.source.domain);
@@ -137,6 +166,17 @@ bool insert(ue::UObject* command, Active& a) {
     prune();
     if (g_active.size() >= 512 && !g_active.contains(ObjHandle::of(command))) { fail("active command ownership capacity"); return false; }
     a.pawn = ObjHandle::of(pawn); a.source = source; a.token = ++g_next;
+    auto* queue=queue_of(pawn);
+    // Native Start runs before UCommand sets IN_PROGRESS. GetCurrentCommand intentionally
+    // returns null at that point; the native processor has already moved its command to head.
+    const auto ar=queue?reflect::array_at(queue,g_schema.queued):reflect::RawArray{};
+    if(ar.num<0||ar.num>4096||(ar.num&&!ar.data)){fail("command startup queue layout");return false;}
+    auto* cmd=ar.num?reinterpret_cast<ue::UObject**>(ar.data)[0]:nullptr;
+    if(cmd&&g_schema.action.object(cmd)==command)if(auto p=g_pending.find(ObjHandle::of(cmd));p!=g_pending.end()){
+        const auto& v=p->second;
+        if(v.queue.get()==queue&&v.pawn==a.pawn&&v.action.get()==command&&v.id==g_schema.command_id.read<std::int32_t>(cmd)&&v.source.seat==source.seat&&v.source.generation==source.generation&&v.source.domain==source.domain){a.source=v.source;a.parent=v.parent;++g_inherited;}
+        g_pending.erase(p);
+    }
     collect(command, a);
     g_active[ObjHandle::of(command)] = a;
     return true;
@@ -148,6 +188,7 @@ void __fastcall start(ue::UObject* command) {
     const bool tracked = insert(command, a);
     if(tracked&&g_restore_attempt&&g_restore_attempt->pawn==a.pawn&&g_restore_attempt->cls.get()==command->GetClassPrivate())
         g_restore_attempt->token=a.token;
+    ActionScope scope(a);
     g_start(command);
     if (tracked) {
         const auto i = g_active.find(ObjHandle::of(command));
@@ -162,12 +203,31 @@ void __fastcall end(ue::UObject* command, std::uint8_t reason) {
     const bool tracked = i != g_active.end();
     const auto before = tracked ? i->second : Active{};
     autonomous::command_ended(command, g_schema.pawn.object(command), reason);
+    ActionScope scope(before);
     g_end(command, reason);
     if (tracked) {
         ++g_ends; record("end", command, before, reason);
         const auto after = g_active.find(h);
         if (after != g_active.end() && after->second.token == before.token) g_active.erase(after);
     }
+}
+std::uint8_t __fastcall sample_command(ue::UObject* command,float dt){
+    if(!g_enabled||!ue::on_game_thread())return g_sample(command,dt);
+    const auto i=g_active.find(ObjHandle::of(command));if(i==g_active.end())return g_sample(command,dt);
+    ActionScope scope(i->second);return g_sample(command,dt);
+}
+std::int32_t __fastcall add_command(ue::UObject* queue,std::uint8_t direction,std::uint8_t button,const void* settings,std::int32_t frame,bool front){
+    const auto id=g_add(queue,direction,button,settings,frame,front);
+    if(!g_enabled||!ue::on_game_thread()||id<0)return id;
+    const auto ar=reflect::array_at(queue,g_schema.queued);
+    if(ar.num<0||ar.num>4096||(ar.num&&!ar.data)){fail("derived command queue layout");return id;}
+    for(int i=ar.num-1;i>=0;--i){auto* cmd=reinterpret_cast<ue::UObject**>(ar.data)[i];if(!ue::alive(cmd)||g_schema.command_id.read<std::int32_t>(cmd)!=id)continue;
+        const auto h=ObjHandle::of(cmd);g_pending.erase(h); // admission/reuse always revokes its previous origin
+        if(g_execution&&g_execution->token&&g_execution->source.domain==0&&g_execution->pawn.get()==g_schema.queue_pawn.object(queue)){
+            prune();if(g_pending.size()>=512){fail("derived command source capacity");return id;}
+            g_pending[h]={ObjHandle::of(queue),g_execution->pawn,ObjHandle::of(g_schema.action.object(cmd)),id,g_execution->source,g_execution->token};++g_derived_queued;
+        }break;
+    }return id;
 }
 bool install() {
     auto* cls = reflect::find_class(L"/Script/Zenith.CommandAction");
@@ -178,19 +238,22 @@ bool install() {
     g_schema.cached_anim = c.prop(L"CachedAnimComponent",reflect::Kind::Object);
     g_schema.invoked_direction=c.func(L"GetInvokedByDirectionInputType",0);g_schema.invoked_button=c.func(L"GetInvokedByInputType",0);g_schema.elapsed=c.func(L"GetExecutionTime",0);
     g_schema.request_end=c.func(L"RequestEnd",1);
-    const auto start_fn = c.func(L"StartCommandAction", 0), end_fn = c.func(L"EndCommandAction", 1);
+    const auto start_fn = c.func(L"StartCommandAction", 0), end_fn = c.func(L"EndCommandAction", 1), sample_fn=c.func(L"SampleCommandAction",1);
     auto* tl = static_cast<ue::UStruct*>(reflect::find_object(L"/Script/Zenith.StateTimeline"));
     auto* en = static_cast<ue::UStruct*>(reflect::find_object(L"/Script/Zenith.StateTimelineEntry"));
     reflect::Resolver t("command states", tl), e("command state entry", en);
     g_schema.entries = t.prop(L"StateEntries", reflect::Kind::Array);
     g_schema.state = e.prop(L"State", reflect::Kind::Class);
     g_schema.state_from=e.prop(L"From",reflect::Kind::Float,4);g_schema.state_to=e.prop(L"To",reflect::Kind::Float,4);
-    reflect::Resolver q("command queue baseline", reflect::find_class(L"/Script/Zenith.CommandQueueComponent"));
+    auto* queue_class=reflect::find_class(L"/Script/Zenith.CommandQueueComponent");g_schema.queue_class=ObjHandle::of(queue_class);
+    reflect::Resolver q("command queue baseline", queue_class);
     g_schema.current = q.func(L"GetCurrentCommand", 0);
     g_schema.clear=q.func(L"ClearCommandBuffer",0);g_schema.add=q.func(L"AddNewImmediateCommand",3);
+    const auto add_fn=q.func(L"AddNewCommand",5);g_schema.queue_pawn=q.prop(L"Pawn",reflect::Kind::Object);g_schema.queued=q.prop(L"CommandQueue",reflect::Kind::Array);
     reflect::Resolver cmd("current command", reflect::find_class(L"/Script/Zenith.Command"));
     g_schema.action = cmd.prop(L"CommandAction", reflect::Kind::Object);
     g_schema.result = cmd.prop(L"CurrentResult", reflect::Kind::Any, 1);
+    g_schema.command_id=cmd.prop(L"CommandID",reflect::Kind::Int,4);
     if (!c.ok() || !t.ok() || !e.ok() || !q.ok() || !cmd.ok()) { fail(c.failure()+t.failure()+e.failure()+q.failure()+cmd.failure()); return false; }
     auto* gameplay=reflect::find_class(L"/Script/Zenith.CommandActionGameplay");reflect::Resolver gp("persistent command",gameplay);
     g_schema.animations=gp.prop(L"Animations",reflect::Kind::Array);g_schema.gameplay_class=ObjHandle::of(gameplay);
@@ -223,14 +286,29 @@ bool install() {
     if (start_target != preflight::address("CommandStartNative") || end_target != preflight::address("CommandEndNative")) return false;
     if (!g_start && !hook::install_address("CommandStartNative", start_target, reinterpret_cast<void*>(&start), reinterpret_cast<void**>(&g_start), "reflect")) return false;
     if (!g_end && !hook::install_address("CommandEndNative", end_target, reinterpret_cast<void*>(&end), reinterpret_cast<void**>(&g_end), "reflect")) return false;
+    const auto* sm=reinterpret_cast<const std::uint8_t*>(sample_fn.fn->GetFuncPtr());
+    const auto* ad=reinterpret_cast<const std::uint8_t*>(add_fn.fn->GetFuncPtr());
+    if(!sm||!ad||sm[0x7B]!=0xFF||sm[0x7C]!=0x90||ad[0x1EF]!=0xE8)return false;
+    std::uint32_t sample_slot=0;std::memcpy(&sample_slot,sm+0x7D,4);
+    std::int32_t add_relative=0;std::memcpy(&add_relative,ad+0x1F0,4);
+    auto* sample_target=sample_slot==632?*reinterpret_cast<void**>(*reinterpret_cast<std::uint8_t**>(cdo)+sample_slot):nullptr;
+    auto* add_target=const_cast<std::uint8_t*>(ad+0x1F4+add_relative);
+    if(sample_target!=preflight::address("CommandSampleNative")||add_target!=preflight::address("CommandQueueAddNative")||reflect::element_size(g_schema.queued)!=8)return false;
+    if(!g_sample&&!hook::install_address("CommandSampleNative",sample_target,reinterpret_cast<void*>(&sample_command),reinterpret_cast<void**>(&g_sample),"reflect"))return false;
+    if(!g_add&&!hook::install_address("CommandQueueAddNative",add_target,reinterpret_cast<void*>(&add_command),reinterpret_cast<void**>(&g_add),"reflect"))return false;
     g_schema.command_class = ObjHandle::of(cls); g_schema.timeline_class = ObjHandle::of(tl); g_schema.entry_class = ObjHandle::of(en);
     if(!g_post_live){RC::Unreal::Hook::FCallbackOptions o;o.OwnerModName=STR("ELMP");o.HookName=STR("coop.command_context.trace");g_post=RC::Unreal::Hook::RegisterEngineTickPostCallback([](auto&,RC::Unreal::UEngine*,float,bool){sample();},o);g_post_live=true;}
     return true;
 }
 }
 bool enable() { if (g_enabled && g_schema.live()) return true; return g_enabled = install(); }
-void reset() { g_enabled = false;if(g_post_live){RC::Unreal::Hook::UnregisterCallback(g_post);g_post_live=false;}g_active.clear(); g_schema = {}; g_fault.clear(); }
-void forget(ue::UObject* pawn) { const auto h=ObjHandle::of(pawn); std::erase_if(g_active,[&](const auto& e){return e.second.pawn==h;}); }
+void reset() { g_enabled = false;if(g_post_live){RC::Unreal::Hook::UnregisterCallback(g_post);g_post_live=false;}g_active.clear();g_pending.clear(); g_schema = {}; g_fault.clear(); }
+void forget(ue::UObject* pawn) { const auto h=ObjHandle::of(pawn); std::erase_if(g_active,[&](const auto& e){return e.second.pawn==h;});std::erase_if(g_pending,[&](const auto& e){return e.second.pawn==h;}); }
+bool source(ue::UObject* pawn,native_lily::Source& out){if(!g_enabled||!g_execution||!g_execution->token||g_execution->pawn.get()!=pawn)return false;out=g_execution->source;return out.seq!=0;}
+bool retained_source(const native_lily::Source& source){
+    const auto matches=[&](const auto& s){return s.seat==source.seat&&s.generation==source.generation&&s.seq==source.seq&&s.domain==source.domain;};
+    return std::any_of(g_active.begin(),g_active.end(),[&](const auto& e){return e.first.valid()&&e.second.pawn.valid()&&matches(e.second.source);})||std::any_of(g_pending.begin(),g_pending.end(),[&](const auto& e){return e.first.valid()&&e.second.pawn.valid()&&matches(e.second.source);});
+}
 std::vector<ue::UObject*> owned_states(ue::UObject* pawn) {
     std::vector<ue::UObject*> out;
     if (!g_enabled || !pawn || !g_schema.live()) return out;
@@ -238,7 +316,7 @@ std::vector<ue::UObject*> owned_states(ue::UObject* pawn) {
     // A host may begin hosting while a command is already running. Do not invent a Start event.
     const auto* s = core::schema::script();
     reflect::Frame current(g_schema.current);
-    auto* queue = s ? s->zc_command_queue.object(pawn) : nullptr;
+    auto* queue = queue_of(pawn);
     if (queue && current.invoke(queue)) if (auto* cmd=current.ret<ue::UObject*>();cmd && g_schema.result.read<std::uint8_t>(cmd)==1) {
         auto* action=g_schema.action.object(cmd);
         if(action && !g_active.contains(ObjHandle::of(action))) { Active a;if(insert(action,a)){++g_baselines;record("baseline",action,a);} }
@@ -258,7 +336,7 @@ Persistent persistent(ue::UObject* pawn) {
 std::uint64_t restore(ue::UObject* pawn,ue::UObject* type,std::uint8_t direction,std::uint8_t button) {
     auto* cls=static_cast<ue::UClass*>(type);ue::UObject* cdo=cls?cls->GetClassDefaultObject():nullptr;
     if(!eligible(cdo)){fail("Host persistent command is not restorable from its native data");return 0;}
-    const auto* s=core::schema::script();auto* queue=s&&pawn?s->zc_command_queue.object(pawn):nullptr;
+    auto* queue=queue_of(pawn);
     if(!queue||!reflect::Frame(g_schema.clear).invoke(queue)){fail("persistent command queue unavailable");return 0;}
     RestoreAttempt attempt{ObjHandle::of(pawn),ObjHandle::of(type)};
     struct Scope {RestoreAttempt* previous=g_restore_attempt;Scope(RestoreAttempt& a){g_restore_attempt=&a;}~Scope(){g_restore_attempt=previous;}} scope(attempt);
@@ -275,7 +353,7 @@ void end_restored(ue::UObject* pawn,std::uint64_t token) {
     auto* command=current_action(pawn);auto it=g_active.find(ObjHandle::of(command));
     if(command&&it!=g_active.end()&&it->second.token==token&&eligible(command)){if(reflect::Frame(g_schema.request_end).arg_bool(0,false).invoke(command))++g_restore_ends;else fail("persistent command could not request native end");}
 }
-std::string describe() { prune();return std::format("command context: enabled={} active={} starts={} ends={} baselines={} expired={} restored={} restoreEnds={} trace={} fault='{}'\n",g_enabled,g_active.size(),g_starts,g_ends,g_baselines,g_expired,g_restored,g_restore_ends,g_trace.size(),g_fault); }
+std::string describe() { prune();return std::format("command context: enabled={} active={} starts={} ends={} baselines={} expired={} restored={} restoreEnds={} trace={} fault='{}'\n  derived queued={} inherited={} pending={} pruned={}\n",g_enabled,g_active.size(),g_starts,g_ends,g_baselines,g_expired,g_restored,g_restore_ends,g_trace.size(),g_fault,g_derived_queued,g_inherited,g_pending.size(),g_pending_pruned); }
 std::string trace(std::string_view action) {
     if(action=="on"){g_trace.clear();g_tracing=true;return "command trace enabled\n";}
     if(action=="off"){g_tracing=false;return "command trace disabled\n";}
