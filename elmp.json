@@ -4,7 +4,7 @@
   "api": {
     "elmp.core": "1.0.0"
   },
-  "protocol": 11,
+  "protocol": 12,
   "game": {
     "exe": "EnderLiliesSteam-Win64-Shipping.exe",
     "sha256": [

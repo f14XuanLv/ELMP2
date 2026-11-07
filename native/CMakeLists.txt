@@ -85,6 +85,9 @@ set(ELMP_MOD_SOURCES
     sdk/sdk.cpp
     coop/client.cpp
     coop/native_lily.cpp
+    coop/command_context.cpp
+    coop/lily_events.cpp
+    coop/spine_root.cpp
     coop/ability.cpp
     coop/causality.cpp
     coop/causal_facts.cpp

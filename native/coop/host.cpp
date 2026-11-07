@@ -6,6 +6,7 @@
 
 #include "coop/host.h"
 #include "coop/native_lily.h"
+#include "coop/lily_events.h"
 #include "coop/causality.h"
 #include <unordered_set>
 #include "coop/presentation.h"
@@ -97,6 +98,7 @@ std::uint64_t g_engaged_rows = 0; // P8 Dev：本帧带 bit3（战斗中）的�
 metrics::Counter& c_snaps = metrics::counter("coop.host.snapshots");
 metrics::Counter& c_snap_fail = metrics::counter("coop.host.snapshot_encode_failed");
 metrics::Histogram& h_capture = metrics::histogram("coop.host.capture_us");
+void lifecycle_fault(const char* reason);
 
 void send_rel(std::uint32_t peer, std::size_t n) {
     if (n) coop::send_reliable(peer, std::span(g_buf.data(), n));
@@ -150,6 +152,7 @@ void lily_row(std::uint16_t key, ue::UObject* pawn, const core::schema::Script& 
         if (f.invoke(loco)) row->facing = f.ret_bool() ? 1 : -1;
     }
     row->skin = static_cast<std::uint16_t>(std::max(0, core::skin::current(pawn)));
+    if(!lily_events::capture(pawn,name,row->events))lifecycle_fault("Lily external animation context capture failed");
 
 }
 

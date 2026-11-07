@@ -435,6 +435,12 @@ Companion `cp` 基线包含 Actor 世界位置及 pitch/yaw/roll；世界旋转�
 
 ### 16.3 已恢复的原版执行链（2026-11-05，ADR 0009）
 
+2026-11-07 环境动作与命令状态所有权修正按[ADR0012](adr/0012-environment-command-context.md)实施，抓墙与抓钩作为真实验收入口。
+
+协议12补齐环境感知、Pawn能力通知、原生命令StateTimeline所有权、朝向、独立Spirit/Companion时钟及有限持续命令基线。远端仍关闭目标权限和结算，保留环境传感器；不能以“Host权威”为由关闭全部overlap，也不能提前写入命令运行才应产生的状态。网络消费使用单调墙钟，原版Pawn/World delta单独传递。
+
+CommandQueue之外的DEATH与EVENT逻辑层经`lily_events`传递实际原版定义/代次/相位，由`PlayAnimationDefinition`接入；不复制完成委托、root motion或运动模式副作用，不触发Client死亡结算。敌人继续输出呈现，`spine_root`补通用根骨局部镜像上下文，在原版Skeleton世界变换入口消费，避免current-track数据不足导致持续反向。边界与实测见[本轮记录](kb/wallgrab-native-pipeline-2026-11-07.md)。
+
 2026-11-07 按 [ADR0011](adr/0011-native-lily-causality.md) 增加原版技能因果观测、Host目标事实、技能激活关联及共同播放时间。先闭合一招实际追踪技能的完整命中/停止，不开放Client结算；实测范围与边界见[因果闭环记录](kb/native-lily-causality-2026-11-07.md)。
 
 2026-11-05 用户授权的远端 Lily 原版执行试验按 [ADR 0010](adr/0010-native-remote-lily-pilot.md) 替换该域旧冻结/输出复制：可靠真实输入消费 + 运动/状态上下文 + 原版装备/召唤/动画；敌人域保持现有实现。2026-11-06 用户反馈卡顿，改为连续时间缓冲与同总时长的角色/组件推进，取消整数包数驱动的0/4倍时钟，见ADR0010修正。该版本等待用户双窗口游玩验收，不预先标记全部表现完成。
@@ -450,6 +456,10 @@ Companion `cp` 基线包含 Actor 世界位置及 pitch/yaw/roll；世界旋转�
 | 原版Ability PSC | exact PSC及原版owner activation句柄；池复用、weak失效、会话清理 | native ability FX kept/exactPSC/capacityRejected |
 | Reaction schema/序列 | 类、函数、状态结构弱句柄；模式启停/世界失效重建；序号按seat/epoch/map检查，等待队列有界 | captured/replayed/rejected/anchorNoMoveAccepted/anchorFailed |
 | DamageColor Timeline schema | 类型/函数/Curve弱句柄；失效/reset时重建；每次启动核exact实例、纯色轨、同Actor属性及委托，不缓存Actor裸指针 | captured/captureFailed/replayed/rejected/fault |
+| 命令上下文 | Command/Pawn弱句柄、单调激活token、源输入/角色代次；Start/End、弱失效、角色/地图/会话撤销；512活跃项、1024条可选trace | `elmp commandctx` starts/ends/baselines/restored/active/fault |
+| 独立角色时钟 | 实际Owner/LeaderPawn链；弱失效、归属改变、角色替换、地图/会话恢复原倍率；每帧表≤32类 | native Lily roleClocks/clockWrites |
+| 外部动画逻辑层 | Pawn/组件弱句柄、Host TrackEntry代次；当前层缺失、组件重建、角色失效、地图/会话清理；每Pawn固定4层，离会停止借用层 | Lily external layers cached/played/stopped/phase/failed |
+| Spine根镜像上下文 | Skeleton指针必须仍属于同一弱组件/Actor；每次重新取根骨；重建/失效/forget/reset撤销并恢复；512个呈现绑定 | Spine root context bound/updates/expired/restored/failed |
 
 ## 17. 风险与对策
 

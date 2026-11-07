@@ -162,6 +162,8 @@ struct Reaction {
 bool valid_reaction(const Reaction& m) noexcept;
 struct Json { std::string text; };
 inline constexpr std::size_t kLilyStates = 48;
+inline constexpr std::size_t kLilyClocks = 32;
+struct LilyClock { std::uint16_t cls = 0; float scale = 1; bool operator==(const LilyClock&) const = default; };
 struct LilyFrame {
     std::uint16_t seat = 0, map = 0;
     std::uint16_t epoch = 0;
@@ -173,6 +175,15 @@ struct LilyFrame {
     std::uint16_t flags = 0, raw = 0;
     std::array<float, 3> position{}, velocity{};
     std::array<std::uint16_t, kLilyStates> states{};
+    std::uint8_t command_state_count = 0;
+    std::array<std::uint16_t, kLilyStates> command_states{};
+    std::uint8_t facing = 0, actor_clock_count = 0;
+    std::array<LilyClock, kLilyClocks> actor_clocks{};
+    std::uint16_t persistent_class = 0;
+    std::uint64_t persistent_token = 0;
+    std::uint32_t persistent_input = 0;
+    std::uint8_t persistent_direction = 0, persistent_button = 0;
+    float persistent_elapsed = 0;
     bool operator==(const LilyFrame&) const = default;
 };
 std::size_t encode(const LilyFrame& m, std::span<std::uint8_t> out);

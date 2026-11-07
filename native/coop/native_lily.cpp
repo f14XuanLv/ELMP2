@@ -2,6 +2,9 @@
 #include "coop/session.h"
 #include "coop/ability.h"
 #include "coop/causality.h"
+#include "coop/command_context.h"
+#include "coop/lily_events.h"
+#include "core/permission.h"
 #include "core/player.h"
 #include "core/profile.h"
 #include "core/schema.h"
@@ -9,6 +12,7 @@
 #include "core/skin.h"
 #include "engine/lifecycle.h"
 #include "engine/reflect.h"
+#include "engine/registry.h"
 #include "engine/world.h"
 #include "input/virtual_pad.h"
 #include "guard/guard.h"
@@ -36,7 +40,8 @@ struct Schema {
     ObjHandle companion_ai;
     reflect::PropRef dilation, velocity, custom_mode, states, state_component;
     reflect::FuncRef add_state, remove_state, get_owner, get_controller;
-    reflect::FuncRef leader;
+    reflect::FuncRef leader, set_facing;
+    reflect::PropRef aptitude_changed;
     ObjHandle gameplay;
     reflect::FuncRef world_delta;
     bool ready() const { return actor.valid() && character.valid() && movement.valid() && state.valid() && gameplay.valid() && world_delta.ok(); }
@@ -44,6 +49,7 @@ struct Schema {
 Schema g_schema;
 std::string g_fault;
 float g_dt = 1.0f / 60.0f;
+float g_playout_dt = 1.0f / 60.0f;
 float g_source_dt = 1.0f / 60.0f;
 Text g_text = nullptr;
 using CharacterTick = void(__fastcall*)(ue::UObject*, float);
@@ -53,17 +59,29 @@ FrameSink g_sink = nullptr;
 Name g_name = nullptr;
 std::array<std::uint32_t, 9> g_sequence{};
 ObjHandle g_executing_pawn;
+ObjHandle g_restore_pawn;
+Source g_restore_source;
+struct RestoreScope {
+    ObjHandle previous_pawn=g_restore_pawn;Source previous_source=g_restore_source;
+    RestoreScope(ue::UObject* pawn,Source origin){g_restore_pawn=ObjHandle::of(pawn);g_restore_source=origin;}
+    ~RestoreScope(){g_restore_pawn=previous_pawn;g_restore_source=previous_source;}
+};
 struct ExecutionScope { ObjHandle previous=g_executing_pawn; explicit ExecutionScope(ue::UObject* pawn){g_executing_pawn=ObjHandle::of(pawn);}~ExecutionScope(){g_executing_pawn=previous;} };
 struct SourceCadence {
     std::uint32_t generation = 0;
+    std::int64_t last_us = 0;
+    float physical = 1.0f / 60;
     std::array<float, 31> samples{};
     std::size_t next = 0;
-    float interval(std::uint32_t serial, float dt) {
-        if (generation != serial) { generation = serial; samples.fill(1.0f / 60); next = 0; }
-        samples[next++ % samples.size()] = dt;
+    float interval(std::uint32_t serial, std::int64_t now) {
+        if (generation != serial) { generation = serial; samples.fill(1.0f / 60); next = 0; last_us = 0; }
+        physical = last_us ? static_cast<float>(now-last_us)/1'000'000 : 1.0f/60;
+        last_us = now;
+        if (physical <= 0) physical = 1.0f/60;
+        samples[next++ % samples.size()] = physical;
         auto sorted = samples;
         std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
-        return std::min(dt, sorted[sorted.size() / 2] * 1.5f);
+        return std::min(physical, sorted[sorted.size() / 2] * 1.5f);
     }
 };
 std::array<SourceCadence, 9> g_source_cadence{};
@@ -73,6 +91,9 @@ struct Replica {
     std::int64_t slot = 0;
     std::uint32_t received = 0, consumed = 0, generation = 0;
     std::uint32_t playing = 0;
+    std::uint64_t persistent_host = 0, persistent_local = 0;
+    std::int64_t tick_us = 0;
+    proto::LilyFrame last;
     std::string build, applied;
     std::deque<proto::LilyFrame> frames;
     std::deque<Step> pending;
@@ -82,6 +103,9 @@ struct Replica {
     float world_rate = 1;
 };
 std::map<std::uint16_t, Replica> g_replicas;
+struct RoleClock { ObjHandle pawn; float original = 1, applied = 1; };
+std::unordered_map<ObjHandle, RoleClock> g_role_clocks;
+std::uint64_t g_clock_writes = 0;
 std::uint64_t g_captured = 0, g_received = 0, g_consumed = 0, g_profiles = 0, g_state_changes = 0;
 std::uint64_t g_edges_received = 0, g_edges_played = 0, g_starved = 0;
 auto& h_tick = metrics::histogram("native_lily.tick_us");
@@ -101,7 +125,9 @@ bool resolve() {
     auto* st = reflect::find_class(L"/Script/Zenith.StateComponent");
     reflect::Resolver ar("NativeLily Actor", a), zr("NativeLily Character", z), mr("NativeLily Movement", m), sr("NativeLily State", st);
     s.dilation = ar.prop(L"CustomTimeDilation", reflect::Kind::Float, 4);
+    s.aptitude_changed=zr.prop(L"OnAptitudeUnlocked",reflect::Kind::Delegate,sizeof(RC::Unreal::FMulticastScriptDelegate));
     s.get_owner = ar.func(L"GetOwner", 0);
+    s.set_facing = reflect::Resolver("native facing", reflect::find_class(L"/Script/Zenith.LocomotionComponent")).func(L"SetFacing", 1);
     s.state_component = zr.prop(L"StateComponent", reflect::Kind::Object);
     s.velocity = mr.prop(L"Velocity", reflect::Kind::Struct, 12);
     s.custom_mode = mr.prop(L"CustomMovementMode", reflect::Kind::Any, 1);
@@ -116,7 +142,7 @@ bool resolve() {
     reflect::Resolver gr("NativeLily World clock", reflect::find_class(L"/Script/Engine.GameplayStatics"));
     s.world_delta = gr.func(L"GetWorldDeltaSeconds", 1);
     s.gameplay = ObjHandle::of(reflect::find_object(L"/Script/Engine.Default__GameplayStatics"));
-    if (!ar.ok() || !zr.ok() || !mr.ok() || !sr.ok() || !pr.ok() || !cr.ok() || !gr.ok() || !s.gameplay.valid() || reflect::element_size(s.states) != 8) {
+    if (!ar.ok() || !zr.ok() || !mr.ok() || !sr.ok() || !pr.ok() || !cr.ok() || !gr.ok() || !s.set_facing.ok() || !s.gameplay.valid() || reflect::element_size(s.states) != 8) {
         fail(ar.failure() + zr.failure() + mr.failure() + sr.failure() + pr.failure() + cr.failure() + gr.failure());
         return false;
     }
@@ -135,6 +161,45 @@ std::uint16_t seat_of(ue::UObject* pawn) {
     const auto slot = core::slot_of(pawn);
     return slot > 1 && slot <= 8 ? static_cast<std::uint16_t>(slot) : 0;
 }
+std::vector<ue::UObject*> owned_actors(std::uint16_t seat) {
+    std::vector<ue::UObject*> out;
+    for(auto kind:{registry::Kind::Spirit,registry::Kind::Companion}) for(const auto& entry:registry::bucket(kind))
+        if(auto* actor=entry.handle.get()){Source origin;if(source(actor,origin)&&origin.seat==seat)out.push_back(actor);}
+    return out;
+}
+void restore_clocks(ue::UObject* pawn = nullptr) {
+    const auto owner=ObjHandle::of(pawn);
+    std::erase_if(g_role_clocks,[&](const auto& p){
+        if(pawn && p.second.pawn!=owner)return false;
+        if(auto* actor=p.first.get())*g_schema.dilation.at<float>(actor)=p.second.original;
+        return true;
+    });
+}
+void apply_clocks(Replica& r,const proto::LilyFrame& f) {
+    std::vector<std::pair<ue::UObject*,float>> types;
+    for(unsigned i=0;i<f.actor_clock_count;++i){
+        const auto& clock=f.actor_clocks[i];auto& weak=g_state_classes[clock.cls];auto* cls=weak.get();
+        if(!cls){const auto* name=g_text(clock.cls);if(name)cls=reflect::load_object(log::wide(*name));if(cls)weak=ObjHandle::of(cls);}
+        if(!cls){fail("native owned actor clock class unavailable");return;}
+        types.emplace_back(cls,clock.scale);
+    }
+    for(auto* actor:owned_actors(f.seat)){
+        const auto type=std::find_if(types.begin(),types.end(),[&](const auto& t){return actor->GetClassPrivate()==t.first;});
+        if(type==types.end())continue; // equipment baselines may be in flight; never apply another class's clock
+        const auto h=ObjHandle::of(actor);auto it=g_role_clocks.find(h);
+        if(it==g_role_clocks.end())it=g_role_clocks.emplace(h,RoleClock{r.pawn,g_schema.dilation.read<float>(actor),1}).first;
+        if(it->second.pawn!=r.pawn){*g_schema.dilation.at<float>(actor)=it->second.original;it->second.pawn=r.pawn;}
+        const float value=r.world_rate*type->second;
+        if(g_schema.dilation.read<float>(actor)!=value){*g_schema.dilation.at<float>(actor)=value;++g_clock_writes;}
+        it->second.applied=value;
+    }
+    std::erase_if(g_role_clocks,[](const auto& e){
+        auto* owned=e.first.get();if(!owned)return true;
+        Source origin;
+        if(source(owned,origin)&&ObjHandle::of(native_lily::actor(origin.seat))==e.second.pawn)return false;
+        *g_schema.dilation.at<float>(owned)=e.second.original;return true;
+    });
+}
 void consumed(ue::UObject* pawn, const input::InputSnapshot& value) {
     if (!g_sink || !g_name || !g_fault.empty()) return;
     const auto seat = seat_of(pawn);
@@ -147,11 +212,12 @@ void consumed(ue::UObject* pawn, const input::InputSnapshot& value) {
     if (g_sequence[seat] == ~std::uint32_t{0}) return fail("native Lily input sequence exhausted");
     proto::LilyFrame f;
     f.seat = seat; f.seq = ++g_sequence[seat]; f.dt = g_source_dt; f.step = world_delta(pawn);
-    f.t_ms = static_cast<std::uint32_t>(clock::now_us()/1000); f.world_dt = f.step;
+    const auto sampled_at=clock::now_us();
+    f.t_ms = static_cast<std::uint32_t>(sampled_at/1000); f.world_dt = f.step;
     f.generation = static_cast<std::uint32_t>(ObjHandle::of(pawn).serial);
     if (!std::isfinite(f.step) || f.step <= 0 || f.step > 60) return fail(std::format("native Lily Host World delta out of range: {}", f.step));
-    const float interval = g_source_cadence[seat].interval(f.generation, f.step);
-    if (interval < f.step) ++c_hitch;
+    const float interval = g_source_cadence[seat].interval(f.generation, sampled_at);
+    if (interval < g_source_cadence[seat].physical) ++c_hitch;
     f.step = interval; // retain f.dt in full: do not replay a Host stall as a second delayed pause
     std::memcpy(f.input.data(), &value, sizeof(float) * 7);
     f.direction = value.direction;
@@ -160,6 +226,9 @@ void consumed(ue::UObject* pawn, const input::InputSnapshot& value) {
     f.position = {at->x, at->y, at->z};
     std::memcpy(f.velocity.data(), g_schema.velocity.at<void>(movement), 12);
     f.mode = s->cm_mode.read<std::uint8_t>(movement); f.custom_mode = g_schema.custom_mode.read<std::uint8_t>(movement);
+    reflect::Frame facing(s->loco_facing_right);
+    if(!facing.invoke(s->zc_locomotion.object(pawn)))return fail("native facing capture unavailable");
+    f.facing = facing.ret_bool()?2:1;
     const auto arr = reflect::array_at(state, g_schema.states);
     if (arr.num < 0 || arr.num > static_cast<int>(proto::kLilyStates) || (arr.num && !arr.data)) return fail("native Lily state capacity/layout");
     for (int i = 0; i < arr.num; ++i) {
@@ -168,6 +237,25 @@ void consumed(ue::UObject* pawn, const input::InputSnapshot& value) {
         const auto id = g_name(log::utf8(cls->GetPathName()));
         if (!id) return fail("native Lily state name capacity");
         f.states[f.state_count++] = id;
+    }
+    for (auto* cls : command_context::owned_states(pawn)) {
+        if(f.command_state_count==proto::kLilyStates)return fail("native command state capacity");
+        const auto id=g_name(log::utf8(cls->GetPathName()));if(!id)return fail("native command state name capacity");
+        f.command_states[f.command_state_count++]=id;
+    }
+    if(const auto why=command_context::fault();!why.empty())return fail(why);
+    if(const auto p=command_context::persistent(pawn);p.cls&&p.input){
+        f.persistent_class=g_name(log::utf8(p.cls->GetPathName()));f.persistent_token=p.token;f.persistent_input=p.input;
+        f.persistent_direction=p.direction;f.persistent_button=p.button;f.persistent_elapsed=p.elapsed;
+    }
+    for(auto* actor:owned_actors(seat)) {
+        const auto id=g_name(log::utf8(actor->GetClassPrivate()->GetPathName()));
+        const float scale=g_schema.dilation.read<float>(actor);
+        auto begin=f.actor_clocks.begin(),end=begin+f.actor_clock_count;
+        const auto it=std::find_if(begin,end,[&](const auto& c){return c.cls==id;});
+        if(it!=end){if(std::abs(it->scale-scale)>.0001f)return fail("owned actors of one class have conflicting clocks");continue;}
+        if(f.actor_clock_count==proto::kLilyClocks)return fail("native owned actor clock capacity");
+        f.actor_clocks[f.actor_clock_count++]={id,scale};
     }
     ++g_captured;
     g_sink(pawn, f);
@@ -185,6 +273,19 @@ bool apply_build(Replica& r) {
     if (!json::parse(r.build, j, &why) || !core::profile::from_json(j, p, &why)) { fail("native Lily profile: " + why); return false; }
     const auto result = core::profile::reset(pc, p);
     if (!result.ok()) { fail("native Lily profile apply: " + result.text()); return false; }
+    // The PC's inventory can survive Pawn replacement. Re-publish its capability context to the
+    // new Pawn's native listeners even when adding the same inventory rows was a no-op.
+    auto* listeners=static_cast<RC::Unreal::FMulticastDelegateProperty*>(g_schema.aptitude_changed.prop)->GetMulticastDelegate(g_schema.aptitude_changed.at<void>(pawn));
+    if(!listeners){fail("native aptitude notification unavailable");return false;}
+    // Snapshot the original delegate endpoints: callbacks may mutate the invocation list.
+    // Use our counted reflection frame instead of the SDK's inline-allocator delegate copy.
+    std::vector<RC::Unreal::FScriptDelegate> endpoints;
+    for(const auto& item:listeners->InvocationList)endpoints.push_back(item);
+    for(const auto& item:endpoints)if(auto* object=item.GetUObject()){
+        reflect::Resolver listener("native capability listener",object->GetClassPrivate());
+        const auto callback=listener.func(item.GetFunctionName().ToString(),0);
+        if(!listener.ok()||!reflect::Frame(callback).invoke(object)){fail("native aptitude listener failed");return false;}
+    }
     r.applied = r.build; ++g_profiles;
     return true;
 }
@@ -193,15 +294,16 @@ namespace { bool install_tick(); }
 bool host_enable(FrameSink sink, Name name) {
     if (!resolve()) return false;
     g_sink = sink; g_name = name;
-    return install_tick() && input::pad::observe(consumed) && causality::enable();
+    return install_tick() && input::pad::observe(consumed) && causality::enable() && command_context::enable();
 }
-void host_disable() { input::pad::observe(nullptr); g_sink = nullptr; g_name = nullptr; g_sequence.fill(0); g_source_cadence = {}; g_fault.clear(); causality::reset(); }
+void host_disable() { input::pad::observe(nullptr); g_sink = nullptr; g_name = nullptr; g_sequence.fill(0); g_source_cadence = {}; g_fault.clear(); restore_clocks(); command_context::reset(); causality::reset(); }
 namespace { bool install_tick(); }
 std::string bind(std::uint16_t seat, std::int64_t slot, ue::UObject* pawn) {
     if (!pawn || !resolve()) return g_fault.empty() ? "native Lily pawn missing" : g_fault;
     if (!install_tick()) return "native Lily original Tick preflight failed";
     if (!ability::client_native_enable()) return "native Lily ability lifecycle hooks unavailable";
     if (!causality::enable()) return "native Lily causality hooks unavailable";
+    if (!command_context::enable()) return "native command ownership hooks unavailable";
     auto& r = g_replicas[seat];
     const auto h = ObjHandle::of(pawn);
     if (r.pawn == h) return {};
@@ -210,15 +312,11 @@ std::string bind(std::uint16_t seat, std::int64_t slot, ue::UObject* pawn) {
     if (!s) return "native Lily core schema";
     r.controller = ObjHandle::of(s->pawn_controller.object(pawn));
     // Remote execution has no camera ownership: Client keeps vanilla P1-only framing (F2.7).
-    // Keep world blocking for the original CharacterMovement, remove world-trigger/contact overlap.
-    reflect::Frame parts(s->actor_components_by_class); parts.arg(0, s->primitive_class.get());
-    if (!parts.invoke(pawn)) return "native Lily primitive enumeration";
-    const auto arr = parts.ret<reflect::RawArray>();
-    if (arr.num < 0 || arr.num > 64 || (arr.num && !arr.data)) return "native Lily primitive layout";
-    for (int i = 0; i < arr.num; ++i) {
-        auto* component = reinterpret_cast<ue::UObject**>(arr.data)[i];
-        if (ue::alive(component)) reflect::Frame(s->prim_set_overlaps).arg_bool(0, false).invoke(component);
-    }
+    // Preserve native environment sensors and physics-volume perception. Authority is restricted at
+    // the existing target/collection and settlement gates, rather than disabling every overlap source.
+    for (unsigned i=0;i<static_cast<unsigned>(core::permission::Gate::Count);++i)
+        core::permission::set(slot,static_cast<core::permission::Gate>(i),false);
+    core::permission::track(slot);
     guard::unmark(pawn);
     guard::mark_not_player(pawn, true);
     *g_schema.dilation.at<float>(pawn) = 0;
@@ -255,6 +353,9 @@ void execute_frame(Replica& r, const Replica::Step& step) {
     auto* state = g_schema.state_component.object(pawn);
     if (!movement || !state) { fail("native Lily execution context missing"); return; }
     if (step.begin) {
+        auto* loco=s->zc_locomotion.object(pawn);reflect::Frame facing(s->loco_facing_right);
+        if(!loco||!facing.invoke(loco)){fail("native facing playback unavailable");return;}
+        if(facing.ret_bool()!=(f.facing==2))reflect::Frame(g_schema.set_facing).arg_bool(0,f.facing==2).invoke(loco);
         std::vector<ue::UObject*> wanted;
         for (std::size_t i = 0; i < f.state_count; ++i) {
             const auto* path = g_text(f.states[i]);
@@ -267,12 +368,20 @@ void execute_frame(Replica& r, const Replica::Step& step) {
             if (!cls) { fail("native Lily authoritative state unavailable"); return; }
             wanted.push_back(cls);
         }
+        auto protected_states = command_context::owned_states(pawn);
+        for(unsigned i=0;i<f.command_state_count;++i) {
+            const auto* path=g_text(f.command_states[i]);auto& cached=g_state_classes[f.command_states[i]];
+            auto* cls=cached.get();if(!cls&&path){cls=reflect::load_object(log::wide(*path));if(cls)cached=ObjHandle::of(cls);}
+            if(!cls){fail("native command state name unavailable");return;}
+            if(std::find(protected_states.begin(),protected_states.end(),cls)==protected_states.end())protected_states.push_back(cls);
+        }
+        const auto externally_owned=[&](ue::UObject* cls){return std::find(protected_states.begin(),protected_states.end(),cls)==protected_states.end();};
         const auto arr = reflect::array_at(state, g_schema.states);
         if (arr.num < 0 || arr.num > 128 || (arr.num && !arr.data)) { fail("native Lily local state layout"); return; }
         std::vector<ue::UObject*> previous;
         for (int i = 0; i < arr.num; ++i) previous.push_back(reinterpret_cast<ue::UObject**>(arr.data)[i]);
-        for (auto* cls : previous) if (std::find(wanted.begin(), wanted.end(), cls) == wanted.end()) { reflect::Frame(g_schema.remove_state).arg(0, cls).invoke(state); ++g_state_changes; }
-        for (auto* cls : wanted) if (std::find(previous.begin(), previous.end(), cls) == previous.end()) { reflect::Frame(g_schema.add_state).arg(0, cls).invoke(state); ++g_state_changes; }
+        for (auto* cls : previous) if (externally_owned(cls) && std::find(wanted.begin(), wanted.end(), cls) == wanted.end()) { reflect::Frame(g_schema.remove_state).arg(0, cls).invoke(state); ++g_state_changes; }
+        for (auto* cls : wanted) if (externally_owned(cls) && std::find(previous.begin(), previous.end(), cls) == previous.end()) { reflect::Frame(g_schema.add_state).arg(0, cls).invoke(state); ++g_state_changes; }
         if (s->cm_mode.read<std::uint8_t>(movement) != f.mode || g_schema.custom_mode.read<std::uint8_t>(movement) != f.custom_mode)
             reflect::Frame(s->cm_set_mode).arg(0, f.mode).arg(1, f.custom_mode).invoke(movement);
     }
@@ -286,7 +395,27 @@ void execute_frame(Replica& r, const Replica::Step& step) {
     if (!g_fault.empty()) return;
     r.playing = f.seq;
     ExecutionScope source_scope(pawn);
+    if(step.begin){
+        if(f.persistent_class){
+            auto& weak=g_state_classes[f.persistent_class];auto* cls=weak.get();
+            if(!cls){const auto* name=g_text(f.persistent_class);if(name)cls=reflect::load_object(log::wide(*name));if(cls)weak=ObjHandle::of(cls);}
+            if(!cls)return fail("persistent command class unavailable");
+            const auto local=command_context::persistent(pawn);
+            const bool same_host=r.persistent_host==f.persistent_token;
+            const bool running=local.cls==cls&&local.token&&(same_host?local.token==r.persistent_local:local.token!=r.persistent_local);
+            if(running)r.persistent_local=local.token;
+            else {
+                RestoreScope origin(pawn,{f.seat,f.generation,f.persistent_input,true});
+                r.persistent_local=command_context::restore(pawn,cls,f.persistent_direction,f.persistent_button);
+                if(!r.persistent_local)return;
+            }
+            r.persistent_host=f.persistent_token;
+        } else if(r.persistent_host){
+            command_context::end_restored(pawn,r.persistent_local);r.persistent_host=r.persistent_local=0;
+        }
+    }
     g_original_tick(pawn, f.dt);
+    apply_clocks(r,f);r.last=f;
     if (step.begin) g_edges_played += std::popcount(static_cast<unsigned>(input.flags));
     if (step.end) { r.consumed = f.seq; ++g_consumed; }
 }
@@ -309,7 +438,7 @@ void anchor(Replica& r) {
         const float error = std::hypot(current->y - at.y, current->z - at.z);
         h_correct.add(error);
         if (error > 0.05f) {
-            const float blend = !r.started || error > 250.0f ? 1.0f : 1.0f - std::exp(-20.0f * g_dt);
+            const float blend = !r.started || error > 250.0f ? 1.0f : 1.0f - std::exp(-20.0f * g_playout_dt);
             at = {current->x + (at.x - current->x) * blend, current->y + (at.y - current->y) * blend, current->z + (at.z - current->z) * blend};
             reflect::Frame(s->actor_teleport).arg(0, at).arg_bool(1, false).arg_bool(3, false).invoke(pawn);
         }
@@ -330,8 +459,9 @@ void __fastcall character_tick(ue::UObject* pawn, float dt) {
             *g_schema.dilation.at<float>(pawn) = 0;
             return;
         }
+        const auto now=clock::now_us();g_playout_dt=r.tick_us?static_cast<float>(now-r.tick_us)/1'000'000:1.0f/60;r.tick_us=now;
         schedule(r);
-        if(r.pending.empty() && r.playing)causality::advance(causality::playback_ms(),0);
+        if(r.pending.empty() && r.playing){r.world_rate=0;apply_clocks(r,r.last);causality::advance(causality::playback_ms(),0);}
         h_steps.add(static_cast<float>(r.pending.size()));
         while (!r.pending.empty() && g_fault.empty()) {
             const auto value = r.pending.front(); r.pending.pop_front();
@@ -358,7 +488,7 @@ void schedule(Replica& r) {
     if (!r.pending.empty()) {
         float total = 0;
         for (const auto& part : r.pending) total += part.frame.dt;
-        *g_schema.dilation.at<float>(pawn) = total / std::max(g_dt, 0.001f);
+        *g_schema.dilation.at<float>(pawn) = total / std::max(g_dt, 0.000001f);
         return;
     }
     const float buffer = buffered(r);
@@ -371,8 +501,8 @@ void schedule(Replica& r) {
     r.started = true;
     // Correct only clock drift, never multiply time by the integer count of arrivals.
     const float desired = std::clamp(1.0f + (buffer - 0.05f) * 2.0f, 0.9f, 1.1f);
-    r.rate += (desired - r.rate) * (1.0f - std::exp(-4.0f * g_dt));
-    float budget = g_dt * r.rate, total = 0, world_total = 0;
+    r.rate += (desired - r.rate) * (1.0f - std::exp(-4.0f * g_playout_dt));
+    float budget = g_playout_dt * r.rate, total = 0, world_total = 0;
     while (budget > 0 && !r.frames.empty()) {
         const auto& source = r.frames.front();
         const float remaining = std::max(source.step - r.elapsed, 0.0f);
@@ -390,8 +520,8 @@ void schedule(Replica& r) {
         else { r.elapsed += span; break; }
     }
     if (budget > 0.0001f) ++g_starved;
-    *g_schema.dilation.at<float>(pawn) = total / std::max(g_dt, 0.001f);
-    r.world_rate = world_total / std::max(g_dt,0.001f);
+    *g_schema.dilation.at<float>(pawn) = total / std::max(g_dt, 0.000001f);
+    r.world_rate = world_total / std::max(g_dt,0.000001f);
     h_rate.add(*g_schema.dilation.at<float>(pawn));
 }
 }
@@ -406,9 +536,10 @@ void client_tick(std::uint16_t map, Text text) {
     }
 }
 void forget(std::uint16_t seat) {
+    if(auto i=g_replicas.find(seat);i!=g_replicas.end()){restore_clocks(i->second.pawn.get());command_context::forget(i->second.pawn.get());}
     g_replicas.erase(seat);
 }
-void reset() { g_replicas.clear(); g_state_classes.clear(); g_text = nullptr; g_fault.clear(); causality::reset(); }
+void reset() { restore_clocks();g_replicas.clear(); g_state_classes.clear(); g_text = nullptr; g_fault.clear(); command_context::reset(); causality::reset(); }
 ue::UObject* actor(std::uint16_t seat) { const auto i = g_replicas.find(seat); return i == g_replicas.end() ? nullptr : i->second.pawn.get(); }
 bool owns(ue::UObject* object) {
     if (!object || g_replicas.empty() || !g_schema.ready()) return false;
@@ -434,12 +565,13 @@ bool owns(ue::UObject* object) {
     }
     return false;
 }
-std::string fault() { return g_fault; }
+std::string fault() { return g_fault.empty() ? command_context::fault() : g_fault; }
 bool source(ue::UObject* object, Source& out) {
     out = {};
     if (!object || !g_schema.ready()) return false;
     const auto* s = core::schema::script();
     for (int depth = 0; object && depth < 8; ++depth) {
+        if(g_restore_pawn.valid()&&object==g_restore_pawn.get()){out=g_restore_source;return true;}
         if (g_sink) {
             for (std::uint16_t seat = 1; seat <= 8; ++seat) {
                 auto* pawn = seat == 1 ? world::p1_pawn() : core::pawn(seat);
@@ -459,6 +591,6 @@ bool source(ue::UObject* object, Source& out) {
 }
 std::string describe() {
     std::size_t queued = 0; for (const auto& [seat, r] : g_replicas) queued += r.frames.size();
-    return std::format("native Lily: replicas={} captured={} received={} consumed={} queued={} profiles={} stateChanges={} edges={}/{} starved={} fault='{}'\n", g_replicas.size(), g_captured, g_received, g_consumed, queued, g_profiles, g_state_changes, g_edges_played, g_edges_received, g_starved, g_fault);
+    return std::format("native Lily: replicas={} captured={} received={} consumed={} queued={} profiles={} stateChanges={} edges={}/{} starved={} roleClocks={} clockWrites={} fault='{}'\n", g_replicas.size(), g_captured, g_received, g_consumed, queued, g_profiles, g_state_changes, g_edges_played, g_edges_received, g_starved, g_role_clocks.size(),g_clock_writes,g_fault)+lily_events::describe();
 }
 }

@@ -1,0 +1,38 @@
+# ADR0012：远端环境感知与原版命令状态的职责（2026-11-07）
+
+状态：用户授权持续修复并实机验证。
+
+问题：0639996在恢复原版Tick的同时关闭远端Pawn全部Primitive overlap，并在命令运行前对齐全部ActiveStates。抓墙等环境动作因此可能失去触发来源，且命令生成的状态会提前阻止原版命令开始。
+
+实施先建立真实抓墙失败基线，随后收窄环境感知的禁止范围，并建立可审计的原版命令状态所有权。原版命令的StateTimeline、召唤、动画与结束由原版执行；外部权威状态另按来源对齐。先通过抓墙，再用抓钩实际检验共享接缝，不以单技能动画白名单替代原因修复。
+
+环境查询/感知、命令/表现执行、权威结算是独立职责。若两世界的真实环境和时间仍导致分叉，则传递Host已接受的环境事实，在原版命令入口消费；不把整个游戏改成输出复制。Hook与缓存仍遵守SHA/前缀、反射优先、weak/地图/会话失效及原生计数要求。
+
+测试只在配置内隔离实例，开始前整体备份SaveGames和Saved/ELMP/ELMP。本轮不做前台自动化。验收包括两只Spine角色、命令开始/保持/结束、附着和回收，以及抓钩同类表现；结论、实际范围和遗留原因域写kb。实现选择根据第一处分叉证据修订，不预先承诺某一个通用入口覆盖所有外部原因。
+
+
+首轮实现：删除远端Pawn全Primitive关闭overlap，使用core/permission既有目标权限（远端表现座位的travel/rest/story/world/pickup/interact/save均关闭）及全局结算闸。只撤掉额外的感知屏蔽，不把已由权限关闭的AutoCollect Sphere重新开启。
+
+按原生CommandAction.Start/End观察实际活跃命令，读取其真实StateTimeline.StateEntries；主Pawn与Spirit按精确Pawn分别归属。LilyFrame协议12增加命令拥有状态类列表；Client只对齐其余外部状态，保护本地原版命令的状态，同时不提前注入Host命令拥有的状态。按实际命令数据收集，不建立WallGrab动画/状态白名单。当前命令的基线扫描只用已知CommandQueue/Command类型；不遍历未知对象属性。记录原生开始、结束、bootstrap、弱失效、容量与故障，并随角色/地图/会话撤销。
+
+
+首轮实测：抓墙已自然生成双角色并正常结束，游泳也恢复原版环境分支。抓钩出现独立Spirit本地时间推进过快及静止朝向不同，继续补齐共同上下文：LilyFrame携带原版朝向和按原版拥有关系归属的Spirit/Companion类时钟（每类真实CustomTimeDilation，不复制姿态）。Client按同一Host World delta / 本地World delta比率推进，角色换代/离会恢复原倍率。重复同类但倍率不同不静默合并，明确失败；类表最多32。
+
+Host播放间隔使用InputConsume连续样本的单调墙钟差，原版World delta和Pawn delta仍分别保留。World全局减速不能同时缩短网络播放间隔而让Client快速耗尽输入；Host真实卡帧仍按中位数压缩播放间隔。面向位置、输入、朝向、原版状态所有权和独立时钟分别建模，避免把输入轴0误当朝向未知、把世界减速误当高频输入。
+
+Client网络播放预算同样使用该副本连续原版Tick接缝的单调墙钟差；本地World delta仅用来求原版Pawn/组件倍率。这样两端任意一侧的全局减速都不会改变网络消费速度。独立角色断流时随共同游标冻结，恢复/复用/退出时恢复原倍率。
+
+
+进行中重连实测还缺少一次性命令开始。增加数据驱动的持续命令基线：仅原版Gameplay命令最后动画为loop、StateTimeline全部为0→0持续项、不消耗MP，且Ability/Move/FX/Sound时间线均空时可恢复。记录Host命令代次、原始输入、方向/按钮及执行时间；Client已自然开始则绑定原生激活，缺失则经原版ClearCommandBuffer/AddNewImmediateCommand恢复，结束用RequestEnd；不按CAS_WallGrab或动画名白名单。该基线不声称能恢复任意有限攻击/位移的中间态。
+
+原生命令trace补引擎Post中的实际Spine名称/轨道时间、源输入游标、Actor倍率，避免后台工具请求采样错过有限动画而误判没有执行。采样只在trace开启时，仍有1024条容量；地图/会话撤销所有权与回调。
+
+抓钩进一步实测：远端已有能力库存但新Pawn的HookComponent未收到OnAptitudeUnlocked，Tick=false且HookPoints空；调原版OnUnlockAptitude后立即从既有overlap重建列表并启Tick。修复采用Pawn原版无参OnAptitudeUnlocked多播，在副本profile应用成功后每个Pawn/配置代次通知一次，覆盖所有同类监听组件，不枚举组件私有刷新函数。不增删能力库存，不扩大结算权限。
+
+用户追加死亡/休息与敌人朝向审计。死亡、休息可能由CommandQueue之外的SpineAnimation逻辑层驱动；先采样其原版层数据，表现恢复只经过动画组件入口，不调用死亡结算/重生/存档图。敌人朝向同时核对逻辑Facing和最终骨架/Scene变换，防止只对一个变量自证。
+
+已核实追加缺口：Host死亡动画存在于原版SpineAnimation逻辑DEATH层(6)，复活躺卧存在EVENT层(9)，CommandQueue均不拥有这些层。新增有限的外部动画层上下文(6–9)：传递Host实际当前定义、原生TrackEntry代次与时间，经原版PlayAnimationDefinition/StopAnimation接入同一逻辑层，不传递/执行Host的完成回调、root motion或MovementMode副作用，不调用DeathComponent。自己的预测P1也接收该外部层，但常规动作继续本地预测。此域有意只解决外部演出层，不重启普通ACTION命令或扩大死亡结算权限。
+
+敌人镜像实测：e2090 Priest8逻辑Facing、Actor旋转、Scene变换和Spine整体倍率一致，原生根骨局部ScaleX却1/-1相反，导致持续镜像。敌人现为输出呈现，普通current-track集合不能代表历史混合留下的骨架根状态。补入全Spine通用root-bone局部ScaleX/Y上下文(不按敌人类白名单)，在原版Skeleton::updateWorldTransform收束点、动画apply之后/世界矩阵生成之前写入，再由原版更新整棵骨架。只作用于已登记呈现Skeleton；莉莉原版执行和Host骨架不被改写。布局以本Shipping IDA及读取现场为准：component skeleton+224、bones begin/end+48/+56、root scales+108/+112；并加SHA/前缀与指令位移校验、weak所属验证、重建/离图撤销和审计。
+
+持续命令基线的资格也递归检查CommandActionSummon.SpiritCommandList内的实际命令CDO(最多4层)，显灵同样必须是无消耗、无效果/位移/声音时间线的持续loop，避免只检查莉莉外壳而重放显灵攻击。进行中重建重新进入原版开始→loop，不伪造过去的动画完成回调，也不宣称精确恢复任意过去相位。

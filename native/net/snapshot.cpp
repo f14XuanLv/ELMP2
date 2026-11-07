@@ -24,7 +24,9 @@ enum Tag : std::uint8_t { T_END = 0, T_L = 1, T_E = 2, T_ED = 3, T_W = 4, T_PK =
 
 template <class T>
 void put(Writer& w, T v) {
-    if constexpr (std::is_same_v<T, Pose>) {
+    if constexpr (std::is_same_v<T, LilyEvents>) {
+        for(const auto& e:v.layers){w.u32(e.generation);if(!e.generation)continue;w.u16(e.animation);w.u8(e.flags);w.f32(e.time);w.f32(e.start);w.f32(e.end);w.f32(e.blend);}
+    } else if constexpr (std::is_same_v<T, Pose>) {
         w.u8(v.flags); w.u8(v.count);
         for (std::size_t i = 0; i < v.count && i < kPoseTracks; ++i) {
             const auto& t = v.tracks[i];
@@ -38,6 +40,7 @@ void put(Writer& w, T v) {
         if (v.valid & 2) for (float f : v.renderer) w.f32(f);
         if (v.valid & 4) for (float f : v.color) w.f32(f);
         if (v.valid & 8) w.f32(v.dissolve);
+        if (v.valid & 16) for(float f:v.root_scale)w.f32(f);
     } else if constexpr (std::is_same_v<T, float>) w.f32(v);
     else if constexpr (sizeof(T) == 1) w.u8(static_cast<std::uint8_t>(v));
     else if constexpr (sizeof(T) == 2) w.u16(static_cast<std::uint16_t>(v));
@@ -46,7 +49,9 @@ void put(Writer& w, T v) {
 
 template <class T>
 T get(Reader& r) {
-    if constexpr (std::is_same_v<T, Pose>) {
+    if constexpr (std::is_same_v<T, LilyEvents>) {
+        LilyEvents v;for(auto& e:v.layers){e.generation=r.u32();if(!e.generation)continue;e.animation=r.u16();e.flags=r.u8();e.time=r.f32();e.start=r.f32();e.end=r.f32();e.blend=r.f32();if(!e.animation||(e.flags&~3))r.fail();for(float f:{e.time,e.start,e.end,e.blend})if(!std::isfinite(f)||f<0)r.fail();}return v;
+    } else if constexpr (std::is_same_v<T, Pose>) {
         Pose p;
         p.flags = r.u8(); p.count = r.u8();
         if (p.count > kPoseTracks) { r.fail(); return {}; }
@@ -61,7 +66,7 @@ T get(Reader& r) {
     } else if constexpr (std::is_same_v<T, Visual>) {
         Visual v;
         v.valid = r.u8();
-        if (v.valid & ~15) { r.fail(); return {}; }
+        if (v.valid & ~31) { r.fail(); return {}; }
         const auto read = [&](auto& values) { for (float& f : values) { f = r.f32(); if (!std::isfinite(f)) r.fail(); } };
         if (v.valid & 1) read(v.pivot);
         if (v.valid & 2) read(v.renderer);
@@ -70,6 +75,7 @@ T get(Reader& r) {
             v.dissolve = r.f32();
             if (!std::isfinite(v.dissolve)) r.fail();
         }
+        if(v.valid&16)read(v.root_scale);
         return v;
     } else if constexpr (std::is_same_v<T, float>) {
         const float f = r.f32();
@@ -82,10 +88,10 @@ T get(Reader& r) {
 
 template <class T>
 bool field_equal(const T& a, const T& b) {
-    if constexpr (std::is_same_v<T, Pose>) return a == b;
+    if constexpr (std::is_same_v<T, Pose>||std::is_same_v<T,LilyEvents>) return a == b;
     else if constexpr (std::is_same_v<T, Visual>)
         return a.valid == b.valid && (!(a.valid & 1) || a.pivot == b.pivot) && (!(a.valid & 2) || a.renderer == b.renderer) &&
-               (!(a.valid & 4) || a.color == b.color) && (!(a.valid & 8) || a.dissolve == b.dissolve);
+               (!(a.valid & 4) || a.color == b.color) && (!(a.valid & 8) || a.dissolve == b.dissolve) && (!(a.valid&16)||a.root_scale==b.root_scale);
     else return std::memcmp(&a, &b, sizeof(T)) == 0;
 }
 

@@ -6,6 +6,34 @@
   "image_base_note": "0x140000000",
   "_comment": "运行时加载（Mods/ELMP/data/binary/EL.json）。只放没有反射入口的原生函数与无反射的原始结构偏移；适用的 EXE 由 elmp.json game.sha256 唯一给出（C1.5，本文件不重复哈希）。每个函数：预检通过（EXE SHA-256）且 rva 处字节与 prefix 逐字节一致才可武装（fail closed）。每个偏移：check 描述它与反射字段的关系（equals = 与该反射属性偏移相等；within = 落在 after 属性末尾与 before 属性起点之间，before 为 <end> 表示原生类 PropertiesSize；struct_size = 等于该结构体尺寸），世界就位后逐项校验，失败的项其依赖能力 fail closed。source 标注证据等级与出处。",
   "functions": {
+    "CommandStartExec": {
+      "rva": "0x00D4C370",
+      "prefix": "488B42204533C04885C0410F95C04C03C04C894220488B0148FFA070020000",
+      "signature": "void execStartCommandAction(this,FFrame*,result); virtual slot624",
+      "owner": "coop/command_context",
+      "source": "[E-IDA] ELMP v2 2026-11-07 elmp DB decompile/get_bytes; reflected exec and CDO virtual/direct target cross-check"
+    },
+    "CommandStartNative": {
+      "rva": "0x00D29F90",
+      "prefix": "488BC4488958084889681048897018488978204156",
+      "signature": "void UCommandAction::StartCommandAction(this)",
+      "owner": "coop/command_context",
+      "source": "[E-IDA] ELMP v2 2026-11-07 elmp DB decompile/get_bytes; reflected exec and CDO virtual/direct target cross-check"
+    },
+    "CommandEndExec": {
+      "rva": "0x00D4A840",
+      "prefix": "48895C2408574883EC20488BDAC644243800488BF9",
+      "signature": "void execEndCommandAction(this,FFrame*,result); E8 at0x6B",
+      "owner": "coop/command_context",
+      "source": "[E-IDA] ELMP v2 2026-11-07 elmp DB decompile/get_bytes; reflected exec and CDO virtual/direct target cross-check"
+    },
+    "CommandEndNative": {
+      "rva": "0x00D08530",
+      "prefix": "48895C240848896C241856574154415641574883EC40",
+      "signature": "void UCommandAction::EndCommandAction(this,uint8 RemoveType)",
+      "owner": "coop/command_context",
+      "source": "[E-IDA] ELMP v2 2026-11-07 elmp DB decompile/get_bytes; reflected exec and CDO virtual/direct target cross-check"
+    },
     "SpiritStartNative": {
       "rva": "0x00CF2F00",
       "prefix": "48895C24104889742418574883EC30488BF2488BD9",
@@ -359,6 +387,34 @@
       "signature": "UTrackEntry* USpineSkeletonAnimationComponent::GetCurrent(this, int index); read-only layout proof, not a hook",
       "owner": "coop/presentation",
       "source": "[E-IDA] ELMP v2 2026-11-04 execGetCurrent 0x820AE0 -> 0x7E7E30; component state+520; native tracks begin+136/end+144. research-spine/SkeletonGetCurrentNative.c, layout-proof.json"
+    },
+    "SpineSkeletonWorld": {
+      "rva": "0x0081C9D0",
+      "prefix": "48895C24084889742410574883EC204C8B81C001000033DB4C2B81B801000048",
+      "signature": "SpineSkeletonWorld",
+      "owner": "coop/spine_root",
+      "source": "[E-IDA][E-实测] ELMP v2 2026-11-07; build/wallgrab-fix/ida-root{5,8,9}-result.json and native-root-layout.json"
+    },
+    "SpineSkeletonPointer": {
+      "rva": "0x007E80A0",
+      "prefix": "40534883EC20488B01488BD9FF9000040000488B83E00000004885C0740EF30F1080F4010000",
+      "signature": "SpineSkeletonPointer",
+      "owner": "coop/spine_root",
+      "source": "[E-IDA][E-实测] ELMP v2 2026-11-07; build/wallgrab-fix/ida-root{5,8,9}-result.json and native-root-layout.json"
+    },
+    "SpineBonesSetup": {
+      "rva": "0x00818870",
+      "prefix": "4883EC084C8B59384533C94C2B59304C8BC149C1FB03",
+      "signature": "SpineBonesSetup",
+      "owner": "coop/spine_root",
+      "source": "[E-IDA][E-实测] ELMP v2 2026-11-07; build/wallgrab-fix/ida-root{5,8,9}-result.json and native-root-layout.json"
+    },
+    "SpineRootUpdate": {
+      "rva": "0x0081A990",
+      "prefix": "4883EC38F20F1041744C8B496C4C8B4164488B515CF20F11442420E8201A00004883C438C3",
+      "signature": "SpineRootUpdate",
+      "owner": "coop/spine_root",
+      "source": "[E-IDA][E-实测] ELMP v2 2026-11-07; build/wallgrab-fix/ida-root{5,8,9}-result.json and native-root-layout.json"
     }
   },
   "offsets": {
@@ -494,6 +550,54 @@
         }
       },
       "source": "[E-IDA] ELMP v2 2026-11-04 native GetCurrent 0x7E7E30 instruction displacement; not reconstructed plugin Vector layout"
+    },
+    "SpineSkeletonComponent.skeleton": {
+      "value": 224,
+      "size": 8,
+      "check": {
+        "native_offset": {
+          "function": "SpineSkeletonPointer",
+          "byte": 21,
+          "width": 4
+        }
+      },
+      "source": "[E-IDA] ELMP v2 2026-11-07 verified Shipping instructions; scaleXY holds ScaleX/ScaleY pair"
+    },
+    "SpineSkeleton.bonesBegin": {
+      "value": 48,
+      "size": 8,
+      "check": {
+        "native_offset": {
+          "function": "SpineBonesSetup",
+          "byte": 14,
+          "width": 1
+        }
+      },
+      "source": "[E-IDA] ELMP v2 2026-11-07 verified Shipping instructions; scaleXY holds ScaleX/ScaleY pair"
+    },
+    "SpineSkeleton.bonesEnd": {
+      "value": 56,
+      "size": 8,
+      "check": {
+        "native_offset": {
+          "function": "SpineBonesSetup",
+          "byte": 7,
+          "width": 1
+        }
+      },
+      "source": "[E-IDA] ELMP v2 2026-11-07 verified Shipping instructions; scaleXY holds ScaleX/ScaleY pair"
+    },
+    "SpineBone.scaleXY": {
+      "value": 108,
+      "size": 8,
+      "check": {
+        "native_offset": {
+          "function": "SpineRootUpdate",
+          "byte": 12,
+          "width": 1
+        }
+      },
+      "source": "[E-IDA] ELMP v2 2026-11-07 verified Shipping instructions; scaleXY holds ScaleX/ScaleY pair"
     }
   }
 }

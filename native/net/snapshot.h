@@ -8,6 +8,7 @@
 
 #include "net/codec.h"
 #include "net/visual.h"
+#include "net/lily_events.h"
 
 #include <array>
 #include <cstdint>
@@ -44,9 +45,10 @@ struct LilyRow { // key = seat slot (1 = host P1)
     std::uint8_t heals = 0, mheals = 0;
     std::uint16_t skin = 0;
     std::uint16_t map = 0; // name id of the map the seat is in
+    LilyEvents events;
     static constexpr auto fields() {
         return std::make_tuple(&LilyRow::x, &LilyRow::y, &LilyRow::z, &LilyRow::facing, &LilyRow::alive, &LilyRow::hp, &LilyRow::mhp, &LilyRow::mp, &LilyRow::mmp,
-                               &LilyRow::heals, &LilyRow::mheals, &LilyRow::skin, &LilyRow::map);
+                               &LilyRow::heals, &LilyRow::mheals, &LilyRow::skin, &LilyRow::map, &LilyRow::events);
     }
 };
 

@@ -6,6 +6,7 @@
 
 #include "coop/client.h"
 #include "coop/native_lily.h"
+#include "coop/lily_events.h"
 #include "coop/causality.h"
 
 #include "coop/ability.h"
@@ -356,6 +357,7 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
                 *s.hp_max.at<std::int32_t>(hp) = row.mhp;
                 *s.hp_curr.at<std::int32_t>(hp) = std::max<std::int32_t>(row.hp, row.alive ? 1 : 0);
             }
+            if(p1&&!lily_events::apply(p1,row.events,f.t_ms,[](std::uint16_t id){return g_names.text(id);}))return coop::leave("Lily external animation context unavailable");
             continue;
         }
         if (row.key == 0 || row.key > 8) continue;
@@ -388,6 +390,7 @@ void present_lilies(const snap::Frame& f, const core::schema::Script& s) {
             *s.mp_max.at<std::int32_t>(mp) = row.mmp;
             *s.mp_curr.at<std::int32_t>(mp) = row.mp;
         }
+        if(!lily_events::apply(p,row.events,f.t_ms,[](std::uint16_t id){return g_names.text(id);}))return coop::leave("Lily external animation context unavailable");
     }
     std::vector<std::uint16_t> gone;
     for (auto& [k, c] : g_copies)
@@ -451,6 +454,7 @@ void reset_remote_world() {
     drop_copies();
     ability::client_reset(); // original equipment teardown may have emitted a final activation
     native_lily::reset();
+    lily_events::reset();
     reset_dynamic();
     for (auto& [name, t] : g_taken) release_presentation(t.enemy.get());
     g_taken.clear();

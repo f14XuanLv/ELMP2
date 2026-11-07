@@ -1,4 +1,5 @@
 #include "coop/visual_state.h"
+#include "coop/spine_root.h"
 
 #include "core/schema.h"
 #include "engine/handle.h"
@@ -195,6 +196,7 @@ void capture(ue::UObject* actor, net::snap::Visual& out) {
     out = {};
     if (!ue::alive(actor) || !resolve()) return void(++g_failures);
     auto& c = components(actor);
+    if(spine_root::capture(actor,out.root_scale))out.valid|=16;
     if (read_transform(c.pivot.get(), out.pivot)) out.valid |= 1;
     if (read_transform(c.renderer.get(), out.renderer)) out.valid |= 2;
     if (auto* r = c.renderer.get()) {
@@ -216,6 +218,7 @@ bool apply(ue::UObject* actor, const net::snap::Visual& in) {
     if (!ue::alive(actor) || !resolve()) return ++g_failures, false;
     auto& c = components(actor);
     bool ok = true;
+    if(in.valid&16)ok&=spine_root::apply(actor,in.root_scale);
     if (in.valid & 1) ok &= write_transform(c.pivot.get(), in.pivot);
     if (in.valid & 2) ok &= write_transform(c.renderer.get(), in.renderer);
     if (in.valid & 4) {
@@ -250,10 +253,10 @@ bool apply(ue::UObject* actor, const net::snap::Visual& in) {
     return ok;
 }
 
-void forget(ue::UObject* actor) { g_components.erase(ObjHandle::of(actor)); }
-void reset() { g_components.clear(); }
+void forget(ue::UObject* actor) { spine_root::forget(actor);g_components.erase(ObjHandle::of(actor)); }
+void reset() { spine_root::reset();g_components.clear(); }
 std::string describe() {
-    return std::format("visual: cached={} capture={} apply={} writes={} failures={}\n", g_components.size(), g_captured, g_applied, g_writes, g_failures) +
+    return spine_root::describe()+std::format("visual: cached={} capture={} apply={} writes={} failures={}\n", g_components.size(), g_captured, g_applied, g_writes, g_failures) +
            std::format("dissolve: ready={} captured={} writes={} missing={} disagree={} invalid={} schemaFailed={}\n", g_dissolve.ready, g_dissolve_captured,
                        g_dissolve_writes, g_dissolve_missing, g_dissolve_disagree, g_dissolve_invalid, g_dissolve_schema_failed);
 }

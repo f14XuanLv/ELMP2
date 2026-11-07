@@ -7,6 +7,7 @@
 #include "coop/host.h"
 #include "coop/session.h"
 #include "coop/causality.h"
+#include "coop/command_context.h"
 #include "coop/maps.h"
 #include "world/level_instance.h"
 #include "modes/hunter.h"
@@ -92,6 +93,9 @@ void hunter_cmd(Args a, std::string& out) {
 }
 
 void register_coop_commands() {
+    add("commandctx", "status | trace on|off|read", [](Args a, std::string& out) {
+        out += a.size()>0&&a[0]=="trace" ? coop::command_context::trace(a.size()>1?a[1]:"read") : coop::command_context::describe();
+    });
     add("causal", "status | trace on|off|read", [](Args a, std::string& out) {
         out += a.size() > 0 && a[0] == "trace" ? coop::causality::trace(a.size() > 1 ? a[1] : "read") : coop::causality::describe();
     });

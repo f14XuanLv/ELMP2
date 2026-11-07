@@ -139,7 +139,7 @@ CLIENT: y=-1957.1 z=467.2 relZ=-65.0 tick=false   ← 副本 tick 已关，三�
 | `BattleColorComponent`（敌人红光材质参数） | 材质状态 | 已按 bit3 复制因（见 `enemy-fx-graph.md`） |
 | `ColorComponent`（受击染色 / 默认色） | 材质状态 | 默认色已在副本上修正；受击闪白走 `hit_react` 复现 |
 | `SpineSkeletonRenderer.RelativeLocation` 等组件模板值 | 蓝图模板 | 已用 `skin::normalize` 抄回 |
-| 墙抓时的"狼" | 待定：Lily 同一骨架的动画（track 0）还是会另生成 Actor | 待复现取证：Host 抓墙时读 `GetCurrent(0)` 的动画名，并截图对比 |
+| 墙抓时的"狼" | [E-CUE，2026-11-07复核] 独立 `BP_s5070_Killer` Spirit，自有Spine组件 | 已核CAS_WallGrab召唤与双动画；已实机恢复双角色原版命令、状态所有权与环境感知；抓钩/死亡/休息及敌人镜像扩展见[抓墙管线记录](wallgrab-native-pipeline-2026-11-07.md) |
 | 客户端看敌人"普遍高一个身位" | 待定 | 待用同样方法量：客户端敌人的 `SpineSkeletonRenderer.RelativeLocation`、`row.z` 与 Host 的差 |
 
 > 方法：这类"看起来是动画/特效"的问题，先量**同一进程里两只同类 Actor 的数值差**（本地原版 vs 自建副本），

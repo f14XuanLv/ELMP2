@@ -19,10 +19,12 @@ TEST_MAIN({
         using namespace elmp::net::proto;
         LilyFrame a, b;
         a.seat = 1; a.map = 2; a.seq = 1; a.generation = 10; a.dt = a.step = 1.0f / 60;
-        a.epoch=2;a.view=1;a.t_ms=100;a.world_dt=a.dt;
-        a.mode = 1; a.state_count = static_cast<std::uint8_t>(kLilyStates);
+        a.epoch=2;a.view=1;a.t_ms=100;a.world_dt=a.dt;a.facing=2;
+        a.persistent_class=7;a.persistent_token=900;a.persistent_input=1;a.persistent_direction=3;a.persistent_elapsed=100;
+        a.actor_clock_count=kLilyClocks;for(unsigned i=0;i<kLilyClocks;++i)a.actor_clocks[i]={static_cast<std::uint16_t>(i+1),0.1f};
+        a.mode = 1; a.state_count = a.command_state_count = static_cast<std::uint8_t>(kLilyStates);
         a.flags = a.raw = 0x3FE; a.input[0] = -1; a.velocity[1] = 300;
-        for (std::size_t i = 0; i < kLilyStates; ++i) a.states[i] = static_cast<std::uint16_t>(i + 1);
+        for (std::size_t i = 0; i < kLilyStates; ++i) a.states[i] = a.command_states[i] = static_cast<std::uint16_t>(i + 1);
         std::array<std::uint8_t, 512> wire{};
         const auto n = encode(a, wire);
         CHECK(n > 0 && decode(std::span(wire.data(), n), b) && a == b);
@@ -39,7 +41,15 @@ TEST_MAIN({
         CHECK(long_frame > 0 && decode(std::span(wire.data(), long_frame), b) && a == b);
         a.step = 60.01f; CHECK(encode(a, wire) == 0);
         a.step = 1.0f / 60;
-        a.state_count = 49; CHECK(encode(a, wire) == 0);
+        a.actor_clock_count=kLilyClocks+1;CHECK(encode(a,wire)==0);a.actor_clock_count=kLilyClocks;
+        a.actor_clocks[0].scale=std::numeric_limits<float>::quiet_NaN();CHECK(encode(a,wire)==0);a.actor_clocks[0].scale=0.1f;
+        a.facing=3;CHECK(encode(a,wire)==0);a.facing=2;
+        a.persistent_direction=9;CHECK(encode(a,wire)==0);a.persistent_direction=3;
+        a.persistent_elapsed=std::numeric_limits<float>::infinity();CHECK(encode(a,wire)==0);a.persistent_elapsed=100;
+        a.persistent_class=0;CHECK(encode(a,wire)==0);a.persistent_class=7;
+        a.command_state_count = 49; CHECK(encode(a, wire) == 0);
+        a.command_state_count = 48; a.command_states[0]=0; CHECK(encode(a, wire) == 0);
+        a.command_states[0]=1; a.state_count = 49; CHECK(encode(a, wire) == 0);
     }
     {
         using namespace elmp::net::proto;
@@ -133,12 +143,15 @@ TEST_MAIN({
             e->x = k * 1.5f, e->hp = k;
         }
         for (std::uint16_t k = 1; k <= 300; ++k) a->w.add(k)->flags = 1;
-        a->l.add(1)->hp = 400;
+        auto* lily=a->l.add(1);lily->hp=400;
+        lily->events.layers[0]={12,7,2,0.5f,0,0,0};
+        lily->events.layers[3]={13,8,1,8,0,0,.1f};
         std::vector<std::uint8_t> buf(64 * 1024);
         const auto n_full = encode(*a, nullptr, 0, buf);
         CHECK(n_full > 0);
         CHECK(decode(std::span(buf.data(), n_full), nullptr, *got));
         CHECK(got->e.n == 128 && got->e.find(77)->x == 77 * 1.5f && got->w.n == 300 && got->l.find(1)->hp == 400 && got->me == 2);
+        CHECK(got->l.find(1)->events==lily->events);
         *b = *a;
         b->seq = 2;
         b->e.rows[5].hp = 999;                      // one field changed
@@ -154,6 +167,12 @@ TEST_MAIN({
         CHECK(!decode(bad, nullptr, *got2));
         std::vector<std::uint8_t> small(100);
         CHECK(encode(*a, nullptr, 0, small) == 0); // too small → 0, no overflow
+        *b=*a;b->seq=3;b->l.rows[0].events={};
+        auto event_size=encode(*b,a.get(),1,buf);CHECK(event_size&&decode(std::span(buf.data(),event_size),a.get(),*got)&&got->l.rows[0].events==LilyEvents{});
+        for(float invalid:{-1.0f,std::numeric_limits<float>::quiet_NaN(),std::numeric_limits<float>::infinity()}){
+            *b=*a;b->l.rows[0].events.layers[0].time=invalid;
+            event_size=encode(*b,nullptr,0,buf);CHECK(event_size&&!decode(std::span(buf.data(),event_size),nullptr,*got));
+        }
     }
     { // Real track indices (damage=80), same-name restart generations, explicit empty/removal, and full capacity.
         using namespace snap;
@@ -166,7 +185,7 @@ TEST_MAIN({
             t.t = 0.75f; t.mix_time = 0.1f; t.mix_duration = 0.2f;
             t.animation_start = 0.2f; t.animation_end = 2; t.track_end = std::numeric_limits<float>::max();
         }
-        Visual visual; visual.valid = 15; visual.pivot.fill(1); visual.renderer.fill(2); visual.color.fill(0.5f); visual.dissolve = 0.375f;
+        Visual visual; visual.valid = 31; visual.pivot.fill(1); visual.renderer.fill(2); visual.color.fill(0.5f); visual.dissolve = 0.375f;visual.root_scale={-1,1};
         const auto fill = [&](auto& section, std::uint16_t cap) {
             for (std::uint16_t k = 1; k <= cap; ++k) { auto* row = section.add(k); row->pose = pose; row->visual = visual; }
         };
@@ -180,7 +199,7 @@ TEST_MAIN({
         auto n = encode(*a, nullptr, 0, bytes);
         CHECK(n > 64 * 1024 && n < bytes.size());
         CHECK(decode(std::span(bytes.data(), n), nullptr, *out));
-        CHECK(out->e.rows[0].pose == pose && out->ed.rows[63].visual.color == visual.color);
+        CHECK(out->e.rows[0].pose == pose && out->ed.rows[63].visual.color == visual.color && out->e.rows[0].visual.root_scale==visual.root_scale);
         const auto maximum_full = n;
         std::fprintf(stderr, "maximum native-Lily/enemy snapshot: %zu bytes (limit %zu)\\n", n, bytes.size());
         *b = *a; b->seq = 2;
@@ -228,7 +247,7 @@ TEST_MAIN({
             if (bad == 0) b->e.rows[0].pose.count = 9;
             if (bad == 1) b->e.rows[0].pose.tracks[1].index = 0;
             if (bad == 2) b->e.rows[0].pose.tracks[0].t = std::numeric_limits<float>::infinity();
-            if (bad == 3) b->e.rows[0].visual.valid = 16;
+            if (bad == 3) b->e.rows[0].visual.valid = 32;
             if (bad == 4) b->e.rows[0].visual.color[0] = std::numeric_limits<float>::quiet_NaN();
             if (bad == 5) b->e.rows[0].visual.dissolve = std::numeric_limits<float>::infinity();
             if (bad == 6) b->e.rows[0].pose.flags = 9; // unknown state flag
