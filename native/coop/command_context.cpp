@@ -21,7 +21,7 @@ namespace elmp::coop::command_context {
 namespace {
 struct Schema {
     ObjHandle command_class, timeline_class, entry_class, queue_class;
-    reflect::PropRef pawn, timeline, entries, state, action, result, command_id, queue_pawn, queued;
+    reflect::PropRef pawn, timeline, entries, state, action, result, command_id, frame_id, ttl, queue_pawn, queued,settings_action;
     reflect::FuncRef current;
     ObjHandle gameplay_class;
     ObjHandle summon_class;
@@ -39,6 +39,7 @@ struct Active {
     native_lily::Source source;
     std::uint64_t token = 0;
     std::uint64_t parent = 0;
+    std::uint32_t start_cursor = 0;
     std::vector<ObjHandle> states;
 };
 std::unordered_map<ObjHandle, Active> g_active;
@@ -49,9 +50,10 @@ struct ActionScope {
     explicit ActionScope(const Active& a):value{a.pawn,a.source,a.token}{value.source.command_tick=true;g_execution=&value;}
     ~ActionScope(){g_execution=previous;}
 };
-struct Pending { ObjHandle queue,pawn,action;std::int32_t id=0;native_lily::Source source;std::uint64_t parent=0; };
+struct Pending { ObjHandle queue,pawn,type,action;std::int32_t id=0,frame=0;native_lily::Source source;std::uint64_t parent=0;bool queued=false; };
 std::unordered_map<ObjHandle,Pending> g_pending;
 std::uint64_t g_derived_queued=0,g_inherited=0,g_pending_pruned=0;
+std::uint64_t g_input_queued=0,g_input_bound=0;
 std::deque<json::Value> g_trace;
 bool g_enabled = false, g_tracing = false;
 std::string g_fault;
@@ -68,7 +70,12 @@ End g_end = nullptr;
 using Sample=std::uint8_t(__fastcall*)(ue::UObject*,float);
 using Add=std::int32_t(__fastcall*)(ue::UObject*,std::uint8_t,std::uint8_t,const void*,std::int32_t,bool);
 Sample g_sample=nullptr;Add g_add=nullptr;
-void prune();
+using Admit=std::int32_t(__fastcall*)(ue::UObject*,const void*,const void*,std::int32_t);
+using Accept=bool(__fastcall*)(ue::UObject*,ue::UObject*);
+Admit g_admit=nullptr;Accept g_accept=nullptr;
+using Create=ue::UObject*(__fastcall*)(ue::UObject*,std::uint8_t,std::uint8_t,const void*);
+Create g_create=nullptr;
+void prune(bool final=false);
 ue::UObject* queue_of(ue::UObject* pawn){
     const auto* s=core::schema::script();if(!s||!pawn)return nullptr;
     if(pawn->IsA(static_cast<ue::UClass*>(s->zenith_character_class.get())))return s->zc_command_queue.object(pawn);
@@ -103,7 +110,7 @@ bool eligible(ue::UObject* action,unsigned depth=0) {
     return true;
 }
 void sample() {
-    if(!g_enabled)return;prune();if(!g_tracing)return;
+    if(!g_enabled)return;prune(true);if(!g_tracing)return;
     const auto* s=core::schema::script();if(!s)return;
     for(const auto& [weak,a]:g_active)if(auto* command=weak.get();command&&a.pawn.valid()) {
         auto* anim=g_schema.cached_anim.object(command);auto* skeleton=anim?g_schema.skeleton.object(anim):nullptr;
@@ -121,15 +128,58 @@ void sample() {
     }
 }
 void fail(std::string why) { if (g_fault.empty()) g_fault = std::move(why); }
-void prune() {
+void pipeline(std::string_view event,ue::UObject* queue,ue::UObject* cmd,int accepted=-1) {
+    if(!g_tracing||!cmd)return;
+    auto* pawn=g_schema.queue_pawn.object(queue);native_lily::Source src;
+    if(!pawn||!native_lily::source(pawn,src)||src.domain)return;
+    auto* action=g_schema.action.object(cmd);if(!action)return;
+    auto row=json::Value::object();row.set("type",std::string(event));row.set("t_us",clock::now_us());
+    row.set("seat",src.seat);row.set("input",static_cast<std::int64_t>(src.seq));
+    row.set("id",g_schema.command_id.read<std::int32_t>(cmd));row.set("frame",g_schema.frame_id.read<std::int32_t>(cmd));
+    row.set("ttl",g_schema.ttl.read<float>(cmd));row.set("accepted",accepted);row.set("command",log::utf8(action->GetClassPrivate()->GetPathName()));
+    const auto list=reflect::array_at(queue,g_schema.queued);
+    if(list.num>0&&list.num<=4096&&list.data)if(auto* head=reinterpret_cast<ue::UObject**>(list.data)[0])if(auto* running=g_schema.action.object(head)){
+        row.set("head",log::utf8(running->GetClassPrivate()->GetPathName()));reflect::Frame f(g_schema.elapsed);if(f.invoke(running))row.set("elapsed",f.ret<float>());
+    }
+    if(g_trace.size()==1024)g_trace.pop_front();g_trace.push_back(std::move(row));
+}
+ue::UObject* queued_id(ue::UObject* queue,std::int32_t id){
+    const auto list=reflect::array_at(queue,g_schema.queued);if(id<0||list.num<0||list.num>4096||(list.num&&!list.data))return nullptr;
+    for(int i=list.num-1;i>=0;--i){auto* cmd=reinterpret_cast<ue::UObject**>(list.data)[i];if(ue::alive(cmd)&&g_schema.command_id.read<std::int32_t>(cmd)==id)return cmd;}return nullptr;
+}
+std::int32_t __fastcall admit(ue::UObject* queue,const void* input,const void* settings,std::int32_t frame){
+    const auto id=g_admit(queue,input,settings,frame);
+    if(g_enabled&&ue::on_game_thread()){
+        if(g_tracing)pipeline("admit.input",queue,queued_id(queue,id));
+    }
+    return id;
+}
+bool __fastcall accept(ue::UObject* queue,ue::UObject* cmd){
+    const auto allowed=g_accept(queue,cmd);
+    if(g_enabled&&g_tracing&&ue::on_game_thread())pipeline("accept",queue,cmd,allowed);
+    return allowed;
+}
+void prune(bool final) {
     std::erase_if(g_active, [](const auto& e) {
         if (e.first.valid() && e.second.pawn.valid()) return false;
         ++g_expired; return true;
     });
-    std::erase_if(g_pending,[](const auto& e){
+    std::erase_if(g_pending,[final](auto& e){
         auto* cmd=e.first.get();auto* queue=e.second.queue.get();
-        bool keep=cmd&&queue&&e.second.pawn.valid()&&e.second.action.valid()&&g_schema.command_id.read<std::int32_t>(cmd)==e.second.id&&g_schema.action.object(cmd)==e.second.action.get();
-        if(keep){const auto ar=reflect::array_at(queue,g_schema.queued);keep=ar.num>=0&&ar.num<=4096&&(!ar.num||ar.data);if(keep){auto** p=reinterpret_cast<ue::UObject**>(ar.data);keep=ar.num&&std::find(p,p+ar.num,cmd)!=p+ar.num;}}
+        auto& v=e.second;
+        bool keep=cmd&&queue&&v.pawn.valid()&&v.type.valid()&&g_schema.command_id.read<std::int32_t>(cmd)==v.id;
+        if(keep){
+            const auto ar=reflect::array_at(queue,g_schema.queued);keep=ar.num>=0&&ar.num<=4096&&(!ar.num||ar.data);
+            if(keep){
+                auto** p=reinterpret_cast<ue::UObject**>(ar.data);const bool present=ar.num&&std::find(p,p+ar.num,cmd)!=p+ar.num;
+                if(!present)keep=!v.queued&&!final;
+                else {
+                    auto* action=g_schema.action.object(cmd);keep=action&&action->GetClassPrivate()==v.type.get();
+                    if(keep&&!v.queued){v.action=ObjHandle::of(action);v.frame=g_schema.frame_id.read<std::int32_t>(cmd);v.queued=true;if(v.parent)++g_derived_queued;else ++g_input_queued;}
+                    if(keep)keep=v.action.get()==action&&v.frame==g_schema.frame_id.read<std::int32_t>(cmd);
+                }
+            }
+        }
         if(!keep)++g_pending_pruned;return !keep;
     });
 }
@@ -139,6 +189,7 @@ void record(std::string_view event, ue::UObject* command, const Active& a, int r
     j.set("type", std::string(event)); j.set("t_us", clock::now_us());
     j.set("token", static_cast<std::int64_t>(a.token));
     j.set("parent",static_cast<std::int64_t>(a.parent));
+    j.set("start_cursor",static_cast<std::int64_t>(a.start_cursor));
     j.set("seat", a.source.seat); j.set("input", static_cast<std::int64_t>(a.source.seq));
     j.set("generation", static_cast<std::int64_t>(a.source.generation));
     j.set("domain", a.source.domain);
@@ -165,7 +216,7 @@ bool insert(ue::UObject* command, Active& a) {
     if (!pawn || !native_lily::source(pawn, source)) return false;
     prune();
     if (g_active.size() >= 512 && !g_active.contains(ObjHandle::of(command))) { fail("active command ownership capacity"); return false; }
-    a.pawn = ObjHandle::of(pawn); a.source = source; a.token = ++g_next;
+    a.pawn = ObjHandle::of(pawn); a.source = source; a.token = ++g_next;a.start_cursor=source.seq;
     auto* queue=queue_of(pawn);
     // Native Start runs before UCommand sets IN_PROGRESS. GetCurrentCommand intentionally
     // returns null at that point; the native processor has already moved its command to head.
@@ -174,7 +225,7 @@ bool insert(ue::UObject* command, Active& a) {
     auto* cmd=ar.num?reinterpret_cast<ue::UObject**>(ar.data)[0]:nullptr;
     if(cmd&&g_schema.action.object(cmd)==command)if(auto p=g_pending.find(ObjHandle::of(cmd));p!=g_pending.end()){
         const auto& v=p->second;
-        if(v.queue.get()==queue&&v.pawn==a.pawn&&v.action.get()==command&&v.id==g_schema.command_id.read<std::int32_t>(cmd)&&v.source.seat==source.seat&&v.source.generation==source.generation&&v.source.domain==source.domain){a.source=v.source;a.parent=v.parent;++g_inherited;}
+        if(v.queued&&v.queue.get()==queue&&v.pawn==a.pawn&&v.action.get()==command&&v.id==g_schema.command_id.read<std::int32_t>(cmd)&&v.frame==g_schema.frame_id.read<std::int32_t>(cmd)&&v.source.seat==source.seat&&v.source.generation==source.generation&&v.source.domain==source.domain){a.source=v.source;a.parent=v.parent;if(v.parent)++g_inherited;else ++g_input_bound;}
         g_pending.erase(p);
     }
     collect(command, a);
@@ -219,15 +270,22 @@ std::uint8_t __fastcall sample_command(ue::UObject* command,float dt){
 std::int32_t __fastcall add_command(ue::UObject* queue,std::uint8_t direction,std::uint8_t button,const void* settings,std::int32_t frame,bool front){
     const auto id=g_add(queue,direction,button,settings,frame,front);
     if(!g_enabled||!ue::on_game_thread()||id<0)return id;
-    const auto ar=reflect::array_at(queue,g_schema.queued);
-    if(ar.num<0||ar.num>4096||(ar.num&&!ar.data)){fail("derived command queue layout");return id;}
-    for(int i=ar.num-1;i>=0;--i){auto* cmd=reinterpret_cast<ue::UObject**>(ar.data)[i];if(!ue::alive(cmd)||g_schema.command_id.read<std::int32_t>(cmd)!=id)continue;
-        const auto h=ObjHandle::of(cmd);g_pending.erase(h); // admission/reuse always revokes its previous origin
-        if(g_execution&&g_execution->token&&g_execution->source.domain==0&&g_execution->pawn.get()==g_schema.queue_pawn.object(queue)){
-            prune();if(g_pending.size()>=512){fail("derived command source capacity");return id;}
-            g_pending[h]={ObjHandle::of(queue),g_execution->pawn,ObjHandle::of(g_schema.action.object(cmd)),id,g_execution->source,g_execution->token};++g_derived_queued;
-        }break;
-    }return id;
+    if(g_tracing)pipeline("admit.explicit",queue,queued_id(queue,id));
+    return id;
+}
+ue::UObject* __fastcall create(ue::UObject* queue,std::uint8_t direction,std::uint8_t button,const void* settings){
+    if(!g_enabled||!ue::on_game_thread())return g_create(queue,direction,button,settings);
+    auto* pawn=g_schema.queue_pawn.object(queue);native_lily::Source src;
+    const bool tracked=pawn&&native_lily::source(pawn,src)&&src.seq&&!src.domain;
+    const auto owner=ObjHandle::of(pawn),type=ObjHandle::of(g_schema.settings_action.object(settings));
+    const auto parent=g_execution&&g_execution->token&&g_execution->pawn.get()==pawn?g_execution->token:0;
+    if(parent)src=g_execution->source;
+    auto* cmd=g_create(queue,direction,button,settings);if(!cmd)return cmd;
+    const auto h=ObjHandle::of(cmd);g_pending.erase(h);
+    if(!tracked||!owner.valid()||!type.valid())return cmd;
+    prune();if(g_pending.size()>=512){fail("admitted command source capacity");return cmd;}
+    g_pending[h]={ObjHandle::of(queue),owner,type,{},g_schema.command_id.read<std::int32_t>(cmd),0,src,parent,false};
+    return cmd;
 }
 bool install() {
     auto* cls = reflect::find_class(L"/Script/Zenith.CommandAction");
@@ -254,6 +312,10 @@ bool install() {
     g_schema.action = cmd.prop(L"CommandAction", reflect::Kind::Object);
     g_schema.result = cmd.prop(L"CurrentResult", reflect::Kind::Any, 1);
     g_schema.command_id=cmd.prop(L"CommandID",reflect::Kind::Int,4);
+    g_schema.frame_id=cmd.prop(L"FrameID",reflect::Kind::Int,4);g_schema.ttl=cmd.prop(L"TTL",reflect::Kind::Float,4);
+    reflect::Resolver settings("admitted settings",static_cast<ue::UStruct*>(reflect::find_object(L"/Script/Zenith.CommandSettings")));
+    g_schema.settings_action=settings.prop(L"CommandActionType",reflect::Kind::Class);
+    if(!settings.ok())return false;
     if (!c.ok() || !t.ok() || !e.ok() || !q.ok() || !cmd.ok()) { fail(c.failure()+t.failure()+e.failure()+q.failure()+cmd.failure()); return false; }
     auto* gameplay=reflect::find_class(L"/Script/Zenith.CommandActionGameplay");reflect::Resolver gp("persistent command",gameplay);
     g_schema.animations=gp.prop(L"Animations",reflect::Kind::Array);g_schema.gameplay_class=ObjHandle::of(gameplay);
@@ -294,8 +356,19 @@ bool install() {
     auto* sample_target=sample_slot==632?*reinterpret_cast<void**>(*reinterpret_cast<std::uint8_t**>(cdo)+sample_slot):nullptr;
     auto* add_target=const_cast<std::uint8_t*>(ad+0x1F4+add_relative);
     if(sample_target!=preflight::address("CommandSampleNative")||add_target!=preflight::address("CommandQueueAddNative")||reflect::element_size(g_schema.queued)!=8)return false;
+    if(add_target[0x1F]!=0xE8)return false;
+    std::int32_t cr=0;std::memcpy(&cr,add_target+0x20,4);auto* ct=add_target+0x24+cr;
+    if(ct!=preflight::address("CommandCreateNative"))return false;
+    if(!g_create&&!hook::install_address("CommandCreateNative",ct,reinterpret_cast<void*>(&create),reinterpret_cast<void**>(&g_create),"reflect"))return false;
     if(!g_sample&&!hook::install_address("CommandSampleNative",sample_target,reinterpret_cast<void*>(&sample_command),reinterpret_cast<void**>(&g_sample),"reflect"))return false;
     if(!g_add&&!hook::install_address("CommandQueueAddNative",add_target,reinterpret_cast<void*>(&add_command),reinterpret_cast<void**>(&g_add),"reflect"))return false;
+    const auto admit_fn=q.func(L"TryAddCommandsFromSettings",3);
+    const auto* ax=admit_fn.ok()?reinterpret_cast<const std::uint8_t*>(admit_fn.fn->GetFuncPtr()):nullptr;
+    if(!ax||ax[0x1B8]!=0xE8)return false;
+    std::int32_t ar=0;std::memcpy(&ar,ax+0x1B9,4);auto* at=const_cast<std::uint8_t*>(ax+0x1BD+ar);
+    if(at!=preflight::address("CommandInputAdmissionNative"))return false;
+    if(!g_admit&&!hook::install_address("CommandInputAdmissionNative",at,reinterpret_cast<void*>(&admit),reinterpret_cast<void**>(&g_admit),"reflect"))return false;
+    if(!g_accept&&!hook::install_manifest("CommandAcceptNative",reinterpret_cast<void*>(&accept),reinterpret_cast<void**>(&g_accept)))return false;
     g_schema.command_class = ObjHandle::of(cls); g_schema.timeline_class = ObjHandle::of(tl); g_schema.entry_class = ObjHandle::of(en);
     if(!g_post_live){RC::Unreal::Hook::FCallbackOptions o;o.OwnerModName=STR("ELMP");o.HookName=STR("coop.command_context.trace");g_post=RC::Unreal::Hook::RegisterEngineTickPostCallback([](auto&,RC::Unreal::UEngine*,float,bool){sample();},o);g_post_live=true;}
     return true;
@@ -353,7 +426,7 @@ void end_restored(ue::UObject* pawn,std::uint64_t token) {
     auto* command=current_action(pawn);auto it=g_active.find(ObjHandle::of(command));
     if(command&&it!=g_active.end()&&it->second.token==token&&eligible(command)){if(reflect::Frame(g_schema.request_end).arg_bool(0,false).invoke(command))++g_restore_ends;else fail("persistent command could not request native end");}
 }
-std::string describe() { prune();return std::format("command context: enabled={} active={} starts={} ends={} baselines={} expired={} restored={} restoreEnds={} trace={} fault='{}'\n  derived queued={} inherited={} pending={} pruned={}\n",g_enabled,g_active.size(),g_starts,g_ends,g_baselines,g_expired,g_restored,g_restore_ends,g_trace.size(),g_fault,g_derived_queued,g_inherited,g_pending.size(),g_pending_pruned); }
+std::string describe() { prune();return std::format("command context: enabled={} active={} starts={} ends={} baselines={} expired={} restored={} restoreEnds={} trace={} fault='{}'\n  derived queued={} inherited={} pending={} pruned={}\n  input admitted={} started={}\n",g_enabled,g_active.size(),g_starts,g_ends,g_baselines,g_expired,g_restored,g_restore_ends,g_trace.size(),g_fault,g_derived_queued,g_inherited,g_pending.size(),g_pending_pruned,g_input_queued,g_input_bound); }
 std::string trace(std::string_view action) {
     if(action=="on"){g_trace.clear();g_tracing=true;return "command trace enabled\n";}
     if(action=="off"){g_tracing=false;return "command trace disabled\n";}

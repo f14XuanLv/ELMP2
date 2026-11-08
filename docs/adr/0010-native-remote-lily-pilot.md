@@ -24,3 +24,5 @@
 切图长帧另作时基修正：UEngine::Tick的delta不等于UWorld本轮组件delta（World会限幅/缩放）。Host在原版InputConsume读取GetWorldDeltaSeconds；Client在角色原版Tick接缝读取当前World delta后调度时间分段和组件倍率，EngineTickPre只负责接收/装备准备。不可用Engine delta推算组件倍率，也不可将切图长帧误判为坏包。有限非负角色delta、正World delta上限60秒，超界显式报出实际数值。
 
 Host长帧恢复：角色实际delta原样保留；播放间隔以最近31个World帧时长的中位数为节奏，单个Host长帧的播放间隔至多为中位数的1.5倍。Host已经发生的停顿不能在Client缓冲中再重放一次几百毫秒的等待；压缩的仅是网络播放间隔，不丢该帧输入/状态或原版执行时长。该情形组件可短时按Host实际长帧推进，区别于普通数据包成批到达引起的0/4倍抖动。每seat的31项时长窗口随Host启停、Pawn serial变化失效，暴露压缩次数。
+
+2026-11-09修正：上述“必要的原版Tick分段之和相等”不足以保持命令接受语义，实测会在TTL过期前额外检查一次覆盖窗口。按[ADR0022](0022-buffered-command-source.md)改为每个Host源帧一次完整原版Character.Tick；连续时间预算、组件倍率与位置插值保留，不能把连续呈现调度直接变成额外命令决策。协议18及实测见该ADR与kb。

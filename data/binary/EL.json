@@ -6,6 +6,24 @@
   "image_base_note": "0x140000000",
   "_comment": "运行时加载（Mods/ELMP/data/binary/EL.json）。只放没有反射入口的原生函数与无反射的原始结构偏移；适用的 EXE 由 elmp.json game.sha256 唯一给出（C1.5，本文件不重复哈希）。每个函数：预检通过（EXE SHA-256）且 rva 处字节与 prefix 逐字节一致才可武装（fail closed）。每个偏移：check 描述它与反射字段的关系（equals = 与该反射属性偏移相等；within = 落在 after 属性末尾与 before 属性起点之间，before 为 <end> 表示原生类 PropertiesSize；struct_size = 等于该结构体尺寸），世界就位后逐项校验，失败的项其依赖能力 fail closed。source 标注证据等级与出处。",
   "functions": {
+    "CommandCreateNative": {
+      "rva": "0x00CA8870",
+      "prefix": "48895C2418555657415441564883EC604533E4",
+      "owner": "coop/command_context",
+      "source": "[E-IDA] ELMP v2 2026-11-09 common UCommand allocation/pool reinitialization used by C97660/C977C0/CABA90/CC2230/CC25F0/CC2840; derived from C97660+1F E8 target; assigns new CommandID before returning"
+    },
+    "CommandInputAdmissionNative": {
+      "rva": "0x00CC2840",
+      "prefix": "405641544155415641574883EC204C8BFA4C8BE9",
+      "owner": "coop/command_context",
+      "source": "[E-IDA] ELMP v2 2026-11-09 TryAddCommandsFromSettings reflected exec D511A0+1B8 direct call; CC2520 ordinary input admission inlines creation instead of C97660"
+    },
+    "CommandAcceptNative": {
+      "rva": "0x00CABB70",
+      "prefix": "405641554883EC38807A2C00488BF24C8BE9",
+      "owner": "coop/command_context",
+      "source": "[E-IDA] ELMP v2 2026-11-09 native startability predicate used by CC2BA0 and CB4F00; guards result/cooldown/states/aptitudes/movement"
+    },
     "SpineExInternalTick": {
       "rva": "0x007CF7D0",
       "prefix": "41564883EC500F297424204C8BF10F28F1E80A9F0100",

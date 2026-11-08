@@ -19,3 +19,5 @@ Root事实与本机激活允许两种到达次序：除激活时绑定已到事�
 [E-IDA] CA8C10/GetCurrentCommand只在队首CurrentResult非NONE时返回对象；D24D70先调用动作Start，之后才设置IN_PROGRESS。因此在Start钩子内交接来源必须核对原生处理器已经排到队首的真实UCommand，而不是用该getter推断“尚未开始”。组件获取也必须核类型：ZenithSpirit直接继承ACharacter，不能套ZenithCharacter的组件偏移；同名成员不等于相同布局。本轮验证中暴露的这两处实现错误已分别修正，不混作用户原始故障。
 
 [E-实测] 最终构建Host60/Client30FPS连续6轮各击杀3个敌人，两端12个技能根精确一致，Client消费18份反馈FX与18份反馈音效，无离会；正常/冷加入抓墙及四次换图回归通过。证据与限制见[kb](../kb/bench-and-derived-actions-2026-11-08.md)。
+
+2026-11-09扩展：本ADR的显式Add接缝未覆盖普通输入及批量入队，按[ADR0022](0022-buffered-command-source.md)上移到共同UCommand初始化器，保留父来源继承与精确身份消费；同时修正源帧分段导致额外接受机会的独立问题。

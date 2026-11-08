@@ -103,6 +103,7 @@ struct Replica {
     bool started = false;
     bool ready = false;
     float world_rate = 1;
+    double presentation_ms = 0;
 };
 std::map<std::uint16_t, Replica> g_replicas;
 struct RoleClock { ObjHandle pawn; float original = 1, applied = 1; };
@@ -467,13 +468,14 @@ void __fastcall character_tick(ue::UObject* pawn, float dt) {
         }
         const auto now=clock::now_us();g_playout_dt=r.tick_us?static_cast<float>(now-r.tick_us)/1'000'000:1.0f/60;r.tick_us=now;
         schedule(r);
-        if(r.pending.empty() && r.playing){r.world_rate=0;apply_clocks(r,r.last);causality::advance(causality::playback_ms(),0);}
+        if(r.pending.empty() && r.playing){apply_clocks(r,r.last);causality::advance(r.presentation_ms?r.presentation_ms:causality::playback_ms(),r.world_rate);}
         h_steps.add(static_cast<float>(r.pending.size()));
         while (!r.pending.empty() && g_fault.empty()) {
             const auto value = r.pending.front(); r.pending.pop_front();
             causality::advance(value.host_ms, r.world_rate);
             execute_frame(r, value);
         }
+        if(r.presentation_ms)causality::advance(r.presentation_ms,r.world_rate);
         h_tick.add(static_cast<float>(clock::now_us() - begin));
         return;
     }
@@ -491,6 +493,7 @@ namespace {
 void schedule(Replica& r) {
     auto* pawn = r.pawn.get();
     *g_schema.dilation.at<float>(pawn) = 0;
+    r.world_rate=0;
     if (!r.pending.empty()) {
         float total = 0;
         for (const auto& part : r.pending) total += part.frame.dt;
@@ -513,16 +516,20 @@ void schedule(Replica& r) {
         const auto& source = r.frames.front();
         const float remaining = std::max(source.step - r.elapsed, 0.0f);
         const float span = std::min(remaining, budget);
-        Replica::Step part{source, r.elapsed == 0, remaining <= budget};
+        const bool begin=r.elapsed==0,complete=remaining<=budget;
+        Replica::Step part{source, true, true};
         const auto until = r.frames.size() > 1 ? static_cast<std::int32_t>(r.frames[1].t_ms-source.t_ms) : source.step*1000;
-        part.host_ms = source.t_ms + std::max(0.0,static_cast<double>(until)) * ((r.elapsed+span)/source.step);
-        if(!causality::ready(part.host_ms))break;
-        part.frame.dt = source.dt * (span / source.step);
+        const auto presentation_time=source.t_ms+std::max(0.0,static_cast<double>(until))*((r.elapsed+span)/source.step);
+        part.host_ms=source.t_ms;
+        if(!causality::ready(source.t_ms+std::max(0.0,static_cast<double>(until))))break;
+        // CQ acceptance/override/TTL are ordered discrete decisions. Never run a
+        // second native Character/CQ update for a fractional piece of one input.
         world_total += source.world_dt * (span/source.step);
-        total += part.frame.dt;
-        r.pending.push_back(part);
+        total += source.dt * (span/source.step);
+        r.presentation_ms=presentation_time;
+        if(begin)r.pending.push_back(part);
         budget -= span;
-        if (part.end) { r.frames.pop_front(); r.elapsed = 0; }
+        if (complete) { r.frames.pop_front(); r.elapsed = 0; }
         else { r.elapsed += span; break; }
     }
     if (budget > 0.0001f) ++g_starved;
