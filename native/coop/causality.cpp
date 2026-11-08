@@ -132,7 +132,7 @@ void __fastcall tick(ue::UObject* component, float dt, std::int32_t type, void* 
     if (g_enabled && ue::on_game_thread() && component) {
         ability::Identity id;
         if (ability::identity(component->GetOuterPrivate(), id)) if (auto it = g_bound.find(id.token); it != g_bound.end()) {
-            facts::homing(component, id, dt);
+            if(!facts::homing(component, id, dt))return;
             ++g_ticks;
             it = g_bound.find(id.token);
             if(it==g_bound.end()){g_tick(component,dt,type,function);return;}

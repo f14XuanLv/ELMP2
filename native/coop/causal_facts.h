@@ -10,7 +10,7 @@ void launch(ue::UObject*, ue::UObject*, const ability::Identity&, native_lily::S
 void prepare_reuse(ue::UObject* actor);
 ue::UObject* query(const ability::Identity&, ue::UObject*, float, float, bool, std::uint8_t, bool, ue::UObject*);
 ue::UObject* target(ue::UObject* component, ue::UObject* selected);
-void homing(ue::UObject* component, const ability::Identity&, float);
+bool homing(ue::UObject* component, const ability::Identity&, float); // false: terminal/invalid context, do not tick
 void stopping(const ability::Identity&, std::uint8_t);
 void end(const ability::Identity&);
 std::string describe();

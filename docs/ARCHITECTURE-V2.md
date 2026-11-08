@@ -195,6 +195,7 @@ template<class R, class... A> R call(UObject* o, FuncRef f, A... a);  // 栈上�
 | vtable | DXGI `Present/ResizeBuffers` | PolyHook2 | overlay |
 | 直接调用 + Client detour | `InteractablePressInteract 0xCE8BF0`（交互物 UE 动作 `"Interact"` 的 Pressed 处理；Host PX 对“交互者 = 该座位”的交互物调用，Client 拒绝本地世界副作用，ADR0019） | manifest 前缀 + PolyHook2 | party/interact、core/permission |
 | detour | `CommandSampleNative 0xD24FB0`、`CommandQueueAddNative 0xC97660`（ADR0020：命令执行与派生入队来源交接） | 反射exec定位 + manifest前缀 + PolyHook2 | coop/command_context |
+| detour | `SpineExInternalTick 0x7CF7D0`；相同组件嵌套零delta骨骼求值只进入基础`0x7E96F0`，不再次遍历扩展Notify（ADR0021） | Ex CDO vtable+1032、直接E8基类调用关系、双前缀 + PolyHook2 | coop/fx |
 
 安装时机：`on_unreal_init` 预检 → 成功后装 detour 类（不依赖世界）；UFunction 类在目标 UFunction 首次可用时装（蓝图类读档后才加载 → 由 `lifecycle` 在世界就位阶段触发，失败不缓存重试）。卸载：`uninstall_mod` 逆序。
 
@@ -411,6 +412,8 @@ v1 积累了 270 个离线 Lua 测试 + 84 个原生测试，其中相当一部�
 | `EnemyTrack`（Client） | 驻留行、插值样本、接管记录 | 快照到达；地图/会话重置；ObjHandle失效 | 应用时核对实际轨道相位；1Hz核对AI激活位 |
 | `GateCache` | 每座位Pawn、组件及已施加 `IgnoreActorWhenMoving` 的目标集合（按句柄） | Pawn更换、目标入桶/出桶版本、权限/Client模式变化、LoadMap清空；core独立phase维护，无本地party的Client仍启用 | 句柄与桶版本；`elmp gates`审计模式、maintenance/rebuilt/localPressBlocked和目标数；无座位无模式时phase关闭 |
 | `DerivedCommandSource` | 活动命令来源及待启动UCommand→父来源（各≤512，弱身份+ID+队列/Pawn/动作联合键） | Start消费；重入队先撤销；队列移除/ID或实例替换/弱句柄失效；forget/reset/换图 | 仅有待启动项时审计队列归属，`elmp commandctx`的queued/inherited/pending/pruned与trace的parent；不缓存裸指针 |
+| `CausalNode`目标/终态 | 具体Ability activation、Root+path+class、弱Actor/组件；已知空目标种子也是有效样本，homing标志属于Node | Query/Target/End事实；节点完成、池复用、弱身份失效、Root退役与地图/会话重置 | 活跃节点按精确End与回放时间处理；`initial null targets / terminal ticks refused`及fault审计，容量沿用因果账本上限 |
+| Spine求值同步作用域（非跨帧缓存） | 当前游戏线程调用栈中的组件身份链；同组件嵌套查询不重复遍历扩展Notify | 函数返回即撤销；不持有跨帧UObject裸指针，无会话原样通过 | `Spine evaluation: poseQueries / invalidNested`；合法嵌套只允许0delta且不广播delegate，其他重入明确故障 |
 | `MapCache` | `CurrentGameMapID`、`IsLoading`、`IsGameMapReady`、后台图槽位与偏移 | 过图钩子（`OnSwitchGameMapStart` / `PostFade`）、后台图加载 / 卸载 | 每帧 1 次读三个字段（直读偏移，便宜） |
 | `NameTable`（联机） | 类名 / 出生点名 / 地图名 / 动画名的会话内 u16 id 双向表 | 首次出现时可靠发送 `NameDef` | 无 |
 | `HudModel/ManagerModel/MenuModel` | 覆盖层只读快照 | 游戏线程 `publish()` | 渲染线程只读 |
@@ -456,6 +459,8 @@ Companion `cp` 基线包含 Actor 世界位置及 pitch/yaw/roll；世界旋转�
 2026-11-08 按 [ADR0018](adr/0018-persistent-baseline-handoff.md)将持续命令上下文改为按Host激活代次消费：新代次最多接入一次原版开始，匹配已有自然激活时仅建立对应；相同代次不逐帧重启。Host结束仅RequestEnd仍属于该次显式恢复的精确本机激活。恢复成功以原生Start实际接受的token判定，避免将同步开始后正常结束误作从未开始；环境触发的接受决定仍保留，不能仅靠输入重演的假定删除。
 
 2026-11-08 按[ADR0019](adr/0019-client-permission-lifetime.md)，权限维护为core独立phase，不以本地party座位数决定Client维护；呈现P1与新地图目标/Pawn绑定随失效重建，原生世界交互按下入口独立阻止Client副作用。按[ADR0020](adr/0020-environment-action-lineage.md)，协议16让原版命令执行期间派生的同Pawn后续入队继承父命令来源，经精确UCommand身份交接到实际Start；普通输入游标与派生来源分开。活动/排队命令保持因果ordinal租约，声明与本机根按精确键双向绑定。
+
+2026-11-09按[ADR0021](adr/0021-null-and-terminal-context.md)，协议17将Query的明确null作为初始目标事实，Homing状态与终态应用按具体子节点而非Root处理；追踪Tick前消费已到期Host End，调用原版Stop并拒绝额外Tick。缺失事实继续故障。Spine扩展求值增加同组件同步重入边界，骨骼挂点的零delta查询进入原版基础求值，正常外层Notify保持执行；不按技能/粒子资产名过滤。方法与实测见[记录](kb/null-target-and-spine-reentry-2026-11-09.md)。
 
 2026-11-08 协议14按 [ADR0014](adr/0014-native-presentation-handoff.md)统一 Client 自主 Spirit 的生命周期写者：Start/Commands、主动 Soft/Force 请求只能在 Host 回放作用域执行，原版工厂对未活动对象的初始化保留。Host 原生 SoftDisappear 记录即时软退场沿及连续阶段，Client 经同一原版入口执行，禁止用 ForceDisappear 代替正常软退场清理；已接受软退场后不得被缓冲中较旧的活动帧复活。本机莉莉仍预测输入/动作，自主召唤物等 Host 确认后出现，表现遵守与远端相同契约。具体因果与验收见 [记录](kb/spirit-lifecycle-parity-2026-11-08.md)。
 

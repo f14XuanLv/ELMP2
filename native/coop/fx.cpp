@@ -12,6 +12,7 @@
 
 #include "base/hook.h"
 #include "base/log.h"
+#include "base/preflight.h"
 
 #include <cstring>
 #include <cmath>
@@ -59,6 +60,42 @@ Sinks g_sinks;
 bool g_host = false, g_client = false, g_replaying = false;
 bool g_spawn_ok = false, g_deact_ok = false, g_sound_ok = false, g_stop_ok = false, g_tried = false;
 bool g_em_ok = false, g_in_spawn = false;
+using Evaluate = void(__fastcall*)(UObject*, float, bool, bool);
+Evaluate g_evaluate = nullptr, g_base_evaluate = nullptr;
+struct Evaluation {
+    UObject* component;
+    const Evaluation* previous;
+};
+const Evaluation* g_evaluation = nullptr; // synchronous game-thread scopes, never retained across calls
+std::uint64_t g_pose_queries = 0, g_invalid_evaluations = 0;
+void feedback_fault(std::string why);
+void __fastcall evaluate(UObject* component, float delta, bool delegates, bool preview) {
+    if (!ue::on_game_thread() || (!g_host && !g_client)) return g_evaluate(component, delta, delegates, preview);
+    for (auto* p = g_evaluation; p; p = p->previous) if (p->component == component) {
+        if (delta != 0 || delegates || preview) { ++g_invalid_evaluations; feedback_fault("unexpected recursive Spine simulation"); return; }
+        ++g_pose_queries;
+        return g_base_evaluate(component, 0, false, false);
+    }
+    const Evaluation current{component, g_evaluation};
+    struct Scope {
+        const Evaluation* previous = g_evaluation;
+        explicit Scope(const Evaluation& value) { g_evaluation = &value; }
+        ~Scope() { g_evaluation = previous; }
+    } scope(current);
+    g_evaluate(component, delta, delegates, preview);
+}
+bool install_evaluation() {
+    if (g_evaluate) return true;
+    auto* cls = reflect::find_class(L"/Script/SpineExtensionPlugin.SpineSkeletonAnimationExComponent");
+    UObject* cdo = cls ? cls->GetClassDefaultObject() : nullptr;
+    const auto* target = static_cast<const std::uint8_t*>(preflight::address("SpineExInternalTick"));
+    const auto base = preflight::address("SpineBaseInternalTick");
+    if (!cdo || !target || !base || *reinterpret_cast<void**>(*reinterpret_cast<std::uint8_t**>(cdo) + 1032) != target || target[17] != 0xE8) return false;
+    std::int32_t relative = 0; std::memcpy(&relative, target + 18, 4);
+    if (target + 22 + relative != base) return false;
+    g_base_evaluate = reinterpret_cast<Evaluate>(base);
+    return hook::install_address("SpineExInternalTick", const_cast<std::uint8_t*>(target), reinterpret_cast<void*>(&evaluate), reinterpret_cast<void**>(&g_evaluate), "reflect");
+}
 std::uint64_t g_cap_spawn = 0, g_cap_deact = 0, g_cap_sound = 0, g_cap_stop = 0;
 std::uint64_t g_cap_emitter = 0, g_local_emitter = 0;
 std::uint64_t g_attach_failed = 0;
@@ -602,6 +639,7 @@ bool native_ability_owned(ue::UObject* psc) {
 
 bool host_enable(const Sinks& s) {
     install();
+    if (!install_evaluation()) return false;
     if (!feedback_context::enable()) return false;
     g_sinks = s;
     g_host = g_spawn_ok && g_sound_ok && g_deact_ok && g_stop_ok && g_em_ok;
@@ -616,6 +654,7 @@ void host_disable() {
 
 bool client_enable() {
     install();
+    if (!install_evaluation()) return false;
     if (!feedback_context::enable()) return false;
     g_early.clear(); // client-side effects cannot seed a later hosting session
     g_client = g_spawn_ok && g_em_ok && g_sound_ok;
@@ -811,6 +850,7 @@ std::string describe() {
                                   g_spawn_ok, g_deact_ok, g_sound_ok, g_stop_ok, g_em_ok, g_cap_spawn, g_cap_deact, g_cap_sound, g_cap_stop,
                                   g_cap_emitter, g_rep_spawn, g_rep_fail, g_rep_deact, g_rep_sound, g_rep_stop, g_rep_emitter, g_local_blocked, g_local_sound_blocked, g_local_emitter, g_attached);
     out += std::format("  early persistent fx: {} overflow={}\n", g_early.size(), g_early_overflow);
+    out += std::format("  Spine evaluation: armed={} poseQueries={} invalidNested={}\n", g_evaluate != nullptr, g_pose_queries, g_invalid_evaluations);
     out += std::format("  emitter attachmentRejected={} inactiveAtSpawn={} last={}\n", g_attach_failed, g_emitter_inactive, g_attach_failure);
     out += std::format("  feedback fx={} sounds={} localSuppressed={} uiLocal={} fault={}\n", g_feedback_fx, g_feedback_snd, g_feedback_blocked,g_ui_sound_local, fault());
     out += std::format("  feedback FMOD replay instanceCreated={} nativeEmpty={}\n", g_feedback_sound_instance, g_feedback_sound_empty);
