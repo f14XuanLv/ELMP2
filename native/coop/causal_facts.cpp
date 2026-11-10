@@ -24,6 +24,7 @@ using V3 = std::array<float,3>;
 HostApi g_host;
 ClientApi g_client;
 std::string g_fault;
+bool g_playback_gap = false;
 std::vector<p::Cause> g_out;
 std::uint64_t g_batch = 0;
 std::uint32_t g_fence = 0;
@@ -42,7 +43,6 @@ struct Root {
     std::uint16_t ordinal = 0, map = 0;
     float offset = 0;
     p::Cause seed;
-    bool homing = false;
     std::int64_t ended = 0;
 };
 struct Node {
@@ -56,6 +56,7 @@ struct Node {
     float actor_scale = 1;
     float original_scale = 1;
     bool scaled = false;
+    bool homing = false;
 };
 struct Counter { native_lily::Source source; std::int64_t touched = 0; std::unordered_map<std::string,unsigned> by_class; };
 std::unordered_map<std::string,Counter> g_ordinals;
@@ -66,10 +67,15 @@ struct Record { p::Cause fact; bool used = false; };
 std::vector<Record> g_records;
 std::unordered_map<std::string,std::deque<p::Cause>> g_samples;
 std::uint64_t g_bound = 0, g_overridden = 0, g_nulls = 0, g_deferred = 0, g_authorized = 0, g_forced = 0, g_contexts = 0, g_retired = 0;
+std::uint64_t g_null_seeds = 0, g_terminal_ticks = 0;
 reflect::FuncRef f_actor_pos, f_actor_set, f_actor_rot, f_actor_set_rot, f_scene_pos, f_scene_vel, f_scene_set, f_get_target, f_set_target, f_stop, f_world_delta;
 reflect::PropRef prop_velocity, prop_dilation;
 ObjHandle g_statics;
 void fail(std::string s) { if(g_fault.empty()) g_fault=std::move(s); }
+void gap(std::string reason) {
+    if (g_fault.empty()) g_playback_gap = true;
+    fail(std::move(reason));
+}
 bool host() { return g_host.name != nullptr; }
 std::uint32_t now_ms() { return static_cast<std::uint32_t>(clock::now_us()/1000); }
 std::string child_key(std::uint64_t root,const p::AbilityPath& path) {
@@ -153,7 +159,7 @@ void post_tick() {
     if(!g_host.name&&!g_client.text)return;
     struct Stop { ObjHandle actor; std::uint64_t token; std::uint8_t reason; };
     std::vector<Stop> stops;
-    for(auto& [_,n]:g_nodes)if(auto* r=root(n.id);!host()&&r&&r->homing&&r->wire&&n.id.active){
+    for(auto& [_,n]:g_nodes)if(auto* r=root(n.id);!host()&&r&&n.homing&&r->wire&&n.id.active){
         if(auto* e=expected_end(n,*r);e&&e->fact.t_ms<=g_time)stops.push_back({n.actor,n.id.token,e->fact.reason});
     }
     for(const auto& pending:stops)if(auto* a=pending.actor.get()){ability::Identity id;if(ability::identity(a,id)&&id.active&&id.token==pending.token){ability::NativeScope scope(a);if(reflect::Frame(f_stop).arg(0,pending.reason).invoke(a))++g_forced;}}
@@ -166,8 +172,8 @@ void post_tick() {
         return std::none_of(g_roots.begin(),g_roots.end(),[&](const auto& r){const auto& s=r.second.source;return s.seat==c.source.seat&&s.generation==c.source.generation&&s.seq==c.source.seq&&s.domain==c.source.domain;});
     });
     if(g_records.size()>8192||g_declarations.size()>2048||g_nodes.size()>4096||g_roots.size()>1024)fail("causal replay ledger capacity");
-    if(!host())for(const auto& [_,f]:g_declarations)if(g_time>f.t_ms+1000.0)fail("Host root was not consumed by its original native activation");
-    if(!host())for(const auto& e:g_records)if(!e.used&&e.fact.kind==p::CauseKind::Query&&g_time>e.fact.t_ms+1000.0)fail("Host query was not consumed by its original native activation");
+    if(!host())for(const auto& [_,f]:g_declarations)if(g_time>f.t_ms+1000.0)gap("Host root was not consumed by its original native activation: "+pending_root(f.root));
+    if(!host())for(const auto& e:g_records)if(!e.used&&e.fact.kind==p::CauseKind::Query&&g_time>e.fact.t_ms+1000.0)gap("Host query was not consumed by its original native activation");
 }
 }
 void host_api(HostApi a){g_host=a;g_client={};}
@@ -180,7 +186,7 @@ bool receive(const p::LilyCauses& b) {
         if(!g_client.text||!g_client.text(f.cls)){fail("causal class name not defined");return false;}
         if(f.kind==p::CauseKind::Root){const auto* inv=g_client.text(f.invoker);if(!inv)return false;const native_lily::Source s{f.seat,f.generation,f.input,false,f.domain};const auto key=root_key(s,*g_client.text(f.cls),*inv,f.ordinal);if(g_declarations.contains(key))return false;g_declarations[key]=f;roots_added=true;}
         else if(f.kind==p::CauseKind::Target){auto& q=g_samples[child_key(f.root,f.path)];if(q.size()==128)q.pop_front();q.push_back(f);}
-        else {g_records.push_back({f});if(f.kind==p::CauseKind::Query&&f.component){auto seed=f;seed.kind=p::CauseKind::Target;seed.min=seed.range=0;auto& q=g_samples[child_key(f.root,f.path)];if(q.size()==128)q.pop_front();q.push_back(seed);}}
+        else {g_records.push_back({f});if(f.kind==p::CauseKind::Query&&(!f.ref_kind||f.component)){auto seed=f;seed.kind=p::CauseKind::Target;seed.min=seed.range=0;auto& q=g_samples[child_key(f.root,f.path)];if(q.size()==128)q.pop_front();q.push_back(seed);if(!f.ref_kind)++g_null_seeds;}}
     }
     if(roots_added)for(auto& [_,r]:g_roots)bind(r);
     g_fence=b.fence_ms;g_fence_received=clock::now_us();return true;
@@ -196,20 +202,20 @@ bool ready(double time) {
     const p::Cause* missing=nullptr;
     for(const auto& e:g_records)if(!e.used&&e.fact.kind==p::CauseKind::Query&&e.fact.ref_kind&&e.fact.t_ms<=time+1&&!resolve(e.fact)&&!(e.fact.domain==1&&e.fact.component)){missing=&e.fact;break;}
     if(!missing){g_target_wait=0;return true;}
-    if(!g_target_wait)g_target_wait=clock::now_us();else if(clock::now_us()-g_target_wait>1'000'000)fail(std::format("causal target not ready: playback={:.3f} fence={} root={} target={}:{} generation={} domain={}",time,g_fence,missing->root,missing->ref_kind,missing->ref_id,missing->ref_generation,missing->domain));return false;
+    if(!g_target_wait)g_target_wait=clock::now_us();else if(clock::now_us()-g_target_wait>1'000'000)gap(std::format("causal target not ready: playback={:.3f} fence={} root={} target={}:{} generation={} domain={}",time,g_fence,missing->root,missing->ref_kind,missing->ref_id,missing->ref_generation,missing->domain));return false;
 }
-void advance(double time,float rate){g_time=time;g_rate=rate;if(g_client.motion)g_client.motion(time);for(auto& [_,n]:g_nodes)if(auto* r=root(n.id);r&&r->homing&&n.id.active)if(auto* a=n.actor.get();a&&ability::activation(a)==n.id.token){p::Cause f;if(sample(n,*r,f))n.actor_scale=f.actor_scale;*prop_dilation.at<float>(a)=g_rate*n.actor_scale;n.scaled=true;}}
+void advance(double time,float rate){g_time=time;g_rate=rate;if(g_client.motion)g_client.motion(time);for(auto& [_,n]:g_nodes)if(auto* r=root(n.id);r&&n.homing&&n.id.active)if(auto* a=n.actor.get();a&&ability::activation(a)==n.id.token){p::Cause f;if(sample(n,*r,f))n.actor_scale=f.actor_scale;*prop_dilation.at<float>(a)=g_rate*n.actor_scale;n.scaled=true;}}
 double playback_ms(){return g_time;}
 bool target_owned(UObject* a){for(const auto& [_,n]:g_nodes)if(n.id.active&&n.target_actor.get()==a)return true;return false;}
 bool allow_stop(UObject*,const ability::Identity& id,std::uint8_t reason){
     if(host())return true;
-    auto* n=node(id);auto* r=root(id);if(!n||!r||!r->wire||!r->homing)return true;
+    auto* n=node(id);auto* r=root(id);if(!n||!r||!r->wire||!n->homing)return true;
     auto* e=expected_end(*n,*r);if(reason==3||(e&&e->fact.reason==reason&&e->fact.t_ms<=g_time+1)){
         if(n->scaled)if(auto* a=n->actor.get()){*prop_dilation.at<float>(a)=n->original_scale;n->scaled=false;}
         ++g_authorized;return true;
     }++g_deferred;return false;
 }
-bool event_due(std::uint64_t wire,std::uint32_t time){if(!wire)return true;for(const auto& [_,r]:g_roots)if(r.wire==wire)return time<=g_time;return false;}
+bool event_due(std::uint64_t wire,std::uint32_t time){return !wire || time <= g_time;}
 std::string pending_root(std::uint64_t wire){
     if(!wire)return "no root dependency";
     for(const auto& [local,r]:g_roots)if(r.wire==wire)return std::format("bound local={} source={}:{}:{} input={} class={} ordinal={}",local,r.source.domain,r.source.seat,r.source.generation,r.source.seq,r.cls,r.ordinal);
@@ -232,6 +238,7 @@ std::uint64_t current_root(){
 }
 std::uint16_t source_seat(std::uint64_t wire){for(const auto& [_,r]:g_roots)if(r.wire==wire)return r.source.seat;return 0;}
 std::uint64_t wire_root(std::uint64_t local){auto it=g_roots.find(local);return it==g_roots.end()?0:it->second.wire;}
+bool playback_gap(){return g_playback_gap;}
 std::string fault(){return g_fault;}
 namespace facts {
 bool install(){
@@ -244,7 +251,7 @@ bool install(){
     return true;
 }
 void clear(){for(auto& [_,n]:g_nodes){scene_context::destroy(n.target_context);if(n.scaled)if(auto* a=n.actor.get();a&&ability::activation(a)==n.id.token)*prop_dilation.at<float>(a)=n.original_scale;}
-    if(g_post_live){RC::Unreal::Hook::UnregisterCallback(g_post);g_post_live=false;}g_host={};g_client={};g_fault.clear();g_out.clear();++g_batch;g_roots.clear();g_nodes.clear();g_declarations.clear();g_records.clear();g_samples.clear();g_ordinals={};g_fence=0;g_time=0;g_target_wait=0;g_fence_received=0;g_fence_waits=0;g_fence_ahead_max=0;g_rate=1;}
+    if(g_post_live){RC::Unreal::Hook::UnregisterCallback(g_post);g_post_live=false;}g_host={};g_client={};g_fault.clear();g_playback_gap=false;g_out.clear();++g_batch;g_roots.clear();g_nodes.clear();g_declarations.clear();g_records.clear();g_samples.clear();g_ordinals={};g_fence=0;g_time=0;g_target_wait=0;g_fence_received=0;g_fence_waits=0;g_fence_ahead_max=0;g_rate=1;}
 void launch(UObject* a,UObject* inv,const ability::Identity& id,native_lily::Source src){
     if(!g_host.name&&!g_client.text)return;
     const bool is_root=id.token==id.root;
@@ -272,19 +279,19 @@ void prepare_reuse(UObject* actor){
 }
 UObject* query(const ability::Identity& id,UObject*,float min,float range,bool los,std::uint8_t channel,bool front,UObject* local){
     auto* n=node(id);auto* r=root(id);if(!n||!r||!current_view(*r))return local;
-    ++n->query;r->homing=true;
+    ++n->query;n->homing=true;
     if(host()){auto f=base(p::CauseKind::Query,*n,*r);f.query=static_cast<std::uint16_t>(n->query);f.min=min;f.range=range;f.flags=(los?1:0)|(front?2:0);f.channel=channel;if(!reference(local,f,*r))return local;n->pending_query=g_out.size();n->batch=g_batch;emit(f);return local;}
-    bind(*r);if(!r->wire){fail("native query has no matching Host root activation");return nullptr;}
+    bind(*r);if(!r->wire){gap("native query has no matching Host root activation");return nullptr;}
     for(auto& e:g_records)if(!e.used&&e.fact.kind==p::CauseKind::Query&&e.fact.query==n->query&&matches(e.fact,*n,*r)){
         const auto& f=e.fact;if(std::abs(min-f.min)>.001f||std::abs(range-f.range)>.001f||f.flags!=((los?1:0)|(front?2:0))||f.channel!=channel){fail("native query parameter mismatch");return nullptr;}
         auto* a=resolve(f);
         if(f.ref_kind&&!a&&f.domain==1&&f.component){if(!scene_context::create(n->target_context,true)||!scene_context::pose(n->target_context,f.actor_position,{},V3{1,1,1},f.target_velocity)||!scene_context::aim(n->target_context,f.target_position,f.target_velocity)){fail("historical query target context unavailable");return nullptr;}a=n->target_context.actor.get();}
-        if(f.ref_kind&&!a){fail("authoritative query target not ready");return nullptr;}
+        if(f.ref_kind&&!a){gap("authoritative query target not ready");return nullptr;}
         if(a&&!n->target_context.actor.valid())reflect::Frame(f_actor_set).arg(0,f.actor_position).arg_bool(1,false).arg_bool(3,false).invoke(a);
         n->actor_scale=f.actor_scale;if(auto* self=n->actor.get()){*prop_dilation.at<float>(self)=g_rate*n->actor_scale;n->scaled=true;}
         e.used=true;n->pending_query=static_cast<std::size_t>(&e-g_records.data());if(a)++g_overridden;else ++g_nulls;return a;
     }
-    fail("native query has no ordered Host fact");return nullptr;
+    gap("native query has no ordered Host fact");return nullptr;
 }
 UObject* target(UObject* component,UObject* selected){
     ability::Identity id;if(!ability::identity(component->GetOuterPrivate(),id))return selected;
@@ -301,19 +308,33 @@ UObject* target(UObject* component,UObject* selected){
         if(selected)apply_context(*n,f);
     }return selected;
 }
-void homing(UObject* component,const ability::Identity& id,float delta){
-    auto* n=node(id);auto* r=root(id);if(!n||!r||!r->homing||!current_view(*r))return;
+bool homing(UObject* component,const ability::Identity& id,float delta){
+    auto* n=node(id);auto* r=root(id);if(!n||!r||!n->homing||!current_view(*r))return true;
     n->component=ObjHandle::of(component);
     if(host()){
         reflect::Frame q(f_get_target);auto* t=q.invoke(component)?q.ret<UObject*>():nullptr;
         auto f=base(p::CauseKind::Target,*n,*r);if(context(t,f,*r))emit(f);
-    }else if(r->wire){p::Cause f;if(sample(*n,*r,f))apply_context(*n,f);else fail("native homing has no authoritative target context");}
+    }else if(r->wire){
+        if(!n->id.active)return false;
+        if(auto* e=expected_end(*n,*r);e&&e->fact.t_ms<=g_time+1){
+            const auto actor=n->actor;const auto reason=e->fact.reason;
+            if(auto* a=actor.get();a&&ability::activation(a)==id.token){
+                ability::NativeScope scope(a);
+                if(reflect::Frame(f_stop).arg(0,reason).invoke(a)){++g_forced;++g_terminal_ticks;}
+                else fail("authoritative terminal stop failed before Homing Tick");
+            }return false;
+        }
+        p::Cause f;
+        if(sample(*n,*r,f))apply_context(*n,f);
+        else {fail(std::format("native homing has no authoritative target context: root={} path={} query={} playback={:.3f} {}",r->wire,child_key(r->wire,n->id.path),n->query,g_time,pending_root(r->wire)));return false;}
+    }
     (void)delta;
+    return true;
 }
 void stopping(const ability::Identity& id,std::uint8_t reason){if(auto* n=node(id))n->reason=reason;}
 void end(const ability::Identity& id){auto* n=node(id);auto* r=root(id);if(!n||!r||!n->id.active)return;if(host()){
     auto f=base(p::CauseKind::End,*n,*r);f.reason=n->reason;emit(f);
 }else {if(auto* e=expected_end(*n,*r))e->used=true;if(n->scaled)if(auto* a=n->actor.get()){*prop_dilation.at<float>(a)=n->original_scale;n->scaled=false;}}n->id.active=false;n->target={};n->target_actor={};scene_context::destroy(n->target_context);}
-std::string describe(){const auto now=clock::now_us();return std::format("  facts: roots={} nodes={} ordinals={} declarations={} records={} samples={} bound={} queryOverrides={} explicitNull={} stopDeferred={} stopAuthorized={} stopForced={} contexts={} retired={} fence={} playback={:.3f} fault='{}'\n  fence: waits={} aheadMax_ms={:.3f} age_ms={:.1f} targetWait_ms={:.1f}\n",g_roots.size(),g_nodes.size(),g_ordinals.size(),g_declarations.size(),g_records.size(),g_samples.size(),g_bound,g_overridden,g_nulls,g_deferred,g_authorized,g_forced,g_contexts,g_retired,g_fence,g_time,g_fault,g_fence_waits,g_fence_ahead_max,g_fence_received?(now-g_fence_received)/1000.0:-1.0,g_target_wait?(now-g_target_wait)/1000.0:0.0)+scene_context::describe();}
+std::string describe(){const auto now=clock::now_us();return std::format("  facts: roots={} nodes={} ordinals={} declarations={} records={} samples={} bound={} queryOverrides={} explicitNull={} stopDeferred={} stopAuthorized={} stopForced={} contexts={} retired={} fence={} playback={:.3f} fault='{}'\n  fence: waits={} aheadMax_ms={:.3f} age_ms={:.1f} targetWait_ms={:.1f}\n  initial null targets={} terminal ticks refused={}\n",g_roots.size(),g_nodes.size(),g_ordinals.size(),g_declarations.size(),g_records.size(),g_samples.size(),g_bound,g_overridden,g_nulls,g_deferred,g_authorized,g_forced,g_contexts,g_retired,g_fence,g_time,g_fault,g_fence_waits,g_fence_ahead_max,g_fence_received?(now-g_fence_received)/1000.0:-1.0,g_target_wait?(now-g_target_wait)/1000.0:0.0,g_null_seeds,g_terminal_ticks)+scene_context::describe();}
 }
 }

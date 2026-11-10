@@ -38,6 +38,7 @@ std::uint64_t wire_root(std::uint64_t local_root);
 void captured(std::uint64_t root, std::uint32_t host_ms, bool sound);
 void presented(std::uint64_t root, std::uint32_t host_ms, bool sound);
 std::string fault();
+bool playback_gap();
 void launched(ue::UObject* actor, ue::UObject* invoker, const ability::Identity& id);
 void prepare_reuse(ue::UObject* actor);
 void stop_requested(ue::UObject* actor, const ability::Identity& id, std::uint8_t reason);

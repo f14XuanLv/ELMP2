@@ -46,7 +46,10 @@ TEST_MAIN({
         a.mode = 1; a.state_count = a.command_state_count = static_cast<std::uint8_t>(kLilyStates);
         a.flags = a.raw = 0x3FE; a.input[0] = -1; a.velocity[1] = 300;
         for (std::size_t i = 0; i < kLilyStates; ++i) a.states[i] = a.command_states[i] = static_cast<std::uint16_t>(i + 1);
-        std::array<std::uint8_t, 512> wire{};
+        a.commands.resize(kLilyCommands, LilyCommand{27, 1, 3, 2, 1, 0});
+        a.commands.back().end = 3;
+        std::array<std::uint8_t, kLilyFrameBytes + 1> wire{};
+        a.commands.push_back(a.commands.front()); CHECK(encode(a, wire) == 0); a.commands.pop_back();
         const auto n = encode(a, wire);
         CHECK(n > 0 && decode(std::span(wire.data(), n), b) && a == b);
         for (std::size_t cut = 0; cut < n; ++cut) CHECK(!decode(std::span(wire.data(), cut), b));

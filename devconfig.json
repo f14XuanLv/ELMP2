@@ -30,18 +30,23 @@
       "mcp": "ue4ss-ender-lilies-win64-for-mod-dev2"
     },
     "host": {
-      "root": "{game}\\Binaries\\Win64_LAN_Host2",
+      "root": "{game}\\Binaries\\Win64_LAN_Host1",
       "userDir": "{game}\\Binaries\\ELMP_Test_Data\\host",
-      "mcp": "ue4ss-ender-lilies-lan-host2"
+      "mcp": ""
     },
-    "client": {
-      "root": "{game}\\Binaries\\Win64_LAN_Client2",
-      "userDir": "{game}\\Binaries\\ELMP_Test_Data\\client",
-      "mcp": "ue4ss-ender-lilies-lan-client2"
+    "client1": {
+      "root": "{game}\\Binaries\\Win64_LAN_Client1",
+      "userDir": "{game}\\Binaries\\ELMP_Test_Data\\client1",
+      "mcp": ""
     },
     "client2": {
-      "root": "{game}\\Binaries\\Win64_LAN_Client3",
+      "root": "{game}\\Binaries\\Win64_LAN_Client2",
       "userDir": "{game}\\Binaries\\ELMP_Test_Data\\client2",
+      "mcp": ""
+    },
+    "client3": {
+      "root": "{game}\\Binaries\\Win64_LAN_Client3",
+      "userDir": "{game}\\Binaries\\ELMP_Test_Data\\client3",
       "mcp": ""
     }
   }

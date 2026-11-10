@@ -101,6 +101,9 @@ struct Taken {
 
 std::uint8_t g_seat = 0;
 bool g_seat_placed = false;
+bool g_refresh_pending = false;
+std::uint64_t g_refreshes = 0;
+std::string g_last_refresh;
 std::uint16_t g_epoch = 0, g_host_map = 0;
 std::uint32_t g_latest = 0;
 std::uint32_t g_host_view = 0;
@@ -732,6 +735,17 @@ void retry_events(std::int64_t now_us) {
             ++g_ev_retried;
             continue;
         }
+        std::uint32_t event_time = 0;
+        if (proto::type_of(e.msg) == proto::Msg::FxStop) {
+            proto::FxStop stop;
+            if (proto::decode(e.msg, stop)) event_time = stop.t_ms;
+        } else if (feedback_message(e.msg)) {
+            proto::Fx fx; proto::Snd sound;
+            if (proto::decode(e.msg, fx) && fx.causal_root) event_time = fx.t_ms;
+            if (proto::decode(e.msg, sound) && sound.causal_root) event_time = sound.t_ms;
+        }
+        if (event_time && causality::playback_ms() > 0 && event_time > causality::playback_ms())
+            e.deadline = now_us + kRetryUs;
         if (now_us > e.deadline) {
             ++g_ev_absent;
             if (is_reaction) {
@@ -777,11 +791,11 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
     switch (proto::type_of(msg)) {
     case proto::Msg::SpiritFrame: {
         proto::SpiritFrame f;if(!proto::decode(msg,f))return coop::leave("invalid autonomous frame");
-        if(f.context.epoch==g_epoch&&f.context.map==g_host_map&&f.context.view==g_host_view)autonomous::receive(f);return;
+        if(!g_refresh_pending && f.context.epoch==g_epoch&&f.context.map==g_host_map&&f.context.view==g_host_view)autonomous::receive(f);return;
     }
     case proto::Msg::LilyCauses: {
         proto::LilyCauses batch;if(!proto::decode(msg,batch))return coop::leave("invalid causal batch");
-        if(batch.epoch==g_epoch&&batch.map==g_host_map&&batch.view==g_host_view){causal_api();if(!causality::receive(batch))coop::leave("causal facts invalid or conflicting");}return;
+        if(!g_refresh_pending && batch.epoch==g_epoch&&batch.map==g_host_map&&batch.view==g_host_view){causal_api();if(!causality::receive(batch))coop::leave("causal facts invalid or conflicting");}return;
     }
     case proto::Msg::LilyBuild: {
         proto::Json m;
@@ -797,7 +811,7 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
     case proto::Msg::LilyFrame: {
         proto::LilyFrame value;
         if (!proto::decode(msg, value)) return void(coop::leave("invalid native Lily frame"));
-        if (value.seat != g_seat && value.map == g_host_map && value.epoch==g_epoch && value.view==g_host_view) native_lily::receive(value);
+        if (!g_refresh_pending && value.seat != g_seat && value.map == g_host_map && value.epoch==g_epoch && value.view==g_host_view) native_lily::receive(value);
         return;
     }
     case proto::Msg::Welcome: {
@@ -825,7 +839,10 @@ void on_reliable(std::uint32_t, std::span<const std::uint8_t> msg) {
     case proto::Msg::Map: {
         proto::MapMsg m;
         if (!proto::decode(msg, m) || !g_seat) return;
-        if (m.map != g_host_map || m.view != g_host_view) reset_remote_world();
+        if (m.map != g_host_map || m.view != g_host_view) {
+            reset_remote_world();
+            g_refresh_pending = false;
+        }
         g_host_map = m.map;
         g_host_view = m.view;causal_api();
         g_follow_tag = m.tag;
@@ -1045,8 +1062,24 @@ void present_motion(std::int64_t now_us) {
     }
 }
 
+void refresh_view(std::string reason) {
+    const auto size = proto::encode(proto::RefreshView{g_host_map, g_host_view}, g_buf);
+    if (!size) return coop::leave(reason);
+    log::warn("coop: playback refresh P{} map={} view={} reason={} queuedEvents={} {}", g_seat, g_host_map, g_host_view,
+              reason, g_ev_retry.size(), native_lily::describe());
+    g_last_refresh = std::move(reason);
+    g_refresh_pending = true;
+    ++g_refreshes;
+    coop::send_reliable(0, std::span(g_buf.data(), size));
+}
 void tick(std::int64_t now_us) {
+    if (g_refresh_pending) {
+        if (lifecycle::state() == lifecycle::State::Settled) send_input();
+        return;
+    }
     causal_api();
+    if (causality::playback_gap()) return refresh_view(causality::fault());
+    if (native_lily::playback_gap()) return refresh_view(native_lily::fault());
     if(const auto why=causality::fault();!why.empty())return coop::leave(why);
     if (g_seat) if (const auto fault = fx::fault(); !fault.empty()) g_event_failure = fault;
     if (g_seat) {
@@ -1100,6 +1133,7 @@ void stop() {
     overlay::set_banner({});
     g_seat = 0, g_seat_placed = false, g_epoch = 0, g_latest = 0, g_host_map = 0;
     g_host_view = 0;
+    g_refresh_pending = false;
     g_reaction_last = g_reaction_time = 0;
     g_reaction_seats.fill(0);
     g_reaction_anchor = false;
@@ -1277,7 +1311,7 @@ std::string adapters_text() {
 std::string describe() {
     return party::ui::client_status() + std::format("client: seat=P{} epoch={} latest={} names={} taken={} applied={} badSnaps={} unknownNames={} copies={} reconciles={} kills={} actBad={} actAbsent={} rechecks={} aiLeaks={} world={} equipRequests={} motionWrites={} presses(attack)={}\n{}{}", g_seat,
                        g_epoch, g_latest, g_names.size(), g_taken.size(), g_applied, g_bad_snaps, g_unknown_names, g_copies.size(), g_reconciles, g_kills, g_act_bad, g_act_absent, g_rechecks, g_leaks, std::uint64_t{0}, g_equip_requests, g_motion_writes, g_input.presses[3], presentation_policy::describe() + presentation::describe() + visual_state::describe() + native_lily::describe() + ability::describe() + fx::describe() + describe_events() + adapters_text(),
-                       guard::describe());
+                       guard::describe()) + std::format("view={} refreshes={} waiting={} last='{}'\n",g_host_view,g_refreshes,g_refresh_pending,g_last_refresh);
 }
 
 void install() {

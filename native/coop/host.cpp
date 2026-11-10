@@ -940,6 +940,16 @@ void on_reliable(std::uint32_t peer, std::span<const std::uint8_t> msg) {
         log::info("coop: P{} equipment request: {}", p.slot, result);
         break;
     }
+    case proto::Msg::RefreshView: {
+        proto::RefreshView request;
+        if (p.slot && proto::decode(msg, request) && request.map == p.map_sent && request.view == p.native_view) {
+            // The normal map handshake retires old deliveries and issues a full baseline for this peer.
+            log::info("coop: refreshing playback for P{} map={} view={}", p.slot, p.map_sent, p.native_view);
+            p.map_sent = p.map_ready = 0;
+            p.acked = 0;
+        }
+        break;
+    }
     case proto::Msg::MapReady: {
         proto::MapReady m;
         if (proto::decode(msg, m) && m.map == p.map_sent && m.view == p.native_view) p.map_ready = m.map;

@@ -23,6 +23,8 @@ struct Persistent {
 };
 Persistent persistent(ue::UObject* pawn);
 std::uint64_t restore(ue::UObject* pawn, ue::UObject* cls, std::uint8_t direction, std::uint8_t button);
+std::uint64_t play(ue::UObject* pawn, ue::UObject* cls, std::uint8_t direction, std::uint8_t button);
+void finish(ue::UObject* pawn, std::uint64_t local_token, std::uint8_t reason);
 void end_restored(ue::UObject* pawn, std::uint64_t token);
 std::string fault();
 std::string describe();

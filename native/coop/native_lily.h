@@ -20,6 +20,10 @@ ue::UObject* actor(std::uint16_t seat);
 bool owns(ue::UObject* object); // native avatar or one of its original owned/possessed descendants
 struct Source { std::uint16_t seat = 0; std::uint32_t generation = 0, seq = 0; bool command_tick = false; std::uint8_t domain = 0; };
 bool source(ue::UObject* object, Source& out);
+bool remote_pawn(ue::UObject* pawn);
+void command_edge(ue::UObject* pawn, const Source& source, ue::UObject* cls, std::uint64_t token,
+                  std::uint8_t direction, std::uint8_t button, std::uint8_t end);
 std::string fault();
+bool playback_gap();
 std::string describe();
 }

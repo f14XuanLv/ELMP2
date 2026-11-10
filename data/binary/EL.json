@@ -6,6 +6,24 @@
   "image_base_note": "0x140000000",
   "_comment": "运行时加载（Mods/ELMP/data/binary/EL.json）。只放没有反射入口的原生函数与无反射的原始结构偏移；适用的 EXE 由 elmp.json game.sha256 唯一给出（C1.5，本文件不重复哈希）。每个函数：预检通过（EXE SHA-256）且 rva 处字节与 prefix 逐字节一致才可武装（fail closed）。每个偏移：check 描述它与反射字段的关系（equals = 与该反射属性偏移相等；within = 落在 after 属性末尾与 before 属性起点之间，before 为 <end> 表示原生类 PropertiesSize；struct_size = 等于该结构体尺寸），世界就位后逐项校验，失败的项其依赖能力 fail closed。source 标注证据等级与出处。",
   "functions": {
+    "CommandAcceptNative": {
+      "rva": "0x00CABB70",
+      "prefix": "405641554883EC38807A2C00488BF24C8BE9",
+      "owner": "coop/command_context",
+      "source": "[E-IDA] ELMP v2 2026-11-09 native startability predicate used by CC2BA0 and CB4F00; guards result/cooldown/states/aptitudes/movement"
+    },
+    "SpineExInternalTick": {
+      "rva": "0x007CF7D0",
+      "prefix": "41564883EC500F297424204C8BF10F28F1E80A9F0100",
+      "owner": "coop/fx",
+      "source": "[E-IDA] ELMP v2 2026-11-08 SpineSkeletonAnimationEx CDO vtable+1032; calls base7E96F0 then extension notify dispatch, including zero-delta bone queries"
+    },
+    "SpineBaseInternalTick": {
+      "rva": "0x007E96F0",
+      "prefix": "405553565741554156488D6C24D14881EC98000000488B01",
+      "owner": "coop/fx",
+      "source": "[E-IDA][E-源码] ELMP v2 2026-11-08 direct E8 target at ExInternalTick+17; base Spine animation/transform evaluation, no extension Notify traversal"
+    },
     "CommandSampleNative": {
       "rva": "0x00D24FB0",
       "prefix": "40534883EC5080B9F201000000488BD90F297424400F28F1",

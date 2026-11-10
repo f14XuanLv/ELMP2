@@ -9,6 +9,8 @@ Never touches a process outside the instances listed in devconfig.json.
 """
 
 import argparse
+import ctypes
+from ctypes import wintypes
 import os
 import subprocess
 import sys
@@ -33,14 +35,36 @@ def processes(inst: dict) -> list[int]:
     return pids
 
 
+def placement(name: str, width: int, height: int, dpi_aware: bool) -> list[str]:
+    if name not in ("host", "client1", "client2", "client3"):
+        return []
+    user = ctypes.WinDLL("user32", use_last_error=True)
+    user.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+    previous = user.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4 if dpi_aware else -1))
+    area = wintypes.RECT()
+    try:
+        if not user.SystemParametersInfoW(0x0030, 0, ctypes.byref(area), 0):  # SPI_GETWORKAREA
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        if previous:
+            user.SetThreadDpiAwarenessContext(ctypes.c_void_p(previous))
+    x = max(area.left, area.right - width) if name in ("client1", "client3") else area.left
+    y = max(area.top, area.bottom - height) if name in ("client2", "client3") else area.top
+    return [f"-WinX={x}", f"-WinY={y}"]
+
+
 def start(inst: dict, fps: int, res: str, dpi_aware: bool) -> None:
     if processes(inst):
         print(f"already running: {inst['name']} {processes(inst)}")
         return
     inst["userDir"].mkdir(parents=True, exist_ok=True)
-    w, h = res.lower().split("x")
+    # A stopped process cannot finish an in-flight bridge request. Never replay it
+    # in a new game session, and leave lastop.log intact for incident analysis.
+    for name in ("request.json", "request.tmp", "response.json", "response.tmp"):
+        (inst["bridge"] / name).unlink(missing_ok=True)
+    w, h = map(int, res.lower().split("x"))
     args = [str(inst["exe"]), "-MultiprocessOSS", "-SaveToUserDir", f'-UserDir="{inst["userDir"]}"', "-windowed",
-            f"-ResX={w}", f"-ResY={h}", f'-ExecCmds="t.MaxFPS {fps}"']
+            f"-ResX={w}", f"-ResY={h}", *placement(inst["name"], w, h, dpi_aware), f'-ExecCmds="t.MaxFPS {fps}"']
     env = dict(os.environ)
     if dpi_aware:
         env["ELMP_DPI_AWARE"] = "1"

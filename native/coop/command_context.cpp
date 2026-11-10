@@ -39,6 +39,7 @@ struct Active {
     native_lily::Source source;
     std::uint64_t token = 0;
     std::uint64_t parent = 0;
+    bool queue_owner = false;
     std::vector<ObjHandle> states;
 };
 std::unordered_map<ObjHandle, Active> g_active;
@@ -57,12 +58,14 @@ bool g_enabled = false, g_tracing = false;
 std::string g_fault;
 std::uint64_t g_next = 0, g_starts = 0, g_ends = 0, g_baselines = 0, g_expired = 0;
 std::uint64_t g_restored = 0, g_restore_ends = 0;
-struct RestoreAttempt { ObjHandle pawn, cls; std::uint64_t token=0; };
+struct RestoreAttempt { ObjHandle pawn, cls; std::uint64_t token=0; ObjHandle candidate; };
 RestoreAttempt* g_restore_attempt=nullptr; // synchronous game-thread scope; never retained after restore
 RC::Unreal::Hook::GlobalCallbackId g_post{};
 bool g_post_live = false;
 using Start = void(__fastcall*)(ue::UObject*);
 using End = void(__fastcall*)(ue::UObject*, std::uint8_t);
+using Accept = bool(__fastcall*)(ue::UObject*, ue::UObject*);
+Accept g_accept = nullptr;
 Start g_start = nullptr;
 End g_end = nullptr;
 using Sample=std::uint8_t(__fastcall*)(ue::UObject*,float);
@@ -172,13 +175,31 @@ bool insert(ue::UObject* command, Active& a) {
     const auto ar=queue?reflect::array_at(queue,g_schema.queued):reflect::RawArray{};
     if(ar.num<0||ar.num>4096||(ar.num&&!ar.data)){fail("command startup queue layout");return false;}
     auto* cmd=ar.num?reinterpret_cast<ue::UObject**>(ar.data)[0]:nullptr;
-    if(cmd&&g_schema.action.object(cmd)==command)if(auto p=g_pending.find(ObjHandle::of(cmd));p!=g_pending.end()){
+    a.queue_owner = cmd && g_schema.action.object(cmd) == command;
+    if(a.queue_owner)if(auto p=g_pending.find(ObjHandle::of(cmd));p!=g_pending.end()){
         const auto& v=p->second;
         if(v.queue.get()==queue&&v.pawn==a.pawn&&v.action.get()==command&&v.id==g_schema.command_id.read<std::int32_t>(cmd)&&v.source.seat==source.seat&&v.source.generation==source.generation&&v.source.domain==source.domain){a.source=v.source;a.parent=v.parent;++g_inherited;}
         g_pending.erase(p);
     }
     collect(command, a);
     g_active[ObjHandle::of(command)] = a;
+    return true;
+}
+void capture_edge(ue::UObject* command, const Active& active, std::uint8_t end) {
+    if (!active.queue_owner || !active.token || active.source.domain || !active.source.seq || native_lily::actor(active.source.seat)) return;
+    reflect::Frame direction(g_schema.invoked_direction), button(g_schema.invoked_button);
+    if (direction.invoke(command) && button.invoke(command))
+        native_lily::command_edge(active.pawn.get(), active.source, command->GetClassPrivate(), active.token,
+                                  direction.ret<std::uint8_t>(), button.ret<std::uint8_t>(), end);
+}
+bool __fastcall accept(ue::UObject* queue, ue::UObject* candidate) {
+    if (!g_enabled || !ue::on_game_thread()) return g_accept(queue, candidate);
+    auto* pawn = g_schema.queue_pawn.object(queue);
+    if (!native_lily::remote_pawn(pawn)) return g_accept(queue, candidate);
+    auto* action = g_schema.action.object(candidate);
+    if (!g_restore_attempt || g_restore_attempt->token || g_restore_attempt->candidate.get() != candidate || g_restore_attempt->pawn.get() != pawn ||
+        !action || g_restore_attempt->cls.get() != action->GetClassPrivate()) return false;
+    g_accept(queue, candidate); // native proxy preparation at the Host-selected Start
     return true;
 }
 void __fastcall start(ue::UObject* command) {
@@ -188,6 +209,7 @@ void __fastcall start(ue::UObject* command) {
     const bool tracked = insert(command, a);
     if(tracked&&g_restore_attempt&&g_restore_attempt->pawn==a.pawn&&g_restore_attempt->cls.get()==command->GetClassPrivate())
         g_restore_attempt->token=a.token;
+    if (tracked) capture_edge(command, a, 0);
     ActionScope scope(a);
     g_start(command);
     if (tracked) {
@@ -203,6 +225,7 @@ void __fastcall end(ue::UObject* command, std::uint8_t reason) {
     const bool tracked = i != g_active.end();
     const auto before = tracked ? i->second : Active{};
     autonomous::command_ended(command, g_schema.pawn.object(command), reason);
+    if (tracked) capture_edge(command, before, reason + 1);
     ActionScope scope(before);
     g_end(command, reason);
     if (tracked) {
@@ -222,7 +245,12 @@ std::int32_t __fastcall add_command(ue::UObject* queue,std::uint8_t direction,st
     const auto ar=reflect::array_at(queue,g_schema.queued);
     if(ar.num<0||ar.num>4096||(ar.num&&!ar.data)){fail("derived command queue layout");return id;}
     for(int i=ar.num-1;i>=0;--i){auto* cmd=reinterpret_cast<ue::UObject**>(ar.data)[i];if(!ue::alive(cmd)||g_schema.command_id.read<std::int32_t>(cmd)!=id)continue;
-        const auto h=ObjHandle::of(cmd);g_pending.erase(h); // admission/reuse always revokes its previous origin
+        const auto h=ObjHandle::of(cmd);
+        if (g_restore_attempt && !g_restore_attempt->candidate.valid() && g_restore_attempt->pawn.get() == g_schema.queue_pawn.object(queue)) {
+            auto* action = g_schema.action.object(cmd);
+            if (action && action->GetClassPrivate() == g_restore_attempt->cls.get()) g_restore_attempt->candidate = h;
+        }
+        g_pending.erase(h); // admission/reuse always revokes its previous origin
         if(g_execution&&g_execution->token&&g_execution->source.domain==0&&g_execution->pawn.get()==g_schema.queue_pawn.object(queue)){
             prune();if(g_pending.size()>=512){fail("derived command source capacity");return id;}
             g_pending[h]={ObjHandle::of(queue),g_execution->pawn,ObjHandle::of(g_schema.action.object(cmd)),id,g_execution->source,g_execution->token};++g_derived_queued;
@@ -296,6 +324,7 @@ bool install() {
     if(sample_target!=preflight::address("CommandSampleNative")||add_target!=preflight::address("CommandQueueAddNative")||reflect::element_size(g_schema.queued)!=8)return false;
     if(!g_sample&&!hook::install_address("CommandSampleNative",sample_target,reinterpret_cast<void*>(&sample_command),reinterpret_cast<void**>(&g_sample),"reflect"))return false;
     if(!g_add&&!hook::install_address("CommandQueueAddNative",add_target,reinterpret_cast<void*>(&add_command),reinterpret_cast<void**>(&g_add),"reflect"))return false;
+    if (!g_accept && !hook::install_manifest("CommandAcceptNative", reinterpret_cast<void*>(&accept), reinterpret_cast<void**>(&g_accept))) return false;
     g_schema.command_class = ObjHandle::of(cls); g_schema.timeline_class = ObjHandle::of(tl); g_schema.entry_class = ObjHandle::of(en);
     if(!g_post_live){RC::Unreal::Hook::FCallbackOptions o;o.OwnerModName=STR("ELMP");o.HookName=STR("coop.command_context.trace");g_post=RC::Unreal::Hook::RegisterEngineTickPostCallback([](auto&,RC::Unreal::UEngine*,float,bool){sample();},o);g_post_live=true;}
     return true;
@@ -336,6 +365,12 @@ Persistent persistent(ue::UObject* pawn) {
 std::uint64_t restore(ue::UObject* pawn,ue::UObject* type,std::uint8_t direction,std::uint8_t button) {
     auto* cls=static_cast<ue::UClass*>(type);ue::UObject* cdo=cls?cls->GetClassDefaultObject():nullptr;
     if(!eligible(cdo)){fail("Host persistent command is not restorable from its native data");return 0;}
+    return play(pawn, type, direction, button);
+}
+std::uint64_t play(ue::UObject* pawn,ue::UObject* type,std::uint8_t direction,std::uint8_t button) {
+    if (!type || !type->IsA(g_schema.command_class.get()->GetClassPrivate()) || !static_cast<ue::UClass*>(type)->IsChildOf(static_cast<ue::UClass*>(g_schema.command_class.get()))) {
+        fail("invalid Host command class"); return 0;
+    }
     auto* queue=queue_of(pawn);
     if(!queue||!reflect::Frame(g_schema.clear).invoke(queue)){fail("persistent command queue unavailable");return 0;}
     RestoreAttempt attempt{ObjHandle::of(pawn),ObjHandle::of(type)};
@@ -348,6 +383,13 @@ std::uint64_t restore(ue::UObject* pawn,ue::UObject* type,std::uint8_t direction
         fail(std::format("native persistent command did not start: requested={} pawn={} id={} current={} result={} starts={} ends={}",log::utf8(type->GetPathName()),log::utf8(pawn->GetFullName()),add.ret<std::int32_t>(),action?log::utf8(action->GetClassPrivate()->GetPathName()):"<none>",cmd?g_schema.result.read<std::uint8_t>(cmd):0,g_starts-before_starts,g_ends-before_ends));return 0;
     }
     ++g_restored;return attempt.token; // the original zero-delta update may already have ended it
+}
+void finish(ue::UObject* pawn,std::uint64_t token,std::uint8_t reason) {
+    auto* action = current_action(pawn);
+    const auto it = g_active.find(ObjHandle::of(action));
+    if (!action || it == g_active.end() || it->second.token != token) return;
+    if (reason) reflect::Frame(g_schema.clear).invoke(queue_of(pawn));
+    else reflect::Frame(g_schema.request_end).arg_bool(0,false).invoke(action);
 }
 void end_restored(ue::UObject* pawn,std::uint64_t token) {
     auto* command=current_action(pawn);auto it=g_active.find(ObjHandle::of(command));

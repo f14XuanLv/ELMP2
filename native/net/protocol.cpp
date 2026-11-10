@@ -75,6 +75,18 @@ std::size_t encode(const MapMsg& m, std::span<std::uint8_t> out) {
     w.u32(m.view);
     return done(w);
 }
+std::size_t encode(const RefreshView& m, std::span<std::uint8_t> out) {
+    if (!m.map || !m.view) return 0;
+    auto w = start(out, Msg::RefreshView);
+    w.u16(m.map); w.u32(m.view);
+    return done(w);
+}
+bool decode(std::span<const std::uint8_t> in, RefreshView& m) {
+    Reader r(in);
+    if (!open(r, Msg::RefreshView)) return false;
+    m.map = r.u16(); m.view = r.u32();
+    return r.done() && m.map && m.view;
+}
 std::size_t encode(const MapReady& m, std::span<std::uint8_t> out) {
     auto w = start(out, Msg::MapReady);
     w.u16(m.map);
@@ -356,6 +368,12 @@ std::size_t encode(const LilyFrame& m, std::span<std::uint8_t> out) {
     for (std::size_t i = 0; i < m.command_state_count; ++i) { if (!m.command_states[i]) return 0; w.u16(m.command_states[i]); }
     w.u8(m.facing);w.u8(m.actor_clock_count);
     for(unsigned i=0;i<m.actor_clock_count;++i){const auto& c=m.actor_clocks[i];if(!c.cls||!std::isfinite(c.scale)||c.scale<0||c.scale>1000)return 0;w.u16(c.cls);w.f32(c.scale);}
+    if (m.commands.size() > kLilyCommands) return 0;
+    w.u8(static_cast<std::uint8_t>(m.commands.size()));
+    for (const auto& c : m.commands) {
+        if (!c.token || !c.input || c.input > m.seq || !c.cls || c.direction > 8 || c.button > 9 || c.end > 7) return 0;
+        w.u64(c.token); w.u32(c.input); w.u16(c.cls); w.u8(c.direction); w.u8(c.button); w.u8(c.end);
+    }
     w.u16(m.persistent_class);w.u64(m.persistent_token);w.u32(m.persistent_input);w.u8(m.persistent_direction);w.u8(m.persistent_button);w.f32(m.persistent_elapsed);
     return done(w);
 }
@@ -377,8 +395,14 @@ bool decode(std::span<const std::uint8_t> in, LilyFrame& m) {
     for (std::size_t i = 0; i < m.command_state_count; ++i) m.command_states[i] = r.u16();
     m.facing=r.u8();m.actor_clock_count=r.u8();if(m.actor_clock_count>kLilyClocks)return false;
     for(unsigned i=0;i<m.actor_clock_count;++i){m.actor_clocks[i].cls=r.u16();m.actor_clocks[i].scale=r.f32();}
+    const auto count = r.u8();
+    if (count > kLilyCommands) return false;
+    m.commands.resize(count);
+    for (auto& c : m.commands) {
+        c.token = r.u64(); c.input = r.u32(); c.cls = r.u16(); c.direction = r.u8(); c.button = r.u8(); c.end = r.u8();
+    }
     m.persistent_class=r.u16();m.persistent_token=r.u64();m.persistent_input=r.u32();m.persistent_direction=r.u8();m.persistent_button=r.u8();m.persistent_elapsed=r.f32();
-    std::array<std::uint8_t, 512> scratch{};
+    std::array<std::uint8_t, kLilyFrameBytes> scratch{};
     return r.done() && encode(m, scratch) != 0 && m.mode <= 6 && m.direction <= 9;
 }
 

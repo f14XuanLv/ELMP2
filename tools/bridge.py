@@ -12,6 +12,7 @@ polls it, runs the code via ExecuteInGameThread and writes response.json.
 
 import argparse
 import json
+import msvcrt
 import sys
 import time
 import uuid
@@ -33,6 +34,26 @@ return "sent"
 def request(inst: dict, op: str, code: str | None = None, timeout: float = 30.0) -> dict:
     d: Path = inst["bridge"]
     d.mkdir(parents=True, exist_ok=True)
+    # All tools share the same single-slot mailbox, including passive observers.
+    with (d / "elmp-client.lock").open("a+b") as lock:
+        deadline = time.monotonic() + timeout
+        lock.seek(0)
+        while True:
+            try:
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("UEBridge mailbox busy")
+                time.sleep(.02)
+        try:
+            return _request(d, op, code, timeout)
+        finally:
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+def _request(d: Path, op: str, code: str | None, timeout: float) -> dict:
     rid = uuid.uuid4().hex
     body = {"id": rid, "op": op}
     if code is not None:
@@ -45,7 +66,17 @@ def request(inst: dict, op: str, code: str | None = None, timeout: float = 30.0)
     # the command on a timeout, since it may already have mutated the game.
     resp.unlink(missing_ok=True)
     tmp.write_text(json.dumps(body), encoding="utf-8")
-    tmp.replace(d / "request.json")
+    publish_end = time.monotonic() + 1.0
+    while True:
+        try:
+            tmp.replace(d / "request.json")
+            break
+        except PermissionError:
+            # Publication has not happened; retry the same ID/body only. Once
+            # published, a timeout must never re-execute a mutating command.
+            if time.monotonic() >= publish_end:
+                raise
+            time.sleep(0.01)
     end = time.time() + timeout
     while time.time() < end:
         try:

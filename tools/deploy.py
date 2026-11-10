@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import devconfig  # noqa: E402
 import instance as instances  # noqa: E402
+import bridge_runtime  # noqa: E402
 
 REPO = devconfig.REPO
 
@@ -77,6 +78,8 @@ def main() -> None:
         sys.exit(f"instance '{a.instance}' is running; stop it first (DLLs are never replaced in a running instance)")
     build = REPO / "build" / a.config
 
+    if a.flavor == "dev":
+        bridge_runtime.prepare(inst, a.instance)
     stage_elmp(mods / "ELMP", build, a.flavor)
     set_mod(mods, "ELMP", a.elmp == "on")
     if (mods / "ElmpProbe").exists():

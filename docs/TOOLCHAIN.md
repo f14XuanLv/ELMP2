@@ -4,6 +4,8 @@
 
 ## 开始工作
 
+隔离实例默认 1280×720。工具在创建进程前读取主显示器工作区，用 UE 的 WinX/WinY 指定起点。Host 与 Client1 占上排两端，加入 Client2 / Client3 时分别占左下 / 右下；单独调试的 dev 沿用引擎居中。可通过 `--res` 显式改变客户区尺寸。
+
 ```powershell
 & 'C:\Dev\miniconda\python.exe' tools\toolchain.py doctor
 & 'C:\Dev\miniconda\python.exe' tools\ida_service.py start

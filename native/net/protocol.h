@@ -51,6 +51,7 @@ enum class Msg : std::uint8_t {
     LilyFrame = 17, // original consumed input and required movement/state context
     LilyBuild = 18, // authoritative per-seat profile baseline/change
     LilyCauses = 19, // sealed original activation / query / target / completion facts
+    RefreshView = 21, // client requests a fresh baseline for its own current map/view
     SpiritFrame = 20, // Host decisions of an autonomous, player-owned original Spirit
 };
 
@@ -67,6 +68,7 @@ inline constexpr std::uint8_t kRefKindMax = 5;
 struct Welcome { std::uint8_t seat = 0; std::uint16_t epoch = 0; std::uint16_t map = 0; };
 struct NameDef { std::uint16_t id = 0; std::string text; };
 struct MapMsg { std::uint16_t map = 0; std::string tag; std::uint32_t view = 0; };
+struct RefreshView { std::uint16_t map = 0; std::uint32_t view = 0; };
 struct MapReady { std::uint16_t map = 0; std::uint32_t view = 0; };
 struct Act {
     std::uint16_t net_id = 0; // owner id (meaning per kind)
@@ -166,7 +168,18 @@ struct Json { std::string text; };
 inline constexpr std::size_t kLilyStates = 48;
 inline constexpr std::size_t kLilyClocks = 32;
 struct LilyClock { std::uint16_t cls = 0; float scale = 1; bool operator==(const LilyClock&) const = default; };
+// Original Lily command lifecycle, in Host execution order within a source frame.
+struct LilyCommand {
+    std::uint64_t token = 0;
+    std::uint32_t input = 0;
+    std::uint16_t cls = 0;
+    std::uint8_t direction = 0, button = 0, end = 0; // end: 0 = Start, otherwise native reason + 1
+    bool operator==(const LilyCommand&) const = default;
+};
+inline constexpr unsigned kLilyCommands = 32;
+inline constexpr std::size_t kLilyFrameBytes = 512 + kLilyCommands * 17;
 struct LilyFrame {
+    std::vector<LilyCommand> commands;
     std::uint16_t seat = 0, map = 0;
     std::uint16_t epoch = 0;
     std::uint32_t view = 0, t_ms = 0;
@@ -251,6 +264,8 @@ inline constexpr std::uint8_t kControlBanner = 10; // host → client: mode stat
 std::size_t encode(const Welcome& m, std::span<std::uint8_t> out);
 std::size_t encode(const NameDef& m, std::span<std::uint8_t> out);
 std::size_t encode(const MapMsg& m, std::span<std::uint8_t> out);
+std::size_t encode(const RefreshView&, std::span<std::uint8_t> out);
+bool decode(std::span<const std::uint8_t> in, RefreshView&);
 std::size_t encode(const MapReady& m, std::span<std::uint8_t> out);
 std::size_t encode(const Act& m, std::span<std::uint8_t> out);
 std::size_t encode(Msg type, const Json& m, std::span<std::uint8_t> out); // Build / EquipRequest / EquipResult

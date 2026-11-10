@@ -49,6 +49,7 @@ struct Schema {
 };
 Schema g_schema;
 std::string g_fault;
+bool g_playback_gap = false;
 float g_dt = 1.0f / 60.0f;
 float g_playout_dt = 1.0f / 60.0f;
 float g_source_dt = 1.0f / 60.0f;
@@ -92,6 +93,7 @@ struct Replica {
     std::int64_t slot = 0;
     std::uint32_t received = 0, consumed = 0, generation = 0;
     std::uint32_t playing = 0;
+    std::uint64_t current_host = 0, current_local = 0;
     std::uint64_t persistent_host = 0, persistent_local = 0;
     bool persistent_restored = false;
     std::int64_t tick_us = 0;
@@ -104,6 +106,13 @@ struct Replica {
     bool ready = false;
     float world_rate = 1;
 };
+struct Capture {
+    ObjHandle pawn;
+    std::optional<proto::LilyFrame> frame;
+    std::vector<proto::LilyCommand> commands;
+};
+std::array<Capture, 9> g_capture;
+std::uint64_t g_command_starts = 0, g_command_ends = 0;
 std::map<std::uint16_t, Replica> g_replicas;
 struct RoleClock { ObjHandle pawn; float original = 1, applied = 1; };
 std::unordered_map<ObjHandle, RoleClock> g_role_clocks;
@@ -261,7 +270,10 @@ void consumed(ue::UObject* pawn, const input::InputSnapshot& value) {
         f.actor_clocks[f.actor_clock_count++]={id,scale};
     }
     ++g_captured;
-    g_sink(pawn, f);
+    auto& capture = g_capture[seat];
+    const auto handle = ObjHandle::of(pawn);
+    if (capture.pawn != handle) capture = {handle};
+    capture.frame = std::move(f);
 }
 bool apply_build(Replica& r) {
     if (r.build.empty()) return false;
@@ -299,7 +311,7 @@ bool host_enable(FrameSink sink, Name name) {
     g_sink = sink; g_name = name;
     return install_tick() && input::pad::observe(consumed) && causality::enable() && command_context::enable();
 }
-void host_disable() { input::pad::observe(nullptr); g_sink = nullptr; g_name = nullptr; g_sequence.fill(0); g_source_cadence = {}; g_fault.clear(); restore_clocks(); command_context::reset(); causality::reset(); }
+void host_disable() { input::pad::observe(nullptr); g_sink = nullptr; g_name = nullptr; g_sequence.fill(0); g_capture = {}; g_source_cadence = {}; g_fault.clear(); restore_clocks(); command_context::reset(); causality::reset(); }
 namespace { bool install_tick(); }
 std::string bind(std::uint16_t seat, std::int64_t slot, ue::UObject* pawn) {
     if (!pawn || !resolve()) return g_fault.empty() ? "native Lily pawn missing" : g_fault;
@@ -311,7 +323,7 @@ std::string bind(std::uint16_t seat, std::int64_t slot, ue::UObject* pawn) {
     const auto h = ObjHandle::of(pawn);
     if (r.pawn == h) return {};
     r.pawn = h; r.slot = slot; r.applied.clear(); r.started = false; r.ready = false; r.elapsed = 0; r.rate = 1; r.playing = 0; r.pending.clear();
-    r.persistent_host=r.persistent_local=0;r.persistent_restored=false;
+    r.current_host=r.current_local=0; r.persistent_host=r.persistent_local=0;r.persistent_restored=false;
     const auto* s = core::schema::script();
     if (!s) return "native Lily core schema";
     r.controller = ObjHandle::of(s->pawn_controller.object(pawn));
@@ -343,7 +355,11 @@ void receive(const proto::LilyFrame& value) {
     auto& r = g_replicas[value.seat];
     r.generation = value.generation;
     if (value.seq <= r.received) return;
-    if (r.frames.size() >= 120) return fail(std::format("native Lily reliable input backlog: pawn={} build={} paused={} received={} consumed={} pending={}", r.pawn.valid(), !r.build.empty(), world::paused(), r.received, r.consumed, r.pending.size()));
+    if (r.frames.size() >= 120) {
+        if (g_fault.empty()) g_playback_gap = true;
+        return fail(std::format("Lily input backlog seat={} generation={} pawn={} ready={} paused={} received={} consumed={} pending={}",
+                                value.seat, value.generation, r.pawn.valid(), r.ready, world::paused(), r.received, r.consumed, r.pending.size()));
+    }
     r.received = value.seq; r.frames.push_back(value); ++g_received;
     g_edges_received += std::popcount(static_cast<unsigned>(value.flags & 0x1FEu));
 }
@@ -420,6 +436,25 @@ void execute_frame(Replica& r, const Replica::Step& step) {
             r.persistent_host=0;r.persistent_restored=false;
         }
     }
+    if (step.begin) for (const auto& edge : f.commands) {
+        if (edge.end) {
+            if (r.current_host == edge.token) {
+                command_context::finish(pawn, r.current_local, edge.end - 1);
+                r.current_host = r.current_local = 0;
+            }
+            ++g_command_ends;
+            continue;
+        }
+        const auto* name = g_text(edge.cls);
+        auto& weak = g_state_classes[edge.cls];
+        auto* cls = weak.get();
+        if (!cls && name) { cls = reflect::load_object(log::wide(*name)); weak = ObjHandle::of(cls); }
+        RestoreScope origin(pawn, {f.seat, f.generation, edge.input, true});
+        r.current_local = command_context::play(pawn, cls, edge.direction, edge.button);
+        if (!r.current_local) return;
+        r.current_host = edge.token;
+        ++g_command_starts;
+    }
     g_original_tick(pawn, f.dt);
     apply_clocks(r,f);r.last=f;
     if (step.begin) g_edges_played += std::popcount(static_cast<unsigned>(input.flags));
@@ -481,6 +516,17 @@ void __fastcall character_tick(ue::UObject* pawn, float dt) {
     g_source_dt = dt;
     ExecutionScope source_scope(pawn);
     g_original_tick(pawn, dt);
+    if (g_sink) {
+        const auto seat = seat_of(pawn);
+        if (seat) {
+            auto& capture = g_capture[seat];
+            if (capture.frame && capture.pawn.get() == pawn) {
+                capture.frame->commands.swap(capture.commands);
+                g_sink(pawn, *capture.frame);
+                capture.frame.reset();
+            }
+        }
+    }
     g_source_dt = previous;
 }
 bool install_tick() {
@@ -545,8 +591,21 @@ void forget(std::uint16_t seat) {
     if(auto i=g_replicas.find(seat);i!=g_replicas.end()){restore_clocks(i->second.pawn.get());command_context::forget(i->second.pawn.get());}
     g_replicas.erase(seat);
 }
-void reset() { restore_clocks();g_replicas.clear(); g_state_classes.clear(); g_text = nullptr; g_fault.clear(); command_context::reset(); causality::reset(); }
+bool playback_gap() { return g_playback_gap; }
+void reset() { g_playback_gap = false; restore_clocks();g_replicas.clear(); g_state_classes.clear(); g_text = nullptr; g_fault.clear(); command_context::reset(); causality::reset(); }
 ue::UObject* actor(std::uint16_t seat) { const auto i = g_replicas.find(seat); return i == g_replicas.end() ? nullptr : i->second.pawn.get(); }
+bool remote_pawn(ue::UObject* pawn) {
+    return pawn && std::any_of(g_replicas.begin(), g_replicas.end(), [&](const auto& item) { return item.second.pawn.get() == pawn; });
+}
+void command_edge(ue::UObject* pawn, const Source& source, ue::UObject* cls, std::uint64_t token,
+                  std::uint8_t direction, std::uint8_t button, std::uint8_t end) {
+    if (!g_sink || !source.seat || source.seat > 8 || !source.seq || seat_of(pawn) != source.seat) return;
+    auto& capture = g_capture[source.seat];
+    const auto handle = ObjHandle::of(pawn);
+    if (capture.pawn != handle) capture = {handle};
+    if (capture.commands.size() == proto::kLilyCommands) return fail("Host command frame capacity");
+    capture.commands.push_back({token, source.seq, g_name(log::utf8(cls->GetPathName())), direction, button, end});
+}
 bool owns(ue::UObject* object) {
     if (autonomous::owns(object)) return true;
     if (!object || g_replicas.empty() || !g_schema.ready()) return false;
@@ -604,6 +663,6 @@ bool source(ue::UObject* object, Source& out) {
 }
 std::string describe() {
     std::size_t queued = 0; for (const auto& [seat, r] : g_replicas) queued += r.frames.size();
-    return std::format("native Lily: replicas={} captured={} received={} consumed={} queued={} profiles={} stateChanges={} edges={}/{} starved={} roleClocks={} clockWrites={} fault='{}'\n", g_replicas.size(), g_captured, g_received, g_consumed, queued, g_profiles, g_state_changes, g_edges_played, g_edges_received, g_starved, g_role_clocks.size(),g_clock_writes,g_fault)+lily_events::describe()+autonomous::describe();
+    return std::format("native Lily: replicas={} captured={} received={} consumed={} queued={} profiles={} stateChanges={} edges={}/{} starved={} roleClocks={} clockWrites={} fault='{}'\n", g_replicas.size(), g_captured, g_received, g_consumed, queued, g_profiles, g_state_changes, g_edges_played, g_edges_received, g_starved, g_role_clocks.size(),g_clock_writes,g_fault)+std::format("  Host command edges: starts={} ends={}\n",g_command_starts,g_command_ends)+lily_events::describe()+autonomous::describe();
 }
 }
