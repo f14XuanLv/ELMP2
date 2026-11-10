@@ -8,7 +8,7 @@ std::size_t encode(const SpiritFrame& m,std::span<std::uint8_t> out) {
     std::array<std::uint8_t,512> data{};const auto size=encode(m.context,data);if(!size)return 0;
     Writer w(out);w.u8(static_cast<std::uint8_t>(Msg::SpiritFrame));w.u16(static_cast<std::uint16_t>(size));w.bytes(std::span(data.data(),size));
     w.u32(m.role);w.u32(m.episode);w.u32(m.summon_input);w.u32(m.command_sequence);w.u16(m.cls);w.u16(m.summon);w.f32(m.actor_scale);w.u8((m.active?1:0)|(m.decision_only?2:0)|(m.soft_ending?4:0));w.u8(static_cast<std::uint8_t>(m.edges.size()));
-    for(const auto& e:m.edges){if(!e.sequence||!e.cls||e.kind>1||e.direction>8||e.button>9||e.reason>6)return 0;w.u32(e.sequence);w.u16(e.cls);w.u8(e.kind);w.u8(e.direction);w.u8(e.button);w.u8(e.reason);}
+    for(const auto& e:m.edges){if(!e.sequence||!e.cls||e.kind>1||e.direction>8||!valid_invoked_input(e.button)||e.reason>6)return 0;w.u32(e.sequence);w.u16(e.cls);w.u8(e.kind);w.u8(e.direction);w.u8(e.button);w.u8(e.reason);}
     const auto& a=m.animation;
     if((a.generation==0)!=(a.animation==0)||a.flags>3)return 0;
     w.u8(m.layer);w.u32(a.generation);w.u16(a.animation);w.u8(a.flags);

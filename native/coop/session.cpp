@@ -67,8 +67,13 @@ void tick(const frame::Tick& t) {
             break;
         case net::LinkEvent::Kind::Rejected:
         case net::LinkEvent::Kind::Closed:
-            g_error = in.text;
-            log::info("coop: peer {} {}: {}", in.peer, in.kind == net::LinkEvent::Kind::Rejected ? "rejected" : "closed", in.text);
+            if (g_role == Role::Client && in.kind == net::LinkEvent::Kind::Closed && in.text.starts_with("peer closed: ")) {
+                g_error = "Host closed the session: " + in.text.substr(std::string_view("peer closed: ").size());
+                log::info("coop: {}", g_error);
+            } else {
+                g_error = in.text;
+                log::info("coop: peer {} {}: {}", in.peer, in.kind == net::LinkEvent::Kind::Rejected ? "rejected" : "closed", in.text);
+            }
             if (in.peer && hh.closed) hh.closed(in.peer, in.text, in.reason);
             if (!in.peer || g_role == Role::Client) { // endpoint overload ends either role, even while joining
                 stop_role();
@@ -148,6 +153,8 @@ std::string start_join(std::string_view addr, std::uint16_t port, std::string_vi
 void leave(std::string_view reason) {
     if (!g_ep) return;
     log::info("coop: leaving ({})", reason);
+    g_error = std::string(reason);
+    g_ep->close(g_error);
     stop_role(); // Endpoint destructor sends F_CLOSE to every peer
 }
 

@@ -347,43 +347,85 @@ bool decode(std::span<const std::uint8_t> in, ChildStop& m) {
     m.reason = r.u8();
     return r.done() && valid_child_stop(m);
 }
-std::size_t encode(const LilyFrame& m, std::span<std::uint8_t> out) {
-    if(m.persistent_class) {
-        if(!m.persistent_token||!m.persistent_input||m.persistent_direction>8||m.persistent_button>9)return 0;
-    } else if(m.persistent_token||m.persistent_input||m.persistent_direction||m.persistent_button)return 0;
-    if(m.facing<1||m.facing>2||m.actor_clock_count>kLilyClocks)return 0;
-    if(!m.epoch||!m.view||!std::isfinite(m.world_dt)||m.world_dt<=0||m.world_dt>60)return 0;
-    if (!m.seat || m.seat > 8 || !m.map || !m.seq || !m.generation || m.direction > 8 || m.mode > 6 || !std::isfinite(m.dt) || m.dt < 0 || m.dt > 60 || !std::isfinite(m.step) || m.step <= 0 || m.step > 60 || m.state_count > kLilyStates || m.command_state_count > kLilyStates || (m.flags & ~0x3FEu) || (m.raw & ~0x3FEu)) return 0;
+std::size_t encode(const LilyFrame& m, std::span<std::uint8_t> out, LilyFrameError* error) {
+    const auto reject = [&](std::string_view field, double value, int index = -1) -> std::size_t {
+        if (error) *error = {field, value, index};
+        return 0;
+    };
+    if (m.persistent_class) {
+        if (!m.persistent_token) return reject("persistent.token", 0);
+        if (!m.persistent_input) return reject("persistent.input", 0);
+        if (m.persistent_direction > 8) return reject("persistent.direction", m.persistent_direction);
+        if (!valid_invoked_input(m.persistent_button)) return reject("persistent.button", m.persistent_button);
+    } else if (m.persistent_token || m.persistent_input || m.persistent_direction || m.persistent_button)
+        return reject("persistent.class missing", 0);
+    if (m.facing < 1 || m.facing > 2) return reject("facing", m.facing);
+    if (m.actor_clock_count > kLilyClocks) return reject("actor_clock_count", m.actor_clock_count);
+    if (!m.epoch) return reject("epoch", 0);
+    if (!m.view) return reject("view", 0);
+    if (!std::isfinite(m.world_dt) || m.world_dt <= 0 || m.world_dt > 60) return reject("world_dt", m.world_dt);
+    if (!m.seat || m.seat > 8) return reject("seat", m.seat);
+    if (!m.map) return reject("map", 0);
+    if (!m.seq) return reject("seq", 0);
+    if (!m.generation) return reject("generation", 0);
+    if (m.direction > 8) return reject("direction", m.direction);
+    if (m.mode > 6) return reject("mode", m.mode);
+    if (!std::isfinite(m.dt) || m.dt < 0 || m.dt > 60) return reject("dt", m.dt);
+    if (!std::isfinite(m.step) || m.step <= 0 || m.step > 60) return reject("step", m.step);
+    if (m.state_count > kLilyStates) return reject("state_count", m.state_count);
+    if (m.command_state_count > kLilyStates) return reject("command_state_count", m.command_state_count);
+    if (m.flags & ~0x3FEu) return reject("flags", m.flags);
+    if (m.raw & ~0x3FEu) return reject("raw", m.raw);
     auto w = start(out, Msg::LilyFrame);
     w.u16(m.seat); w.u16(m.map); w.u32(m.seq); w.u32(m.generation); w.f32(m.dt); w.f32(m.step);
     w.u16(m.epoch); w.u32(m.view); w.u32(m.t_ms);
     w.f32(m.world_dt);
-    for (float f : m.input) { if (!std::isfinite(f)) return 0; w.f32(f); }
+    for (int i = 0; i < static_cast<int>(m.input.size()); ++i) {
+        if (!std::isfinite(m.input[i])) return reject("input", m.input[i], i);
+        w.f32(m.input[i]);
+    }
     w.u8(m.direction); w.u8(m.mode); w.u8(m.custom_mode); w.u16(m.flags); w.u16(m.raw);
-    for (float f : m.position) { if (!std::isfinite(f)) return 0; w.f32(f); }
-    for (float f : m.velocity) { if (!std::isfinite(f)) return 0; w.f32(f); }
+    for (int i = 0; i < static_cast<int>(m.position.size()); ++i) {
+        if (!std::isfinite(m.position[i])) return reject("position", m.position[i], i);
+        w.f32(m.position[i]);
+    }
+    for (int i = 0; i < static_cast<int>(m.velocity.size()); ++i) {
+        if (!std::isfinite(m.velocity[i])) return reject("velocity", m.velocity[i], i);
+        w.f32(m.velocity[i]);
+    }
     w.u8(m.state_count);
-    for (std::size_t i = 0; i < m.state_count; ++i) { if (!m.states[i]) return 0; w.u16(m.states[i]); }
+    for (std::size_t i = 0; i < m.state_count; ++i) { if (!m.states[i]) return reject("states", 0, static_cast<int>(i)); w.u16(m.states[i]); }
     w.u8(m.command_state_count);
-    for (std::size_t i = 0; i < m.command_state_count; ++i) { if (!m.command_states[i]) return 0; w.u16(m.command_states[i]); }
+    for (std::size_t i = 0; i < m.command_state_count; ++i) { if (!m.command_states[i]) return reject("command_states", 0, static_cast<int>(i)); w.u16(m.command_states[i]); }
     w.u8(m.facing);w.u8(m.actor_clock_count);
-    for(unsigned i=0;i<m.actor_clock_count;++i){const auto& c=m.actor_clocks[i];if(!c.cls||!std::isfinite(c.scale)||c.scale<0||c.scale>1000)return 0;w.u16(c.cls);w.f32(c.scale);}
-    if (m.commands.size() > kLilyCommands) return 0;
+    for (int i = 0; i < m.actor_clock_count; ++i) {
+        const auto& c = m.actor_clocks[i];
+        if (!c.cls) return reject("clock.class", 0, i);
+        if (!std::isfinite(c.scale) || c.scale < 0 || c.scale > 1000) return reject("clock.scale", c.scale, i);
+        w.u16(c.cls); w.f32(c.scale);
+    }
+    if (m.commands.size() > kLilyCommands) return reject("command_count", static_cast<double>(m.commands.size()));
     w.u8(static_cast<std::uint8_t>(m.commands.size()));
-    for (const auto& c : m.commands) {
-        if (!c.token || !c.input || c.input > m.seq || !c.cls || c.direction > 8 || c.button > 9 || c.end > 7) return 0;
+    for (int i = 0; i < static_cast<int>(m.commands.size()); ++i) {
+        const auto& c = m.commands[i];
+        if (!c.token) return reject("command.token", 0, i);
+        if (!c.input || c.input > m.seq) return reject("command.input", c.input, i);
+        if (!c.cls) return reject("command.class", 0, i);
+        if (c.direction > 8) return reject("command.direction", c.direction, i);
+        if (!valid_invoked_input(c.button)) return reject("command.button", c.button, i);
+        if (c.end > 7) return reject("command.end", c.end, i);
         w.u64(c.token); w.u32(c.input); w.u16(c.cls); w.u8(c.direction); w.u8(c.button); w.u8(c.end);
         w.u8(c.climb_target.has_value());
         if (c.climb_target) {
-            if (c.end) return 0;
+            if (c.end) return reject("command.climb_target on End", c.end, i);
             for (float coordinate : *c.climb_target) {
-                if (!std::isfinite(coordinate)) return 0;
+                if (!std::isfinite(coordinate)) return reject("command.climb_target", coordinate, i);
                 w.f32(coordinate);
             }
         }
     }
     w.u16(m.persistent_class);w.u64(m.persistent_token);w.u32(m.persistent_input);w.u8(m.persistent_direction);w.u8(m.persistent_button);
-    return done(w);
+    return w.ok() ? w.size() : reject("buffer capacity", static_cast<double>(out.size()));
 }
 bool decode(std::span<const std::uint8_t> in, LilyFrame& m) {
     Reader r(in);

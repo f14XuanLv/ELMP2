@@ -168,6 +168,9 @@ bool valid_reaction(const Reaction& m) noexcept;
 struct Json { std::string text; };
 inline constexpr std::size_t kLilyStates = 48;
 inline constexpr std::size_t kLilyClocks = 32;
+// ECommandInputTypes on a native action includes menus and the wildcard.
+// This is a single enum value, independent of the upstream gameplay input mask.
+constexpr bool valid_invoked_input(std::uint8_t value) { return value <= 12 || value == 100; }
 struct LilyClock { std::uint16_t cls = 0; float scale = 1; bool operator==(const LilyClock&) const = default; };
 // Original Lily command lifecycle, in Host execution order within a source frame.
 struct LilyCommand {
@@ -202,7 +205,12 @@ struct LilyFrame {
     std::uint8_t persistent_direction = 0, persistent_button = 0;
     bool operator==(const LilyFrame&) const = default;
 };
-std::size_t encode(const LilyFrame& m, std::span<std::uint8_t> out);
+struct LilyFrameError {
+    std::string_view field;
+    double value = 0;
+    int index = -1;
+};
+std::size_t encode(const LilyFrame& m, std::span<std::uint8_t> out, LilyFrameError* error = nullptr);
 bool decode(std::span<const std::uint8_t> in, LilyFrame& m);
 
 struct SpiritEdge {

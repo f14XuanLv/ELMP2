@@ -125,6 +125,12 @@ Endpoint::~Endpoint() {
     if (sock_ != ~std::uintptr_t{0}) closesocket(static_cast<SOCKET>(sock_));
 }
 
+void Endpoint::close(std::string_view reason) {
+    std::lock_guard lk(mu_);
+    close_reason_ = reason;
+    stop_ = true;
+}
+
 void Endpoint::send_unreliable(std::uint32_t peer, std::uint8_t stream, std::span<const std::uint8_t> msg) {
     std::lock_guard lk(mu_);
     if (!fatal_.empty()) return;
@@ -218,14 +224,15 @@ void Endpoint::run() {
     double next_status = 0;
     while (true) {
         double now = clock::now_s();
-        std::string fatal;
+        std::string shutdown;
         {
             std::lock_guard lk(mu_);
-            fatal = fatal_;
+            if (!fatal_.empty()) shutdown = fatal_;
+            else if (stop_) shutdown = close_reason_.empty() ? "left the session" : close_reason_;
         }
-        if (stop_ || !fatal.empty()) {
+        if (!shutdown.empty()) {
             for (auto& p : peers_) {
-                p->link->close(fatal.empty() ? "left the session" : fatal);
+                p->link->close(shutdown);
                 flush(*p);
             }
             break;

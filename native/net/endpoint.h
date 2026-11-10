@@ -52,6 +52,7 @@ public:
     static std::unique_ptr<Endpoint> host(std::uint16_t port, std::string_view code, const Identity& id, std::size_t max_peers, std::string& err);
     static std::unique_ptr<Endpoint> join(std::string_view addr, std::uint16_t port, std::string_view code, const Identity& id, std::string& err);
     ~Endpoint(); // closes every link (F_CLOSE) and joins the thread
+    void close(std::string_view reason);
 
     void send_unreliable(std::uint32_t peer, std::uint8_t stream, std::span<const std::uint8_t> msg); // peer 0 = every established peer
     void send_reliable(std::uint32_t peer, std::span<const std::uint8_t> msg);
@@ -88,6 +89,7 @@ private:
     std::vector<Inbound> inbox_;
     EndpointStatus status_;
     std::string fatal_;
+    std::string close_reason_;
     bool fatal_reported_ = false;
     std::atomic<bool> stop_{false};
     std::thread thread_;

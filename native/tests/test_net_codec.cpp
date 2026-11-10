@@ -18,7 +18,7 @@ TEST_MAIN({
     { // Autonomous command frames: bounded nested context, command edges, and original turn definition.
         using namespace elmp::net::proto;
         SpiritFrame a,b;auto& c=a.context;c.seat=2;c.map=3;c.epoch=4;c.view=5;c.generation=6;c.seq=7;c.facing=1;c.dt=c.step=c.world_dt=1.f/60;
-        a.role=8;a.episode=9;a.cls=10;a.summon=11;a.edges.push_back({12,13,0,8,9,0});a.edges.push_back({12,13,1,0,0,6});
+        a.role=8;a.episode=9;a.cls=10;a.summon=11;a.edges.push_back({12,13,0,8,100,0});a.edges.push_back({12,13,1,0,0,6});
         a.layer=3;a.animation={14,15,1,.2f,0,0,.1f};
         a.has_follow=true;a.follow_position={1,-200,500};a.follow_rotation={0,90,0};a.follow_velocity={0,-300,20};a.decision_only=true;c.dt=0;
         a.follow_scale={1,2,3};a.follow_history={1,-200,3,.5f,1,2,0,-300,20,0,-301,19};a.soft_ending=true;
@@ -51,6 +51,12 @@ TEST_MAIN({
         a.commands.back().end = 3;
         a.commands.back().climb_target.reset();
         std::array<std::uint8_t, kLilyFrameBytes + 1> wire{};
+        a.persistent_button = 100;
+        a.commands.front().direction = 2;
+        a.commands.front().button = 99;
+        LilyFrameError error;
+        CHECK(encode(a, wire, &error) == 0 && error.field == "command.button" && error.value == 99 && error.index == 0);
+        a.commands.front().button = 100; // original CA_Dive, DOWN + ANY
         a.commands.push_back(a.commands.front()); CHECK(encode(a, wire) == 0); a.commands.pop_back();
         const auto n = encode(a, wire);
         CHECK(n > 0 && decode(std::span(wire.data(), n), b) && a == b);
