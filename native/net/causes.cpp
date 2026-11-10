@@ -3,6 +3,7 @@
 
 namespace elmp::net::proto {
 std::size_t encode(const SpiritFrame& m,std::span<std::uint8_t> out) {
+    if (!m.context.commands.empty()) return 0;
     if(!m.role||!m.episode||!m.cls||!m.summon||m.edges.size()>16||m.layer>9||!std::isfinite(m.actor_scale)||m.actor_scale<0||m.actor_scale>1000)return 0;
     std::array<std::uint8_t,512> data{};const auto size=encode(m.context,data);if(!size)return 0;
     Writer w(out);w.u8(static_cast<std::uint8_t>(Msg::SpiritFrame));w.u16(static_cast<std::uint16_t>(size));w.bytes(std::span(data.data(),size));
@@ -33,7 +34,7 @@ bool decode(std::span<const std::uint8_t> in,SpiritFrame& m) {
 }
 namespace {
 bool valid(const Cause& f, std::uint16_t map) {
-    if (f.domain > 1 || static_cast<unsigned>(f.kind) > 3 || !f.seat || f.seat > 8 || f.map != map || !f.root || !f.generation || !f.input || !f.cls || f.path.depth > kAbilityPathDepth || f.flags > 3 || f.reason > 3 || f.ref_kind > 2) return false;
+    if ((f.domain == 1) != (f.role != 0) || f.domain > 1 || static_cast<unsigned>(f.kind) > 3 || !f.seat || f.seat > 8 || f.map != map || !f.root || !f.generation || !f.input || !f.cls || f.path.depth > kAbilityPathDepth || f.flags > 3 || f.reason > 3 || f.ref_kind > 2) return false;
     if ((f.ref_kind == 0) != (f.ref_id == 0) || (f.ref_kind == 0) != (f.ref_generation == 0) || (!f.ref_kind && f.component)) return false;
     if (!std::isfinite(f.min) || !std::isfinite(f.range) || f.min < 0 || f.range < 0) return false;
     if (!std::isfinite(f.actor_scale) || f.actor_scale < 0 || f.actor_scale > 1000 || f.channel > 31) return false;
@@ -45,14 +46,14 @@ bool valid(const Cause& f, std::uint16_t map) {
     return true;
 }
 void put(Writer& w, const Cause& f) {
-    w.u8(static_cast<std::uint8_t>(f.kind));w.u8(f.domain);w.u16(f.seat);w.u32(f.generation);w.u32(f.input);w.u32(f.t_ms);w.u64(f.root);
+    w.u8(static_cast<std::uint8_t>(f.kind));w.u8(f.domain);w.u32(f.role);w.u16(f.seat);w.u32(f.generation);w.u32(f.input);w.u32(f.t_ms);w.u64(f.root);
     w.u16(f.ordinal);w.u16(f.cls);w.u16(f.invoker);w.u16(f.query);w.u8(f.path.depth);
     for (std::size_t i=0;i<f.path.depth;++i){w.u16(f.path.entries[i]);w.u32(f.path.occurrences[i]);}
     w.u8(f.ref_kind);w.u16(f.ref_id);w.u32(f.ref_generation);w.u16(f.component);w.u8(f.flags);w.u8(f.channel);w.u8(f.reason);
     w.f32(f.min);w.f32(f.range);w.f32(f.actor_scale);for(auto* a:{&f.actor_position,&f.target_position,&f.target_velocity,&f.actor_rotation})for(float n:*a)w.f32(n);
 }
 bool get(Reader& r, Cause& f) {
-    f.kind=static_cast<CauseKind>(r.u8());f.domain=r.u8();f.seat=r.u16();f.generation=r.u32();f.input=r.u32();f.t_ms=r.u32();f.root=r.u64();
+    f.kind=static_cast<CauseKind>(r.u8());f.domain=r.u8();f.role=r.u32();f.seat=r.u16();f.generation=r.u32();f.input=r.u32();f.t_ms=r.u32();f.root=r.u64();
     f.ordinal=r.u16();f.cls=r.u16();f.invoker=r.u16();f.query=r.u16();f.path.depth=r.u8();
     if(f.path.depth>kAbilityPathDepth)return false;
     for(std::size_t i=0;i<f.path.depth;++i){f.path.entries[i]=r.u16();f.path.occurrences[i]=r.u32();}

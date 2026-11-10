@@ -10,6 +10,7 @@ void summoned(ue::UObject* spirit, ue::UObject* command);
 void command_started(ue::UObject* command, ue::UObject* pawn);
 void command_ended(ue::UObject* command, ue::UObject* pawn, std::uint8_t reason);
 bool source(ue::UObject*, native_lily::Source&);
+const native_lily::PlaybackClock* playback(const native_lily::Source&);
 bool owns(ue::UObject*);
 ue::UObject* summoner(ue::UObject*);
 bool eligible(ue::UObject*);

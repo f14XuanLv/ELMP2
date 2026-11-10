@@ -41,13 +41,15 @@ TEST_MAIN({
         LilyFrame a, b;
         a.seat = 1; a.map = 2; a.seq = 1; a.generation = 10; a.dt = a.step = 1.0f / 60;
         a.epoch=2;a.view=1;a.t_ms=100;a.world_dt=a.dt;a.facing=2;
-        a.persistent_class=7;a.persistent_token=900;a.persistent_input=1;a.persistent_direction=3;a.persistent_elapsed=100;
+        a.persistent_class=7;a.persistent_token=900;a.persistent_input=1;a.persistent_direction=3;
         a.actor_clock_count=kLilyClocks;for(unsigned i=0;i<kLilyClocks;++i)a.actor_clocks[i]={static_cast<std::uint16_t>(i+1),0.1f};
         a.mode = 1; a.state_count = a.command_state_count = static_cast<std::uint8_t>(kLilyStates);
         a.flags = a.raw = 0x3FE; a.input[0] = -1; a.velocity[1] = 300;
         for (std::size_t i = 0; i < kLilyStates; ++i) a.states[i] = a.command_states[i] = static_cast<std::uint16_t>(i + 1);
         a.commands.resize(kLilyCommands, LilyCommand{27, 1, 3, 2, 1, 0});
+        for (auto& edge : a.commands) edge.climb_target = std::array<float, 3>{0, -1600, 400};
         a.commands.back().end = 3;
+        a.commands.back().climb_target.reset();
         std::array<std::uint8_t, kLilyFrameBytes + 1> wire{};
         a.commands.push_back(a.commands.front()); CHECK(encode(a, wire) == 0); a.commands.pop_back();
         const auto n = encode(a, wire);
@@ -69,7 +71,6 @@ TEST_MAIN({
         a.actor_clocks[0].scale=std::numeric_limits<float>::quiet_NaN();CHECK(encode(a,wire)==0);a.actor_clocks[0].scale=0.1f;
         a.facing=3;CHECK(encode(a,wire)==0);a.facing=2;
         a.persistent_direction=9;CHECK(encode(a,wire)==0);a.persistent_direction=3;
-        a.persistent_elapsed=std::numeric_limits<float>::infinity();CHECK(encode(a,wire)==0);a.persistent_elapsed=100;
         a.persistent_class=0;CHECK(encode(a,wire)==0);a.persistent_class=7;
         a.command_state_count = 49; CHECK(encode(a, wire) == 0);
         a.command_state_count = 48; a.command_states[0]=0; CHECK(encode(a, wire) == 0);
@@ -80,7 +81,7 @@ TEST_MAIN({
         LilyCauses a,b;a.epoch=2;a.map=3;a.view=4;a.fence_ms=100;
         Cause root;root.seat=1;root.map=3;root.generation=10;root.input=99;root.root=42;root.ordinal=1;root.cls=5;root.invoker=6;root.t_ms=90;
         a.facts.push_back(root);
-        a.facts[0].domain=1;a.facts[0].actor_rotation={0,-90,0};
+        a.facts[0].domain=1;a.facts[0].role=37;a.facts[0].actor_rotation={0,-90,0};
         auto q=root;q.kind=CauseKind::Query;q.cls=7;q.query=1;q.path.depth=1;q.path.entries[0]=0;q.path.occurrences[0]=1;q.ref_kind=1;q.ref_id=8;q.ref_generation=123;q.component=9;q.range=2000;q.flags=3;q.channel=3;
         a.facts.push_back(q);q.kind=CauseKind::Target;a.facts.push_back(q);q.kind=CauseKind::End;q.reason=2;a.facts.push_back(q);
         std::vector<std::uint8_t> wire(128*1024);const auto n=encode(a,wire);

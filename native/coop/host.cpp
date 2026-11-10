@@ -982,6 +982,8 @@ void native_frame(ue::UObject* pawn, proto::LilyFrame& f) {
     if (slot < 0) return;
     f.map = name(slot == 0 ? ue::utf8(world::current_map_id()) : maps::map_id(slot));
     f.position[1] -= maps::offset(slot);
+    for (auto& edge : f.commands)
+        if (edge.climb_target) (*edge.climb_target)[1] -= maps::offset(slot);
     for (auto& [id, peer] : g_peers)
         if (peer.slot && peer.slot != f.seat && !peer.native_builds[f.seat].empty() && peer.native_map == f.map && maps::slot_of_seat(peer.slot) == slot && peer.map_ready == f.map && peer.map_sent == f.map)
             if (peer.native_frames.size() < 128) { auto copy=f; copy.epoch=peer.epoch; copy.view=peer.native_view; peer.native_frames.push_back(copy); }

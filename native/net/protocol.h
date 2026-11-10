@@ -9,6 +9,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -174,10 +175,11 @@ struct LilyCommand {
     std::uint32_t input = 0;
     std::uint16_t cls = 0;
     std::uint8_t direction = 0, button = 0, end = 0; // end: 0 = Start, otherwise native reason + 1
+    std::optional<std::array<float, 3>> climb_target;
     bool operator==(const LilyCommand&) const = default;
 };
 inline constexpr unsigned kLilyCommands = 32;
-inline constexpr std::size_t kLilyFrameBytes = 512 + kLilyCommands * 17;
+inline constexpr std::size_t kLilyFrameBytes = 512 + kLilyCommands * 30;
 struct LilyFrame {
     std::vector<LilyCommand> commands;
     std::uint16_t seat = 0, map = 0;
@@ -198,7 +200,6 @@ struct LilyFrame {
     std::uint64_t persistent_token = 0;
     std::uint32_t persistent_input = 0;
     std::uint8_t persistent_direction = 0, persistent_button = 0;
-    float persistent_elapsed = 0;
     bool operator==(const LilyFrame&) const = default;
 };
 std::size_t encode(const LilyFrame& m, std::span<std::uint8_t> out);
@@ -236,6 +237,7 @@ bool decode(std::span<const std::uint8_t>, SpiritFrame&);
 enum class CauseKind : std::uint8_t { Root, Query, Target, End };
 struct Cause {
     CauseKind kind = CauseKind::Root;
+    std::uint32_t role = 0; // autonomous owner within the seat, zero for Lily
     std::uint8_t domain = 0; // 0 Lily consumed input, 1 autonomous Spirit accepted command
     std::uint16_t seat = 0, map = 0;
     std::uint32_t generation = 0, input = 0, t_ms = 0;

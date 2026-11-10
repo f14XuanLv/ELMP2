@@ -349,8 +349,8 @@ bool decode(std::span<const std::uint8_t> in, ChildStop& m) {
 }
 std::size_t encode(const LilyFrame& m, std::span<std::uint8_t> out) {
     if(m.persistent_class) {
-        if(!m.persistent_token||!m.persistent_input||m.persistent_direction>8||m.persistent_button>9||!std::isfinite(m.persistent_elapsed)||m.persistent_elapsed<0)return 0;
-    } else if(m.persistent_token||m.persistent_input||m.persistent_direction||m.persistent_button||m.persistent_elapsed!=0)return 0;
+        if(!m.persistent_token||!m.persistent_input||m.persistent_direction>8||m.persistent_button>9)return 0;
+    } else if(m.persistent_token||m.persistent_input||m.persistent_direction||m.persistent_button)return 0;
     if(m.facing<1||m.facing>2||m.actor_clock_count>kLilyClocks)return 0;
     if(!m.epoch||!m.view||!std::isfinite(m.world_dt)||m.world_dt<=0||m.world_dt>60)return 0;
     if (!m.seat || m.seat > 8 || !m.map || !m.seq || !m.generation || m.direction > 8 || m.mode > 6 || !std::isfinite(m.dt) || m.dt < 0 || m.dt > 60 || !std::isfinite(m.step) || m.step <= 0 || m.step > 60 || m.state_count > kLilyStates || m.command_state_count > kLilyStates || (m.flags & ~0x3FEu) || (m.raw & ~0x3FEu)) return 0;
@@ -373,8 +373,16 @@ std::size_t encode(const LilyFrame& m, std::span<std::uint8_t> out) {
     for (const auto& c : m.commands) {
         if (!c.token || !c.input || c.input > m.seq || !c.cls || c.direction > 8 || c.button > 9 || c.end > 7) return 0;
         w.u64(c.token); w.u32(c.input); w.u16(c.cls); w.u8(c.direction); w.u8(c.button); w.u8(c.end);
+        w.u8(c.climb_target.has_value());
+        if (c.climb_target) {
+            if (c.end) return 0;
+            for (float coordinate : *c.climb_target) {
+                if (!std::isfinite(coordinate)) return 0;
+                w.f32(coordinate);
+            }
+        }
     }
-    w.u16(m.persistent_class);w.u64(m.persistent_token);w.u32(m.persistent_input);w.u8(m.persistent_direction);w.u8(m.persistent_button);w.f32(m.persistent_elapsed);
+    w.u16(m.persistent_class);w.u64(m.persistent_token);w.u32(m.persistent_input);w.u8(m.persistent_direction);w.u8(m.persistent_button);
     return done(w);
 }
 bool decode(std::span<const std::uint8_t> in, LilyFrame& m) {
@@ -400,8 +408,12 @@ bool decode(std::span<const std::uint8_t> in, LilyFrame& m) {
     m.commands.resize(count);
     for (auto& c : m.commands) {
         c.token = r.u64(); c.input = r.u32(); c.cls = r.u16(); c.direction = r.u8(); c.button = r.u8(); c.end = r.u8();
+        const auto has_target = r.u8();
+        if (has_target > 1 || (has_target && c.end)) return false;
+        c.climb_target.reset();
+        if (has_target) for (auto& coordinate : c.climb_target.emplace()) coordinate = r.f32();
     }
-    m.persistent_class=r.u16();m.persistent_token=r.u64();m.persistent_input=r.u32();m.persistent_direction=r.u8();m.persistent_button=r.u8();m.persistent_elapsed=r.f32();
+    m.persistent_class=r.u16();m.persistent_token=r.u64();m.persistent_input=r.u32();m.persistent_direction=r.u8();m.persistent_button=r.u8();
     std::array<std::uint8_t, kLilyFrameBytes> scratch{};
     return r.done() && encode(m, scratch) != 0 && m.mode <= 6 && m.direction <= 9;
 }

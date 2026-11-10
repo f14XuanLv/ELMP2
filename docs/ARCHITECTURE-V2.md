@@ -513,3 +513,9 @@ CommandQueue之外的DEATH与EVENT逻辑层经`lily_events`传递实际原版定
 ## 同图多人回放重构试验（2026-11-10）
 
 以 7076aaa 的连续播放为起点。对远端角色的离散动作采用 Host 实际 Start 作为决定，检验原生命令入口能否在不依赖本地独立候选配对的情况下启动同一动作。保留连续输入、运动、原生时间线与 Host 结算闸门。回放偏差的恢复与会话权限分别验收。Host 使用实际座位 Pawn 参与原版敌人唤醒，区分 AI Activate 与蓝图 SetPaused；先实测已有 overlap 的覆盖范围。按实例记录同一运行的时钟、地图、座位、第一处偏差和后续结果。
+
+协议 22 将远端队列的命令消费放在原版 Character.Tick 写入 CurrentInputSnapshot 之后、UpdateCommands 的原生更新之前。普通输入匹配在远端莉莉上交给 Host；正在执行的动作继续读取本帧输入，精灵的队列独立运行。源帧仅交付一次实际 Start/End。冷加入首帧可采用已证明可恢复的持续命令基线，后续沿同一激活 token 收尾。环境查询按实际调用捕获：攀台 Start 读取的 AutoClimb.GetLastTargetLocation 作为该次激活的可选参数，转为地图本地坐标，仅供同一 Pawn 的原版 Start 读取。详见 `docs/kb/command-start-static-2026-11-10.md`。
+
+同图有多个播放者时，一个 Client 视图在帧泵中维护一个单调、受 Host 封口约束的世界播放时间。敌人快照和已结算反馈使用该时间；各莉莉和自主精灵保有自己的实际消费时间、速率与目标等待起点。能力按来源座位、Pawn 代次、自主精灵 role 读取所属流的时钟。等待、停止与倍率仅作用于对应的能力族；对象重绑、视图变更时其时钟随所有者失效。
+
+命令结束只作用于匹配本次激活的队首。正常完成沿原版 RequestEnd，取消沿原版 RemoveCommand 传递 Host 的 ECommandRemoveTypes。追踪查询将已消费的目标事实保存在该次子能力上，至下次查询或激活退役，避免其他能力退役压缩记录表时改变该引用。

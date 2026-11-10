@@ -1,4 +1,5 @@
 #include "coop/autonomous.h"
+#include <intrin.h>
 #include "coop/command_context.h"
 #include "coop/lily_events.h"
 #include "coop/session.h"
@@ -55,6 +56,7 @@ struct Role {
  std::deque<p::SpiritFrame> frames;
  std::deque<FollowStep> follow_steps;
  float elapsed=0,rate=1,world_rate=1;
+ native_lily::PlaybackClock clock;
  input::InputSnapshot actor_input;
  unsigned borrowed=0;
  std::string waiting_for;
@@ -192,7 +194,7 @@ bool bind(Role& r,const p::SpiritFrame& f){
  release(r);r.actor=ObjHandle::of(a);r.caster=ObjHandle::of(pawn);r.source=ObjHandle::of(source);r.queue=ObjHandle::of(g.spirit_queue.object(a));r.original=g.scale.read<float>(a);
  if(auto w=waiting.find(r.actor);w!=waiting.end()){r.original=w->second.scale;waiting.erase(w);}
  r.seat=f.context.seat;r.generation=f.context.generation;r.episode=f.episode;r.bound=true;r.sequence=0;r.command={};actors[r.actor]=r.id;
- r.elapsed=0;r.started=false;r.last=0;r.world_rate=1;r.soft_ending=false;
+ r.clock={};r.elapsed=0;r.started=false;r.last=0;r.world_rate=1;r.soft_ending=false;
  audit("bind.pre",a,restore);pause(a);reflect::Frame(g.clear).invoke(r.queue.get());
  if(restore){auto fn=reinterpret_cast<SpiritStart>(preflight::address("SpiritStartNative"));if(!fn){fail("original Spirit Start unavailable");return false;}LifecycleScope scope;fn(a,source);pause(a);}
  audit("bind.post",a,restore);r.waiting_for.clear();++bindings;return true;
@@ -262,6 +264,7 @@ void __fastcall update(O* queue,float dt){
  if(replaying)return original_update(queue,dt);
  auto* pawn=g.queue_pawn.object(queue);auto* r=role_of(pawn);
  if(sink)return original_update(queue,dt);
+ native_lily::queue_update(pawn, _ReturnAddress());
  if(!own_seat||!eligible_impl(pawn))return original_update(queue,dt);
  if(r&&r->bound&&r->updating)original_update(queue,dt);
 }
@@ -272,7 +275,12 @@ void __fastcall spirit_tick(O* pawn,float dt){
  auto* r=role_of(pawn);if(!r||!r->bound)return;
  if(r->updating)return;
  struct Updating { bool& flag;explicit Updating(bool& f):flag(f){flag=true;}~Updating(){flag=false;} } scope(r->updating);
- if(r->frames.empty()){*g.scale.at<float>(pawn)=0;++starved;return;}
+ const native_lily::Source stream{r->seat,r->generation,0,false,1,r->id};
+ if(r->frames.empty()){
+  *g.scale.at<float>(pawn)=0;
+  causality::advance(stream,r->clock,r->clock.time,0);
+  ++starved;return;
+ }
  float queued=-r->elapsed;for(const auto& f:r->frames)queued+=f.context.step;buffer.add(queued*1000);
  if(!r->started){if(queued<.05f){*g.scale.at<float>(pawn)=0;return;}r->started=true;}
  const auto now=clock::now_us();const float physical=r->last?std::clamp(static_cast<float>(now-r->last)/1e6f,0.f,.05f):1/60.f;r->last=now;
@@ -281,10 +289,10 @@ void __fastcall spirit_tick(O* pawn,float dt){
  while(budget>0&&!r->frames.empty()&&steps++<32){
   auto& f=r->frames.front();auto& c=f.context;const auto time=c.t_ms+r->elapsed*1000;
   if(f.episode!=r->episode||c.generation!=r->generation)break; // rebind at the next frame-pump boundary
-  if(!causality::ready(time))break;
+  if(!causality::ready(stream,r->clock,time))break;
   const float local_delta=world_dt(pawn);const float world_rate=local_delta>0?c.world_dt/c.step*physical*r->rate/local_delta:0;
   if(!f.decision_only)r->world_rate=world_rate;
-  causality::advance(time,r->world_rate);
+  causality::advance(stream,r->clock,time,r->world_rate);
   if(r->elapsed==0){if(!f.active){retire(pawn);r->frames.pop_front();r->bound=false;++removed;break;}begin(*r,f);}
   if(f.decision_only){r->frames.pop_front();++played;continue;}
   const float span=std::min(budget,c.step-r->elapsed);if(span<=0)break;
@@ -351,7 +359,12 @@ bool consume_input(O* a){
 }
 bool defer_start(O* a){if(!deferred(a))return false;++starts_deferred;audit("start.deferred",a);return true;}
 O* summoner(O* a){return g.ready()?get_summoner(a):nullptr;}
-bool source(O* a,native_lily::Source& out){if(auto* r=owner_role(a)){out={r->seat,r->generation,r->sequence,true,1};return true;}return false;}
+const native_lily::PlaybackClock* playback(const native_lily::Source& source) {
+ const auto it=roles.find(source.role);
+ if(it==roles.end() || !it->second.bound || it->second.seat!=source.seat || it->second.generation!=source.generation) return nullptr;
+ return &it->second.clock;
+}
+bool source(O* a,native_lily::Source& out){if(auto* r=owner_role(a)){out={r->seat,r->generation,r->sequence,true,1,r->id};return true;}return false;}
 bool owns(O* a){return !sink&&own_seat&&owner_role(a)!=nullptr;}
 void summoned(O* a,O* command){if(sink)register_host(a,command,true);}
 void command_started(O* command,O* pawn){if(auto* r=role_of(pawn)){

@@ -6,6 +6,18 @@
   "image_base_note": "0x140000000",
   "_comment": "运行时加载（Mods/ELMP/data/binary/EL.json）。只放没有反射入口的原生函数与无反射的原始结构偏移；适用的 EXE 由 elmp.json game.sha256 唯一给出（C1.5，本文件不重复哈希）。每个函数：预检通过（EXE SHA-256）且 rva 处字节与 prefix 逐字节一致才可武装（fail closed）。每个偏移：check 描述它与反射字段的关系（equals = 与该反射属性偏移相等；within = 落在 after 属性末尾与 before 属性起点之间，before 为 <end> 表示原生类 PropertiesSize；struct_size = 等于该结构体尺寸），世界就位后逐项校验，失败的项其依赖能力 fail closed。source 标注证据等级与出处。",
   "functions": {
+    "CommandRemoveNative": {
+      "rva": "0x00CB9420",
+      "prefix": "40535641544883EC404863DA450FB6E0488B",
+      "owner": "coop/command_context",
+      "source": "[E-IDA] ELMP v2 2026-11-10 CB4F00+1E7 calls RemoveCommand(queue,index,reason). Checks the weak command after End, broadcasts and returns it to its pool."
+    },
+    "AutoClimbLastTargetNative": {
+      "rva": "0x00CA9AC0",
+      "prefix": "8B8154010000F20F10814C010000F20F1102894208488BC2C3",
+      "owner": "coop/command_context",
+      "source": "[E-IDA] ELMP v2 2026-11-10: reflected GetLastTargetLocation exec D427E0 calls CA9AC0 at +23h. Returns cached FVector. [E-CUE] CA_LedgeClimb_Base reads it inside Start."
+    },
     "CommandAcceptNative": {
       "rva": "0x00CABB70",
       "prefix": "405641554883EC38807A2C00488BF24C8BE9",

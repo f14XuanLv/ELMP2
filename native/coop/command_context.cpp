@@ -11,6 +11,7 @@
 #include "base/preflight.h"
 #include <Unreal/Hooks/Hooks.hpp>
 #include <algorithm>
+#include <intrin.h>
 #include <array>
 #include <cstring>
 #include <deque>
@@ -23,13 +24,15 @@ struct Schema {
     ObjHandle command_class, timeline_class, entry_class, queue_class;
     reflect::PropRef pawn, timeline, entries, state, action, result, command_id, queue_pawn, queued;
     reflect::FuncRef current;
+    ObjHandle climb_class;
+    reflect::PropRef climb_owner;
     ObjHandle gameplay_class;
     ObjHandle summon_class;
     reflect::PropRef spirit_commands,available_commands,command_classes;
     int conditioned_stride=0;
     reflect::PropRef animations, loop, consume_mp, state_from, state_to, cached_anim, skeleton, scale;
     std::array<reflect::PropRef,4> timelines, timeline_entries;
-    reflect::FuncRef invoked_direction, invoked_button, elapsed, clear, add, request_end;
+    reflect::FuncRef invoked_direction, invoked_button, clear, add, request_end;
     int animation_stride = 0;
     int stride = 0;
     bool live() const { return command_class.valid() && timeline_class.valid() && entry_class.valid() && queue_class.valid() && current.handle.valid(); }
@@ -57,13 +60,30 @@ std::deque<json::Value> g_trace;
 bool g_enabled = false, g_tracing = false;
 std::string g_fault;
 std::uint64_t g_next = 0, g_starts = 0, g_ends = 0, g_baselines = 0, g_expired = 0;
-std::uint64_t g_restored = 0, g_restore_ends = 0;
-struct RestoreAttempt { ObjHandle pawn, cls; std::uint64_t token=0; ObjHandle candidate; };
+std::uint64_t g_restored = 0, g_climb_reads = 0;
+bool g_playback_gap = false;
+using Target = std::array<float, 3>;
+struct RestoreAttempt {
+    ObjHandle pawn, cls;
+    std::uint64_t token = 0;
+    ObjHandle candidate;
+    const Target* target = nullptr;
+    bool target_read = false;
+};
+struct StartRead { ue::UObject* pawn; std::uint64_t token; RestoreAttempt* replay; };
+StartRead* g_start_read = nullptr;
+using ReadTarget = Target*(__fastcall*)(ue::UObject*, Target*);
+ReadTarget g_read_target = nullptr;
+using MatchInput = std::int32_t(__fastcall*)(ue::UObject*, const void*, ue::UObject*);
+MatchInput g_match_input = nullptr;
+const void* g_character_match_return = nullptr;
 RestoreAttempt* g_restore_attempt=nullptr; // synchronous game-thread scope; never retained after restore
 RC::Unreal::Hook::GlobalCallbackId g_post{};
 bool g_post_live = false;
 using Start = void(__fastcall*)(ue::UObject*);
 using End = void(__fastcall*)(ue::UObject*, std::uint8_t);
+using Remove = void(__fastcall*)(ue::UObject*, std::int32_t, std::uint8_t);
+Remove g_remove = nullptr;
 using Accept = bool(__fastcall*)(ue::UObject*, ue::UObject*);
 Accept g_accept = nullptr;
 Start g_start = nullptr;
@@ -202,15 +222,48 @@ bool __fastcall accept(ue::UObject* queue, ue::UObject* candidate) {
     g_accept(queue, candidate); // native proxy preparation at the Host-selected Start
     return true;
 }
+Target* __fastcall read_target(ue::UObject* component, Target* out) {
+    if (!ue::on_game_thread() || !g_start_read || !component ||
+        !component->IsA(static_cast<ue::UClass*>(g_schema.climb_class.get())) ||
+        g_schema.climb_owner.object(component) != g_start_read->pawn)
+        return g_read_target(component, out);
+    if (auto* replay = g_start_read->replay) {
+        if (replay->target) {
+            replay->target_read = true;
+            ++g_climb_reads;
+            *out = *replay->target;
+            return out;
+        }
+        if (g_fault.empty()) g_playback_gap = true;
+        fail("remote command read a climb target absent from the Host Start");
+        // Finish the synchronous native call under the client settlement gates.
+        return g_read_target(component, out);
+    }
+    auto* result = g_read_target(component, out);
+    native_lily::capture_climb_target(g_start_read->pawn, g_start_read->token, *result);
+    return result;
+}
+std::int32_t __fastcall match_input(ue::UObject* queue, const void* snapshot, ue::UObject* set) {
+    if (_ReturnAddress() == g_character_match_return && g_enabled && ue::on_game_thread() &&
+        native_lily::remote_pawn(g_schema.queue_pawn.object(queue))) return -1;
+    return g_match_input(queue, snapshot, set);
+}
 void __fastcall start(ue::UObject* command) {
     if (!g_enabled || !ue::on_game_thread()) return g_start(command);
     autonomous::command_started(command, g_schema.pawn.object(command));
     Active a;
     const bool tracked = insert(command, a);
-    if(tracked&&g_restore_attempt&&g_restore_attempt->pawn==a.pawn&&g_restore_attempt->cls.get()==command->GetClassPrivate())
+    if(tracked && a.queue_owner && g_restore_attempt && !g_restore_attempt->token && g_restore_attempt->pawn==a.pawn && g_restore_attempt->cls.get()==command->GetClassPrivate())
         g_restore_attempt->token=a.token;
     if (tracked) capture_edge(command, a, 0);
     ActionScope scope(a);
+    StartRead read{a.pawn.get(), a.token,
+                   g_restore_attempt && g_restore_attempt->token == a.token ? g_restore_attempt : nullptr};
+    struct ReadScope {
+        StartRead* previous = g_start_read;
+        explicit ReadScope(StartRead* value) { g_start_read = value; }
+        ~ReadScope() { g_start_read = previous; }
+    } read_scope(a.queue_owner ? &read : g_start_read);
     g_start(command);
     if (tracked) {
         const auto i = g_active.find(ObjHandle::of(command));
@@ -242,6 +295,9 @@ std::uint8_t __fastcall sample_command(ue::UObject* command,float dt){
 std::int32_t __fastcall add_command(ue::UObject* queue,std::uint8_t direction,std::uint8_t button,const void* settings,std::int32_t frame,bool front){
     const auto id=g_add(queue,direction,button,settings,frame,front);
     if(!g_enabled||!ue::on_game_thread()||id<0)return id;
+    auto* pawn = g_schema.queue_pawn.object(queue);
+    const bool remote = native_lily::remote_pawn(pawn);
+    if (remote && (!g_restore_attempt || g_restore_attempt->pawn.get() != pawn)) return id;
     const auto ar=reflect::array_at(queue,g_schema.queued);
     if(ar.num<0||ar.num>4096||(ar.num&&!ar.data)){fail("derived command queue layout");return id;}
     for(int i=ar.num-1;i>=0;--i){auto* cmd=reinterpret_cast<ue::UObject**>(ar.data)[i];if(!ue::alive(cmd)||g_schema.command_id.read<std::int32_t>(cmd)!=id)continue;
@@ -251,7 +307,7 @@ std::int32_t __fastcall add_command(ue::UObject* queue,std::uint8_t direction,st
             if (action && action->GetClassPrivate() == g_restore_attempt->cls.get()) g_restore_attempt->candidate = h;
         }
         g_pending.erase(h); // admission/reuse always revokes its previous origin
-        if(g_execution&&g_execution->token&&g_execution->source.domain==0&&g_execution->pawn.get()==g_schema.queue_pawn.object(queue)){
+        if(!remote&&g_execution&&g_execution->token&&g_execution->source.domain==0&&g_execution->pawn.get()==pawn){
             prune();if(g_pending.size()>=512){fail("derived command source capacity");return id;}
             g_pending[h]={ObjHandle::of(queue),g_execution->pawn,ObjHandle::of(g_schema.action.object(cmd)),id,g_execution->source,g_execution->token};++g_derived_queued;
         }break;
@@ -264,7 +320,7 @@ bool install() {
     g_schema.timeline = c.prop(L"StateTimeline", reflect::Kind::Struct);
     g_schema.consume_mp = c.prop(L"bConsumeMP", reflect::Kind::Bool);
     g_schema.cached_anim = c.prop(L"CachedAnimComponent",reflect::Kind::Object);
-    g_schema.invoked_direction=c.func(L"GetInvokedByDirectionInputType",0);g_schema.invoked_button=c.func(L"GetInvokedByInputType",0);g_schema.elapsed=c.func(L"GetExecutionTime",0);
+    g_schema.invoked_direction=c.func(L"GetInvokedByDirectionInputType",0);g_schema.invoked_button=c.func(L"GetInvokedByInputType",0);
     g_schema.request_end=c.func(L"RequestEnd",1);
     const auto start_fn = c.func(L"StartCommandAction", 0), end_fn = c.func(L"EndCommandAction", 1), sample_fn=c.func(L"SampleCommandAction",1);
     auto* tl = static_cast<ue::UStruct*>(reflect::find_object(L"/Script/Zenith.StateTimeline"));
@@ -325,14 +381,48 @@ bool install() {
     if(!g_sample&&!hook::install_address("CommandSampleNative",sample_target,reinterpret_cast<void*>(&sample_command),reinterpret_cast<void**>(&g_sample),"reflect"))return false;
     if(!g_add&&!hook::install_address("CommandQueueAddNative",add_target,reinterpret_cast<void*>(&add_command),reinterpret_cast<void**>(&g_add),"reflect"))return false;
     if (!g_accept && !hook::install_manifest("CommandAcceptNative", reinterpret_cast<void*>(&accept), reinterpret_cast<void**>(&g_accept))) return false;
+    auto* climb = reflect::find_class(L"/Script/Zenith.AutoClimbComponent");
+    reflect::Resolver component("climb query", climb);
+    g_schema.climb_class = ObjHandle::of(climb);
+    g_schema.climb_owner = component.prop(L"CharacterOwner", reflect::Kind::Object);
+    const auto getter = component.func(L"GetLastTargetLocation", 0);
+    if (!component.ok() || !getter.ok()) return false;
+    const auto* getter_exec = reinterpret_cast<const std::uint8_t*>(getter.fn->GetFuncPtr());
+    if (!getter_exec || getter_exec[0x23] != 0xE8) return false;
+    std::int32_t offset;
+    std::memcpy(&offset, getter_exec + 0x24, sizeof(offset));
+    auto* native_getter = const_cast<std::uint8_t*>(getter_exec + 0x28 + offset);
+    if (native_getter != preflight::address("AutoClimbLastTargetNative")) return false;
+    if (!g_read_target && !hook::install_address("AutoClimbLastTargetNative", native_getter,
+        reinterpret_cast<void*>(&read_target), reinterpret_cast<void**>(&g_read_target), "reflect")) return false;
+
+    const auto* character = static_cast<const std::uint8_t*>(preflight::address("NativeLilyCharacterTick"));
+    if (!character || character[0x12A] != 0xE8) return false;
+    std::memcpy(&offset, character + 0x12B, sizeof(offset));
+    auto* matcher = const_cast<std::uint8_t*>(character + 0x12F + offset);
+    if (matcher != preflight::address("CommandTryAddFromInput")) return false;
+    g_character_match_return = character + 0x12F;
+    if (!g_match_input && !hook::install_address("CommandTryAddFromInput", matcher,
+        reinterpret_cast<void*>(&match_input), reinterpret_cast<void**>(&g_match_input), "character tick")) return false;
+    // ProcessCommand removes the interrupted head with reason Override before processing its successor.
+    const auto* process = static_cast<const std::uint8_t*>(preflight::address("CommandProcessStart"));
+    if (!process || process[0x1E7] != 0xE8) return false;
+    std::memcpy(&offset, process + 0x1E8, sizeof(offset));
+    const auto* remove = process + 0x1EC + offset;
+    if (remove != preflight::address("CommandRemoveNative")) return false;
+    g_remove = reinterpret_cast<Remove>(const_cast<std::uint8_t*>(remove));
     g_schema.command_class = ObjHandle::of(cls); g_schema.timeline_class = ObjHandle::of(tl); g_schema.entry_class = ObjHandle::of(en);
     if(!g_post_live){RC::Unreal::Hook::FCallbackOptions o;o.OwnerModName=STR("ELMP");o.HookName=STR("coop.command_context.trace");g_post=RC::Unreal::Hook::RegisterEngineTickPostCallback([](auto&,RC::Unreal::UEngine*,float,bool){sample();},o);g_post_live=true;}
     return true;
 }
 }
 bool enable() { if (g_enabled && g_schema.live()) return true; return g_enabled = install(); }
-void reset() { g_enabled = false;if(g_post_live){RC::Unreal::Hook::UnregisterCallback(g_post);g_post_live=false;}g_active.clear();g_pending.clear(); g_schema = {}; g_fault.clear(); }
-void forget(ue::UObject* pawn) { const auto h=ObjHandle::of(pawn); std::erase_if(g_active,[&](const auto& e){return e.second.pawn==h;});std::erase_if(g_pending,[&](const auto& e){return e.second.pawn==h;}); }
+bool playback_gap() { return g_playback_gap; }
+void reset() { g_enabled = false;g_playback_gap=false;if(g_post_live){RC::Unreal::Hook::UnregisterCallback(g_post);g_post_live=false;}g_active.clear();g_pending.clear(); g_schema = {}; g_fault.clear(); }
+void forget(ObjHandle pawn) {
+    std::erase_if(g_active,[&](const auto& e){return e.second.pawn==pawn;});
+    std::erase_if(g_pending,[&](const auto& e){return e.second.pawn==pawn;});
+}
 bool source(ue::UObject* pawn,native_lily::Source& out){if(!g_enabled||!g_execution||!g_execution->token||g_execution->pawn.get()!=pawn)return false;out=g_execution->source;return out.seq!=0;}
 bool retained_source(const native_lily::Source& source){
     const auto matches=[&](const auto& s){return s.seat==source.seat&&s.generation==source.generation&&s.seq==source.seq&&s.domain==source.domain;};
@@ -358,44 +448,60 @@ std::string fault() { return g_fault; }
 Persistent persistent(ue::UObject* pawn) {
     Persistent p;auto* action=current_action(pawn);if(!eligible(action))return p;
     const auto it=g_active.find(ObjHandle::of(action));if(it==g_active.end())return p;
-    reflect::Frame direction(g_schema.invoked_direction),button(g_schema.invoked_button),elapsed(g_schema.elapsed);
-    if(!direction.invoke(action)||!button.invoke(action)||!elapsed.invoke(action))return p;
-    p.cls=action->GetClassPrivate();p.token=it->second.token;p.input=it->second.source.seq;p.direction=direction.ret<std::uint8_t>();p.button=button.ret<std::uint8_t>();p.elapsed=elapsed.ret<float>();return p;
+    reflect::Frame direction(g_schema.invoked_direction),button(g_schema.invoked_button);
+    if(!direction.invoke(action)||!button.invoke(action))return p;
+    p.cls=action->GetClassPrivate();p.token=it->second.token;p.input=it->second.source.seq;p.direction=direction.ret<std::uint8_t>();p.button=button.ret<std::uint8_t>();return p;
 }
 std::uint64_t restore(ue::UObject* pawn,ue::UObject* type,std::uint8_t direction,std::uint8_t button) {
-    auto* cls=static_cast<ue::UClass*>(type);ue::UObject* cdo=cls?cls->GetClassDefaultObject():nullptr;
+    auto* cls = RC::Unreal::Cast<ue::UClass>(type);
+    ue::UObject* cdo = cls && cls->IsChildOf(static_cast<ue::UClass*>(g_schema.command_class.get())) ? cls->GetClassDefaultObject() : nullptr;
     if(!eligible(cdo)){fail("Host persistent command is not restorable from its native data");return 0;}
     return play(pawn, type, direction, button);
 }
-std::uint64_t play(ue::UObject* pawn,ue::UObject* type,std::uint8_t direction,std::uint8_t button) {
-    if (!type || !type->IsA(g_schema.command_class.get()->GetClassPrivate()) || !static_cast<ue::UClass*>(type)->IsChildOf(static_cast<ue::UClass*>(g_schema.command_class.get()))) {
+std::uint64_t play(ue::UObject* pawn,ue::UObject* type,std::uint8_t direction,std::uint8_t button,const Target* target) {
+    auto* cls = RC::Unreal::Cast<ue::UClass>(type);
+    if (!cls || !cls->IsChildOf(static_cast<ue::UClass*>(g_schema.command_class.get()))) {
         fail("invalid Host command class"); return 0;
     }
     auto* queue=queue_of(pawn);
-    if(!queue||!reflect::Frame(g_schema.clear).invoke(queue)){fail("persistent command queue unavailable");return 0;}
-    RestoreAttempt attempt{ObjHandle::of(pawn),ObjHandle::of(type)};
+    if (!queue) { fail("Host command queue unavailable"); return 0; }
+    RestoreAttempt attempt{ObjHandle::of(pawn), ObjHandle::of(type), 0, {}, target};
     struct Scope {RestoreAttempt* previous=g_restore_attempt;Scope(RestoreAttempt& a){g_restore_attempt=&a;}~Scope(){g_restore_attempt=previous;}} scope(attempt);
     const auto before_starts=g_starts,before_ends=g_ends;
     reflect::Frame add(g_schema.add);if(!add.arg(0,direction).arg(1,button).arg(2,type).invoke(queue)||add.ret<std::int32_t>()<0){fail("persistent command could not enter native queue");return 0;}
+    if (target && !attempt.target_read && g_fault.empty()) {
+        g_playback_gap = true;
+        fail("remote command did not consume the Host climb target");
+    }
     if(!attempt.token){
+        if (g_fault.empty()) g_playback_gap = true;
         reflect::Frame current(g_schema.current);auto* cmd=current.invoke(queue)?current.ret<ue::UObject*>():nullptr;
         auto* action=cmd?g_schema.action.object(cmd):nullptr;
         fail(std::format("native persistent command did not start: requested={} pawn={} id={} current={} result={} starts={} ends={}",log::utf8(type->GetPathName()),log::utf8(pawn->GetFullName()),add.ret<std::int32_t>(),action?log::utf8(action->GetClassPrivate()->GetPathName()):"<none>",cmd?g_schema.result.read<std::uint8_t>(cmd):0,g_starts-before_starts,g_ends-before_ends));return 0;
     }
     ++g_restored;return attempt.token; // the original zero-delta update may already have ended it
 }
+bool begin_playback(ue::UObject* pawn) {
+    auto* queue = queue_of(pawn);
+    if (queue && reflect::Frame(g_schema.clear).invoke(queue)) return true;
+    fail("native command queue could not be initialized");
+    return false;
+}
 void finish(ue::UObject* pawn,std::uint64_t token,std::uint8_t reason) {
     auto* action = current_action(pawn);
     const auto it = g_active.find(ObjHandle::of(action));
     if (!action || it == g_active.end() || it->second.token != token) return;
-    if (reason) reflect::Frame(g_schema.clear).invoke(queue_of(pawn));
-    else reflect::Frame(g_schema.request_end).arg_bool(0,false).invoke(action);
+    if (!reason) {
+        if (!reflect::Frame(g_schema.request_end).arg_bool(0,false).invoke(action)) fail("native RequestEnd unavailable");
+        return;
+    }
+    auto* queue = queue_of(pawn);
+    const auto rows = reflect::array_at(queue, g_schema.queued);
+    if (!rows.data || rows.num < 1) return;
+    auto* head = *reinterpret_cast<ue::UObject**>(rows.data);
+    if (head && g_schema.action.object(head) == action) g_remove(queue, 0, reason);
 }
-void end_restored(ue::UObject* pawn,std::uint64_t token) {
-    auto* command=current_action(pawn);auto it=g_active.find(ObjHandle::of(command));
-    if(command&&it!=g_active.end()&&it->second.token==token&&eligible(command)){if(reflect::Frame(g_schema.request_end).arg_bool(0,false).invoke(command))++g_restore_ends;else fail("persistent command could not request native end");}
-}
-std::string describe() { prune();return std::format("command context: enabled={} active={} starts={} ends={} baselines={} expired={} restored={} restoreEnds={} trace={} fault='{}'\n  derived queued={} inherited={} pending={} pruned={}\n",g_enabled,g_active.size(),g_starts,g_ends,g_baselines,g_expired,g_restored,g_restore_ends,g_trace.size(),g_fault,g_derived_queued,g_inherited,g_pending.size(),g_pending_pruned); }
+std::string describe() { prune();return std::format("command context: enabled={} active={} starts={} ends={} baselines={} expired={} restored={} climbReads={} trace={} fault='{}'\n  derived queued={} inherited={} pending={} pruned={}\n",g_enabled,g_active.size(),g_starts,g_ends,g_baselines,g_expired,g_restored,g_climb_reads,g_trace.size(),g_fault,g_derived_queued,g_inherited,g_pending.size(),g_pending_pruned); }
 std::string trace(std::string_view action) {
     if(action=="on"){g_trace.clear();g_tracing=true;return "command trace enabled\n";}
     if(action=="off"){g_tracing=false;return "command trace disabled\n";}

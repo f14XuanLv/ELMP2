@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/ue.h"
+#include "coop/native_lily.h"
 #include "net/protocol.h"
 #include <string>
 #include <string_view>
@@ -18,15 +19,15 @@ struct HostApi {
 struct ClientApi {
     const std::string* (*text)(std::uint16_t) = nullptr;
     ue::UObject* (*actor)(std::uint8_t kind, std::uint16_t id, std::uint32_t generation) = nullptr;
-    void (*motion)(double host_ms) = nullptr;
 };
 void host_api(HostApi api);
 void client_api(ClientApi api);
 std::vector<net::proto::Cause> take();
 bool root_active(std::uint64_t root);
 bool receive(const net::proto::LilyCauses& facts);
-bool ready(double host_ms);
-void advance(double host_ms, float world_rate = 1);
+void advance_view(double host_ms);
+bool ready(const native_lily::Source&, native_lily::PlaybackClock&, double host_ms);
+void advance(const native_lily::Source&, native_lily::PlaybackClock&, double host_ms, float rate);
 double playback_ms();
 bool target_owned(ue::UObject* actor);
 bool allow_stop(ue::UObject* actor, const ability::Identity& id, std::uint8_t reason);

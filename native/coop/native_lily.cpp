@@ -21,6 +21,7 @@
 #include "base/log.h"
 #include "base/hook.h"
 #include "base/clock.h"
+#include "base/preflight.h"
 #include "base/metrics.h"
 #include <unordered_map>
 
@@ -94,8 +95,8 @@ struct Replica {
     std::uint32_t received = 0, consumed = 0, generation = 0;
     std::uint32_t playing = 0;
     std::uint64_t current_host = 0, current_local = 0;
-    std::uint64_t persistent_host = 0, persistent_local = 0;
-    bool persistent_restored = false;
+    bool needs_baseline = true;
+    PlaybackClock clock;
     std::int64_t tick_us = 0;
     proto::LilyFrame last;
     std::string build, applied;
@@ -106,6 +107,11 @@ struct Replica {
     bool ready = false;
     float world_rate = 1;
 };
+// The native setter has written this frame's input by the time Character.Tick calls UpdateCommands.
+struct PendingStep { Replica* replica; const proto::LilyFrame* frame; };
+PendingStep* g_queue_step = nullptr;
+const void* g_character_update_return = nullptr;
+
 struct Capture {
     ObjHandle pawn;
     std::optional<proto::LilyFrame> frame;
@@ -178,10 +184,9 @@ std::vector<ue::UObject*> owned_actors(std::uint16_t seat) {
         if(auto* actor=entry.handle.get();actor&&!autonomous::eligible(actor)){Source origin;if(source(actor,origin)&&origin.seat==seat)out.push_back(actor);}
     return out;
 }
-void restore_clocks(ue::UObject* pawn = nullptr) {
-    const auto owner=ObjHandle::of(pawn);
+void restore_clocks(std::optional<ObjHandle> owner = std::nullopt) {
     std::erase_if(g_role_clocks,[&](const auto& p){
-        if(pawn && p.second.pawn!=owner)return false;
+        if(owner && p.second.pawn!=*owner)return false;
         if(auto* actor=p.first.get())*g_schema.dilation.at<float>(actor)=p.second.original;
         return true;
     });
@@ -258,7 +263,7 @@ void consumed(ue::UObject* pawn, const input::InputSnapshot& value) {
     if(const auto why=command_context::fault();!why.empty())return fail(why);
     if(const auto p=command_context::persistent(pawn);p.cls&&p.input){
         f.persistent_class=g_name(log::utf8(p.cls->GetPathName()));f.persistent_token=p.token;f.persistent_input=p.input;
-        f.persistent_direction=p.direction;f.persistent_button=p.button;f.persistent_elapsed=p.elapsed;
+        f.persistent_direction=p.direction;f.persistent_button=p.button;
     }
     for(auto* actor:owned_actors(seat)) {
         const auto id=g_name(log::utf8(actor->GetClassPrivate()->GetPathName()));
@@ -323,7 +328,7 @@ std::string bind(std::uint16_t seat, std::int64_t slot, ue::UObject* pawn) {
     const auto h = ObjHandle::of(pawn);
     if (r.pawn == h) return {};
     r.pawn = h; r.slot = slot; r.applied.clear(); r.started = false; r.ready = false; r.elapsed = 0; r.rate = 1; r.playing = 0; r.pending.clear();
-    r.current_host=r.current_local=0; r.persistent_host=r.persistent_local=0;r.persistent_restored=false;
+    r.current_host = r.current_local = 0; r.needs_baseline = true; r.clock = {};
     const auto* s = core::schema::script();
     if (!s) return "native Lily core schema";
     r.controller = ObjHandle::of(s->pawn_controller.object(pawn));
@@ -364,6 +369,17 @@ void receive(const proto::LilyFrame& value) {
     g_edges_received += std::popcount(static_cast<unsigned>(value.flags & 0x1FEu));
 }
 namespace {
+auto trailing_ends(const proto::LilyFrame& frame) {
+    return std::find_if(frame.commands.rbegin(), frame.commands.rend(),
+                        [](const auto& edge) { return !edge.end; }).base();
+}
+void finish_edge(Replica& r, ue::UObject* pawn, const proto::LilyCommand& edge) {
+    if (r.current_host == edge.token) {
+        command_context::finish(pawn, r.current_local, edge.end - 1);
+        r.current_host = r.current_local = 0;
+    }
+    ++g_command_ends;
+}
 void execute_frame(Replica& r, const Replica::Step& step) {
     const auto& f = step.frame;
     auto* pawn = r.pawn.get();
@@ -415,47 +431,22 @@ void execute_frame(Replica& r, const Replica::Step& step) {
     if (!g_fault.empty()) return;
     r.playing = f.seq;
     ExecutionScope source_scope(pawn);
-    // Host acceptance is an activation edge, not a per-frame survival condition.
-    // A native zero-delta update can already complete that same activation.
-    if(step.begin){
-        if(f.persistent_class&&r.persistent_host!=f.persistent_token){
-            auto& weak=g_state_classes[f.persistent_class];auto* cls=weak.get();
-            if(!cls){const auto* name=g_text(f.persistent_class);if(name)cls=reflect::load_object(log::wide(*name));if(cls)weak=ObjHandle::of(cls);}
-            if(!cls)return fail("persistent command class unavailable");
-            if(r.persistent_restored)command_context::end_restored(pawn,r.persistent_local);
-            const auto local=command_context::persistent(pawn);
-            r.persistent_restored=local.cls!=cls||!local.token||local.token==r.persistent_local;
-            if(r.persistent_restored){
-                RestoreScope origin(pawn,{f.seat,f.generation,f.persistent_input,true});
-                r.persistent_local=command_context::restore(pawn,cls,f.persistent_direction,f.persistent_button);
-                if(!r.persistent_local)return;
-            }else r.persistent_local=local.token;
-            r.persistent_host=f.persistent_token;
-        }else if(!f.persistent_class&&r.persistent_host){
-            if(r.persistent_restored)command_context::end_restored(pawn,r.persistent_local);
-            r.persistent_host=0;r.persistent_restored=false;
-        }
-    }
-    if (step.begin) for (const auto& edge : f.commands) {
-        if (edge.end) {
-            if (r.current_host == edge.token) {
-                command_context::finish(pawn, r.current_local, edge.end - 1);
-                r.current_host = r.current_local = 0;
-            }
-            ++g_command_ends;
-            continue;
-        }
-        const auto* name = g_text(edge.cls);
-        auto& weak = g_state_classes[edge.cls];
-        auto* cls = weak.get();
-        if (!cls && name) { cls = reflect::load_object(log::wide(*name)); weak = ObjHandle::of(cls); }
-        RestoreScope origin(pawn, {f.seat, f.generation, edge.input, true});
-        r.current_local = command_context::play(pawn, cls, edge.direction, edge.button);
-        if (!r.current_local) return;
-        r.current_host = edge.token;
-        ++g_command_starts;
-    }
+    struct QueueScope {
+        PendingStep* previous = g_queue_step;
+        explicit QueueScope(PendingStep* step) { g_queue_step = step; }
+        ~QueueScope() { g_queue_step = previous; }
+    };
+    PendingStep delivery{&r, &f};
+    const bool deliver = step.begin && (r.needs_baseline || !f.commands.empty());
+    QueueScope queue_scope(deliver ? &delivery : nullptr);
     g_original_tick(pawn, f.dt);
+    if (deliver && g_queue_step) {
+        if (g_fault.empty()) g_playback_gap = true;
+        return fail("remote Lily Character.Tick did not update its command queue");
+    }
+    if (step.end) {
+        for (auto it = trailing_ends(f); it != f.commands.end(); ++it) finish_edge(r, pawn, *it);
+    }
     apply_clocks(r,f);r.last=f;
     if (step.begin) g_edges_played += std::popcount(static_cast<unsigned>(input.flags));
     if (step.end) { r.consumed = f.seq; ++g_consumed; }
@@ -502,11 +493,12 @@ void __fastcall character_tick(ue::UObject* pawn, float dt) {
         }
         const auto now=clock::now_us();g_playout_dt=r.tick_us?static_cast<float>(now-r.tick_us)/1'000'000:1.0f/60;r.tick_us=now;
         schedule(r);
-        if(r.pending.empty() && r.playing){r.world_rate=0;apply_clocks(r,r.last);causality::advance(causality::playback_ms(),0);}
+        const Source stream{seat, r.generation};
+        if(r.pending.empty() && r.playing){r.world_rate=0;apply_clocks(r,r.last);causality::advance(stream, r.clock, r.clock.time, 0);}
         h_steps.add(static_cast<float>(r.pending.size()));
         while (!r.pending.empty() && g_fault.empty()) {
             const auto value = r.pending.front(); r.pending.pop_front();
-            causality::advance(value.host_ms, r.world_rate);
+            causality::advance(stream, r.clock, value.host_ms, r.world_rate);
             execute_frame(r, value);
         }
         h_tick.add(static_cast<float>(clock::now_us() - begin));
@@ -530,6 +522,13 @@ void __fastcall character_tick(ue::UObject* pawn, float dt) {
     g_source_dt = previous;
 }
 bool install_tick() {
+    if (g_original_tick) return true;
+    const auto* entry = static_cast<const std::uint8_t*>(preflight::address("NativeLilyCharacterTick"));
+    if (!entry || entry[0x135] != 0xE8) return false;
+    std::int32_t offset;
+    std::memcpy(&offset, entry + 0x136, sizeof(offset));
+    if (entry + 0x13A + offset != preflight::address("CommandQueueUpdateNative")) return false;
+    g_character_update_return = entry + 0x13A;
     return g_original_tick || hook::install_manifest("NativeLilyCharacterTick", reinterpret_cast<void*>(&character_tick), reinterpret_cast<void**>(&g_original_tick));
 }
 }
@@ -562,7 +561,7 @@ void schedule(Replica& r) {
         Replica::Step part{source, r.elapsed == 0, remaining <= budget};
         const auto until = r.frames.size() > 1 ? static_cast<std::int32_t>(r.frames[1].t_ms-source.t_ms) : source.step*1000;
         part.host_ms = source.t_ms + std::max(0.0,static_cast<double>(until)) * ((r.elapsed+span)/source.step);
-        if(!causality::ready(part.host_ms))break;
+        if (!causality::ready({source.seat, source.generation}, r.clock, part.host_ms)) break;
         part.frame.dt = source.dt * (span / source.step);
         world_total += source.world_dt * (span/source.step);
         total += part.frame.dt;
@@ -588,12 +587,61 @@ void client_tick(std::uint16_t map, Text text) {
     }
 }
 void forget(std::uint16_t seat) {
-    if(auto i=g_replicas.find(seat);i!=g_replicas.end()){restore_clocks(i->second.pawn.get());command_context::forget(i->second.pawn.get());}
+    if (auto i = g_replicas.find(seat); i != g_replicas.end()) {
+        restore_clocks(i->second.pawn);
+        command_context::forget(i->second.pawn);
+    }
     g_replicas.erase(seat);
 }
-bool playback_gap() { return g_playback_gap; }
+void queue_update(ue::UObject* pawn, const void* caller) {
+    if (!g_queue_step || caller != g_character_update_return || g_queue_step->replica->pawn.get() != pawn) return;
+    const auto delivery = *g_queue_step;
+    g_queue_step = nullptr; // immediate enqueue performs another native UpdateCommands(0)
+    auto& r = *delivery.replica;
+    const auto& frame = *delivery.frame;
+    const auto load_class = [&](std::uint16_t id) {
+        auto& weak = g_state_classes[id];
+        if (!weak.valid()) if (const auto* path = g_text(id))
+            weak = ObjHandle::of(reflect::load_object(log::wide(*path)));
+        return weak.get();
+    };
+    if (r.needs_baseline) {
+        r.needs_baseline = false;
+        if (!command_context::begin_playback(pawn)) return;
+        if (frame.persistent_class && std::none_of(frame.commands.begin(), frame.commands.end(), [&](const auto& edge) {
+                return !edge.end && edge.token == frame.persistent_token;
+            })) {
+            RestoreScope origin(pawn, {frame.seat, frame.generation, frame.persistent_input, true});
+            r.current_local = command_context::restore(pawn, load_class(frame.persistent_class),
+                                                       frame.persistent_direction, frame.persistent_button);
+            if (!r.current_local) return;
+            r.current_host = frame.persistent_token;
+        }
+    }
+    const auto end = trailing_ends(frame);
+    for (auto it = frame.commands.begin(); it != end; ++it) {
+        const auto& edge = *it;
+        if (edge.end) {
+            finish_edge(r, pawn, edge);
+            continue;
+        }
+        RestoreScope origin(pawn, {frame.seat, frame.generation, edge.input, true});
+        r.current_local = command_context::play(pawn, load_class(edge.cls), edge.direction, edge.button,
+                                                edge.climb_target ? &*edge.climb_target : nullptr);
+        if (!r.current_local) return;
+        r.current_host = edge.token;
+        ++g_command_starts;
+    }
+}
+bool playback_gap() { return g_playback_gap || command_context::playback_gap(); }
 void reset() { g_playback_gap = false; restore_clocks();g_replicas.clear(); g_state_classes.clear(); g_text = nullptr; g_fault.clear(); command_context::reset(); causality::reset(); }
 ue::UObject* actor(std::uint16_t seat) { const auto i = g_replicas.find(seat); return i == g_replicas.end() ? nullptr : i->second.pawn.get(); }
+const PlaybackClock* playback(const Source& source) {
+    if (source.domain) return autonomous::playback(source);
+    const auto it = g_replicas.find(source.seat);
+    if (it == g_replicas.end() || it->second.generation != source.generation) return nullptr;
+    return &it->second.clock;
+}
 bool remote_pawn(ue::UObject* pawn) {
     return pawn && std::any_of(g_replicas.begin(), g_replicas.end(), [&](const auto& item) { return item.second.pawn.get() == pawn; });
 }
@@ -605,6 +653,18 @@ void command_edge(ue::UObject* pawn, const Source& source, ue::UObject* cls, std
     if (capture.pawn != handle) capture = {handle};
     if (capture.commands.size() == proto::kLilyCommands) return fail("Host command frame capacity");
     capture.commands.push_back({token, source.seq, g_name(log::utf8(cls->GetPathName())), direction, button, end});
+}
+void capture_climb_target(ue::UObject* pawn, std::uint64_t token, const std::array<float, 3>& target) {
+    if (!g_sink) return;
+    const auto seat = seat_of(pawn);
+    if (!seat || g_capture[seat].pawn.get() != pawn) return;
+    auto& edges = g_capture[seat].commands;
+    const auto edge = std::find_if(edges.rbegin(), edges.rend(), [=](const auto& item) {
+        return !item.end && item.token == token;
+    });
+    if (edge == edges.rend()) return;
+    if (edge->climb_target && *edge->climb_target != target) return fail("climb target changed within a command Start");
+    edge->climb_target = target;
 }
 bool owns(ue::UObject* object) {
     if (autonomous::owns(object)) return true;

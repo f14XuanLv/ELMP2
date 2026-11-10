@@ -108,7 +108,6 @@ std::uint16_t g_epoch = 0, g_host_map = 0;
 std::uint32_t g_latest = 0;
 std::uint32_t g_host_view = 0;
 ue::UObject* causal_target(std::uint8_t kind, std::uint16_t id, std::uint32_t generation);
-void causal_motion(double host_ms);
 void causal_api();
 std::string g_follow_tag;
 std::string g_equip_sent, g_equip_result;
@@ -117,7 +116,7 @@ bool g_follow_pending = false;
 std::int64_t g_follow_next_us = 0;
 std::unique_ptr<std::array<snap::Frame, kRing>> g_ring;
 proto::NameTable g_names;
-void causal_api() { causality::client_api({[](std::uint16_t id){return g_names.text(id);},causal_target,causal_motion}); }
+void causal_api() { causality::client_api({[](std::uint16_t id){return g_names.text(id);},causal_target}); }
 proto::Input g_input;
 std::array<std::uint8_t, 2048> g_buf;
 std::unordered_map<std::string, Taken> g_taken; // spawn point name → local enemy
@@ -1097,6 +1096,7 @@ void tick(std::int64_t now_us) {
         return;
     }
     if (!g_seat || lifecycle::state() != lifecycle::State::Settled) return;
+    if (g_offset_known) causality::advance_view(now_us / 1000.0 + g_offset_ms - 50.0);
     auto t0 = clock::now_us();
     present_motion(now_us);
     auto t1 = clock::now_us();
@@ -1274,7 +1274,7 @@ ue::UObject* causal_target(std::uint8_t kind,std::uint16_t id,std::uint32_t gene
     auto it=g_taken.find(key);if(it==g_taken.end()||it->second.instance!=generation)return nullptr;
     return it->second.enemy.get();
 }
-void causal_motion(double) { present_motion(clock::now_us()); }
+
 }
 
 std::string describe_events() {
