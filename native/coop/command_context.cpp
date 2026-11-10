@@ -406,9 +406,10 @@ bool install() {
         reinterpret_cast<void*>(&match_input), reinterpret_cast<void**>(&g_match_input), "character tick")) return false;
     // ProcessCommand removes the interrupted head with reason Override before processing its successor.
     const auto* process = static_cast<const std::uint8_t*>(preflight::address("CommandProcessStart"));
-    if (!process || process[0x1E7] != 0xE8) return false;
-    std::memcpy(&offset, process + 0x1E8, sizeof(offset));
-    const auto* remove = process + 0x1EC + offset;
+    constexpr auto remove_call = 0xCB51E7 - 0xCB4F00;
+    if (!process || process[remove_call] != 0xE8) return false;
+    std::memcpy(&offset, process + remove_call + 1, sizeof(offset));
+    const auto* remove = process + remove_call + 5 + offset;
     if (remove != preflight::address("CommandRemoveNative")) return false;
     g_remove = reinterpret_cast<Remove>(const_cast<std::uint8_t*>(remove));
     g_schema.command_class = ObjHandle::of(cls); g_schema.timeline_class = ObjHandle::of(tl); g_schema.entry_class = ObjHandle::of(en);

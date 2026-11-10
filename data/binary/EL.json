@@ -10,7 +10,7 @@
       "rva": "0x00CB9420",
       "prefix": "40535641544883EC404863DA450FB6E0488B",
       "owner": "coop/command_context",
-      "source": "[E-IDA] ELMP v2 2026-11-10 CB4F00+1E7 calls RemoveCommand(queue,index,reason). Checks the weak command after End, broadcasts and returns it to its pool."
+      "source": "[E-IDA] ELMP v2 2026-11-10 CB4F00+2E7 calls RemoveCommand(queue,index,reason). Checks the weak command after End, broadcasts and returns it to its pool."
     },
     "AutoClimbLastTargetNative": {
       "rva": "0x00CA9AC0",

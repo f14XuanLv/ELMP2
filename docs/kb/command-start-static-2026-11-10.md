@@ -34,3 +34,7 @@
 - 实际路由、时相与连续手感、首连积压的成因、四人长时间游玩均未在协议 22 上验收。按用户要求本轮未启动测试或部署。
 
 本地 IDA 输出保存在 `build/party-1110/static/`，结束路径另见同级 `remove-native-ida.json`、`end-command-ida.json` 与 `override-dispatch-ida.json`。后续版本可用本仓工具链按上述 RVA、包名、函数名重取。
+
+## 随后四端部署（2026-11-10）
+
+[E-实测][E-IDA] 首次开房在命令钩安装阶段退出。CB51E7 的指令是 E8 34 42 00 00，调用目标为 CB9420，与 CB4F00 的差为 2E7。修正安装校验后重新部署。Host 与 Client1/2/3 的协议 22 Dev DLL SHA-256 均为 `6ee56f8dad3567f4ecc074f4cb0cc3761dce97dce97c3e3685faefc3d577c24d`。Host 收到三个 MapReady，三客人分别为 P2/P3/P4，在 map_forest_05 各有三个远端副本；采集期间消费计数均推进，视图刷新均为零。Client2/3 各记录一次 badSnaps。该轮覆盖启动、加入及初始回放，状态见 `build/handoff-p22-20261110-233837/connected.json`。
